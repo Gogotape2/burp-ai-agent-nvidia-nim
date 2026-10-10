@@ -314,12 +314,12 @@ class CliOutputBufferTest {
                 "2000 characters (REL-07 / SC4, threat T-24-05).",
         )
         assertEquals(
-            3,
+            2,
             code.count { it.contains("take(2000)") },
-            "CliBackend ledger: `take(2000)` appears on exactly three code lines — the two capture-region " +
-                "error heads asserted above plus `buildExitError`'s head over the persistent-session " +
-                "`lastOutputTail()`, which is already bounded and already guarded and is out of REL-07's " +
-                "scope. A fourth means a new 2000-character truncation was introduced.",
+            "CliBackend ledger: `take(2000)` appears on exactly two code lines — the two capture-region " +
+                "error heads asserted above. (A third, `buildExitError`'s head over the persistent-session " +
+                "`lastOutputTail()`, went with CliConnection under DEAD-01, plan 29-05.) A third now means " +
+                "a new 2000-character truncation was introduced.",
         )
     }
 

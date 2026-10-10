@@ -5,7 +5,6 @@ import com.six2dez.burp.aiagent.backends.AiBackend
 import com.six2dez.burp.aiagent.backends.BackendDiagnostics
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.ChatMessage
-import com.six2dez.burp.aiagent.backends.DiagnosableConnection
 import com.six2dez.burp.aiagent.backends.HealthCheckResult
 import com.six2dez.burp.aiagent.backends.SessionAwareConnection
 import com.six2dez.burp.aiagent.config.Defaults
@@ -14,10 +13,8 @@ import java.io.InputStreamReader
 import java.util.ArrayDeque
 import java.util.Locale
 import java.util.concurrent.Executors
-import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 class CliBackend(
@@ -29,7 +26,6 @@ class CliBackend(
 
     override fun launch(config: BackendLaunchConfig): AgentConnection {
         require(config.command.isNotEmpty()) { "CLI backend requires a command" }
-        val usePty = (id == "codex-cli" || id == "gemini-cli" || id == "claude-cli" || id == "copilot-cli") && !config.embeddedMode
         // REL-04: use the user-configured timeout if provided, otherwise fall back to the shared constant.
         // WR-02: re-coerce at the consumption boundary. BackendLaunchConfig.cliTimeoutSeconds is a plain
         // nullable Int with no invariant — a directly-constructed config (tests / future call sites) could
@@ -37,11 +33,7 @@ class CliBackend(
         // wall-clock break. Floor 30s / ceiling 3600s mirrors the AgentSettings persistence clamp so the
         // watchdog never trusts an unvalidated value regardless of how the config was built.
         val timeoutSeconds = (config.cliTimeoutSeconds ?: Defaults.CLI_PROCESS_TIMEOUT_SECONDS).coerceIn(30, 3600)
-        return if (config.embeddedMode) {
-            NonInteractiveCliConnection(id, config.command, config.env, config.cliSessionId, timeoutSeconds)
-        } else {
-            CliConnection(config.command, config.env, usePty, config.embeddedMode)
-        }
+        return NonInteractiveCliConnection(id, config.command, config.env, config.cliSessionId, timeoutSeconds)
     }
 
     override fun isAvailable(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean {
@@ -596,292 +588,7 @@ class CliBackend(
                 .trim()
         }
     }
-
-    private class CliConnection(
-        cmd: List<String>,
-        env: Map<String, String>,
-        private val usePty: Boolean,
-        private val embeddedMode: Boolean,
-    ) : AgentConnection,
-        DiagnosableConnection {
-        private val alive = AtomicBoolean(true)
-        private val exitCode = AtomicInteger(Int.MIN_VALUE)
-        private val process: Process = startProcess(cmd, env)
-
-        private val writer = process.outputStream.bufferedWriter()
-        private val exec = Executors.newSingleThreadExecutor()
-        private val readerExec = Executors.newSingleThreadExecutor()
-        private val outputQueue = LinkedBlockingQueue<String>()
-        private val lastLines = ArrayDeque<String>(50)
-
-        init {
-            try {
-                val reader = BufferedReader(InputStreamReader(process.inputStream))
-                readerExec.submit {
-                    try {
-                        while (alive.get()) {
-                            val line = reader.readLine() ?: break
-                            synchronized(lastLines) {
-                                if (lastLines.size >= 50) lastLines.removeFirst()
-                                lastLines.addLast(line)
-                            }
-                            outputQueue.offer(line)
-                        }
-                    } finally {
-                        alive.set(false)
-                        try {
-                            exitCode.set(process.waitFor())
-                        } catch (_: Exception) {
-                            // INTENTIONAL: waitFor() in finally block must not throw to avoid masking reader exception
-                        }
-                    }
-                }
-            } catch (e: Exception) {
-                // INTENTIONAL: process start failed; stop() for cleanup then re-throw
-                stop()
-                throw e
-            }
-        }
-
-        override fun isAlive(): Boolean = alive.get() && process.isAlive
-
-        override fun send(
-            text: String,
-            history: List<ChatMessage>?,
-            onChunk: (String) -> Unit,
-            onComplete: (Throwable?) -> Unit,
-            systemPrompt: String?,
-            jsonMode: Boolean,
-            maxOutputTokens: Int?,
-        ) {
-            if (!isAlive()) {
-                onComplete(buildExitError())
-                return
-            }
-
-            exec.submit {
-                try {
-                    val historyText = buildCliHistory(history)
-                    val finalText = historyText + text
-                    // write input
-                    writer.write(finalText)
-                    writer.newLine()
-                    writer.flush()
-
-                    if (embeddedMode) {
-                        readEmbeddedResponse(text, onChunk, onComplete)
-                        return@submit
-                    }
-
-                    val start = System.currentTimeMillis()
-                    var lastRead = System.currentTimeMillis()
-                    while (System.currentTimeMillis() - lastRead < 1500) {
-                        val line = outputQueue.poll(200, TimeUnit.MILLISECONDS)
-                        if (line != null) {
-                            lastRead = System.currentTimeMillis()
-                            onChunk(line)
-                        }
-                        if (System.currentTimeMillis() - start > 60_000) break // safety
-                        if (!isAlive() && outputQueue.isEmpty()) break
-                    }
-
-                    if (!isAlive()) {
-                        onComplete(buildExitError())
-                    } else {
-                        onComplete(null)
-                    }
-                } catch (e: Exception) {
-                    // INTENTIONAL: send() execution error; propagated via onComplete
-                    onComplete(e)
-                }
-            }
-        }
-
-        override fun stop() {
-            alive.set(false)
-            try {
-                writer.close()
-            } catch (e: Exception) {
-                BackendDiagnostics.logError("[CliBackend] Failed to close CLI writer: ${e.message}")
-            }
-            process.destroy()
-            try {
-                if (!process.waitFor(3, TimeUnit.SECONDS)) {
-                    process.destroyForcibly()
-                }
-            } catch (_: InterruptedException) {
-                // INTENTIONAL: interrupted while waiting for process; destroyForcibly() + restore interrupt flag
-                process.destroyForcibly()
-                Thread.currentThread().interrupt()
-            }
-            exec.shutdownNow()
-            readerExec.shutdownNow()
-            try {
-                exec.awaitTermination(2, TimeUnit.SECONDS)
-            } catch (_: InterruptedException) {
-                // INTENTIONAL: interrupted during exec executor shutdown; restores interrupt flag
-                Thread.currentThread().interrupt()
-            }
-            try {
-                readerExec.awaitTermination(2, TimeUnit.SECONDS)
-            } catch (_: InterruptedException) {
-                // INTENTIONAL: interrupted during reader executor shutdown; restores interrupt flag
-                Thread.currentThread().interrupt()
-            }
-        }
-
-        override fun exitCode(): Int? {
-            val code = exitCode.get()
-            return if (code == Int.MIN_VALUE) null else code
-        }
-
-        override fun lastOutputTail(): String? {
-            val tail = synchronized(lastLines) { lastLines.joinToString("\n") }
-            return tail.ifBlank { null }
-        }
-
-        private fun readEmbeddedResponse(
-            text: String,
-            onChunk: (String) -> Unit,
-            onComplete: (Throwable?) -> Unit,
-        ) {
-            val inputLines =
-                text
-                    .lines()
-                    .map { it.trim() }
-                    .filter { it.isNotBlank() }
-                    .toSet()
-            val start = System.currentTimeMillis()
-            var lastRead = System.currentTimeMillis()
-            var received = false
-            while (true) {
-                val line = outputQueue.poll(250, TimeUnit.MILLISECONDS)
-                if (line != null) {
-                    lastRead = System.currentTimeMillis()
-                    val strippedLine = stripAnsiCodes(line)
-                    val trimmed = strippedLine.trim()
-                    if (trimmed.isNotBlank() && !inputLines.contains(trimmed)) {
-                        received = true
-                        onChunk(strippedLine)
-                    }
-                }
-                val idleMs = System.currentTimeMillis() - lastRead
-                if (idleMs > 2000 && received) break
-                if (System.currentTimeMillis() - start > Defaults.CLI_PROCESS_TIMEOUT_SECONDS * 1000L) break
-                if (!isAlive() && outputQueue.isEmpty()) break
-            }
-
-            if (!isAlive() && !received) {
-                onComplete(buildExitError())
-            } else {
-                onComplete(null)
-            }
-        }
-
-        private fun buildExitError(): Throwable {
-            val code = exitCode()
-            val tail = lastOutputTail().orEmpty()
-            val msg =
-                buildString {
-                    append("Process not alive")
-                    if (code != null) append(" (exit=$code)")
-                    if (tail.isNotBlank()) {
-                        append(": ")
-                        append(tail.take(2000))
-                    }
-                }
-            return IllegalStateException(msg)
-        }
-
-        private fun startProcess(
-            cmd: List<String>,
-            env: Map<String, String>,
-        ): Process {
-            val resolvedCmd = resolveCommand(cmd, env)
-            check(resolvedCmd.isNotEmpty()) { "CLI executable not found" }
-            val normalizedCmd = normalizeWindowsCommand(resolvedCmd)
-            if (usePty && isUnixLike()) {
-                val ptyCmd = buildPtyCommand(normalizedCmd)
-                return ProcessBuilder(ptyCmd)
-                    .apply { environment().putAll(env) }
-                    .redirectErrorStream(true)
-                    .start()
-            }
-            return ProcessBuilder(normalizedCmd)
-                .apply { environment().putAll(env) }
-                .redirectErrorStream(true)
-                .start()
-        }
-
-        private fun isUnixLike(): Boolean {
-            val os = System.getProperty("os.name").lowercase(Locale.ROOT)
-            return os.contains("mac") || os.contains("nix") || os.contains("nux")
-        }
-    }
 }
-
-/**
- * Build the argv that runs [cmd] under a pseudo-terminal via `script(1)`.
- *
- * The two platform shapes differ because macOS `script` takes the command as trailing argv while
- * Linux `script` takes it behind `-c`. Both funnel the whole argv through ONE shell string, which
- * is why every element is passed through [shellEscape] before the join — this is the only place in
- * the file where argument boundaries are re-derived by `/bin/sh`.
- *
- * [osName] is a defaulted parameter purely so both platform shapes can be asserted on one machine;
- * production calls it with no explicit argument and therefore behaves exactly as before.
- *
- * Visibility: `internal` so ShellEscapeTest can call it directly (same pattern as
- * buildTimeoutMessage / buildCopilotCommand). Not part of the public API.
- */
-internal fun buildPtyCommand(
-    cmd: List<String>,
-    osName: String = System.getProperty("os.name"),
-): List<String> {
-    val joined = cmd.joinToString(" ") { shellEscape(it) }
-    val os = osName.lowercase(Locale.ROOT)
-    return if (os.contains("mac")) {
-        // macOS: script -q /dev/null /bin/sh -c "command"
-        listOf("script", "-q", "/dev/null", "/bin/sh", "-c", joined)
-    } else {
-        // Linux: script -q -c "command" /dev/null
-        listOf("script", "-q", "-c", joined, "/dev/null")
-    }
-}
-
-/**
- * Phase 26 SC1 / QUAL-06 — the characters an argument may consist of and still reach `/bin/sh`
- * unquoted: the ASCII letters, the ASCII digits, and dot / underscore / slash / hyphen.
- *
- * Every real CLI argument this extension builds — `--silent`, `/usr/local/bin/claude`,
- * `claude-3.5`, `gemini_cli` — is drawn from this set, so the allowlist costs no working
- * invocation. Everything outside it is quoted, including the shell metacharacters an earlier
- * denylist missed.
- */
-private const val SHELL_SAFE_CHARS =
-    "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._/-"
-
-/**
- * Quote [arg] so a POSIX shell reads it back as exactly one word with no metacharacter meaning.
- *
- * Phase 26 SC1 / QUAL-06: the pass-through test is an ALLOWLIST, not a denylist. The previous
- * denylist quoted only on whitespace / `"` / `'`, so `foo;id` and `$(cmd)` reached `sh -c` bare and
- * the shell parsed them as syntax — a settings-import-to-command-execution path, because the CLI
- * command and its extras are user- or import-supplied. An allowlist cannot be under-enumerated the
- * way a metacharacter denylist can.
- *
- * The membership test is a per-character scan over a constant rather than a [Regex]: this runs once
- * per CLI argument, and a constant scan adds no backtracking surface.
- *
- * Visibility: `internal` so ShellEscapeTest can call it directly (same pattern as
- * buildTimeoutMessage / buildCopilotCommand). Not part of the public API.
- */
-internal fun shellEscape(arg: String): String =
-    when {
-        arg.isEmpty() -> "''"
-        arg.all { it in SHELL_SAFE_CHARS } -> arg
-        else -> "'" + arg.replace("'", "'\"'\"'") + "'"
-    }
 
 /**
  * Issue #71 — Build an actionable timeout message for the CLI process watchdog (REL-04).
@@ -947,9 +654,8 @@ internal fun buildCopilotCommand(
  * Windows launch fix-ups: strip a redundant `.exe`, resolve a non-executable npm shim next to an
  * absolute path, or find the `.cmd` shim npm installed for a bare command name.
  *
- * [windows] is a defaulted parameter purely so both branches can be asserted on one machine, exactly
- * as [buildPtyCommand] takes its OS name; production calls this with no explicit argument, so its
- * behaviour is unchanged. The alternative — mutating the global `os.name` system property from a
+ * [windows] is a defaulted parameter purely so both branches can be asserted on one machine;
+ * production calls this with no explicit argument, so its behaviour is unchanged. The alternative — mutating the global `os.name` system property from a
  * test — would leak into every other test sharing the JVM.
  *
  * Visibility: `internal` so CliCommandHelpersTest can call it directly (same pattern as
@@ -1105,9 +811,7 @@ private fun resolveCommand(
  * Whether this JVM is running on Windows.
  *
  * Read once rather than per call: `os.name` is fixed for the lifetime of a JVM, and no test in this
- * module mutates it (the one test that consults it, CliSupervisionTest, only reads it to skip). A
- * property rather than a function also keeps this file inside detekt's per-file top-level function
- * budget, which the extracted [shellEscape] / [buildPtyCommand] helpers would otherwise exceed.
+ * module mutates it (the one test that consults it, CliSupervisionTest, only reads it to skip).
  */
 private val isWindowsOs: Boolean = System.getProperty("os.name").lowercase(Locale.ROOT).contains("win")
 

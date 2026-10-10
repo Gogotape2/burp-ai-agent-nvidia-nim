@@ -41,7 +41,6 @@ class CliSupervisionTest {
                 displayName = "Ollama",
                 command = sleepCmd,
                 env = emptyMap(),
-                embeddedMode = true,
                 cliTimeoutSeconds = 1, // coerced to 30 by the backend
             )
 

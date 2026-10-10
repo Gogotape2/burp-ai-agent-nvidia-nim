@@ -12,7 +12,6 @@
     <ID>CyclomaticComplexMethod:AgentProfileLoader.kt$AgentProfileLoader$private fun sectionKeyForAction(actionName: String?): String</ID>
     <ID>CyclomaticComplexMethod:AgentSettings.kt$AgentSettingsRepository$fun load(): AgentSettings</ID>
     <ID>CyclomaticComplexMethod:AgentSettings.kt$AgentSettingsRepository$private fun loadMcpSettings(): McpSettings</ID>
-    <ID>CyclomaticComplexMethod:AgentSupervisor.kt$AgentSupervisor$private fun buildLaunchConfig( backendId: String, sessionId: String, embeddedMode: Boolean, cliSessionId: String? = null, ): BackendLaunchConfig</ID>
     <ID>CyclomaticComplexMethod:AgentSupervisor.kt$AgentSupervisor.Companion$internal fun tokenizeCommand( command: String, isWindows: Boolean = System.getProperty("os.name").lowercase(java.util.Locale.ROOT).contains("win"), ): List&lt;String></ID>
     <ID>CyclomaticComplexMethod:AiLoggerPanel.kt$AiLoggerPanel$private fun applyFilter()</ID>
     <ID>CyclomaticComplexMethod:AiLoggerPanel.kt$AiLoggerPanel.AiLogTableModel$override fun getValueAt( rowIndex: Int, columnIndex: Int, ): Any</ID>
@@ -23,7 +22,6 @@
     <ID>CyclomaticComplexMethod:ChatPanel.kt$ChatPanel$fun restoreSessions()</ID>
     <ID>CyclomaticComplexMethod:ChatPanel.kt$ChatPanel$private fun maybeMigrateGlobalToProject(projectStore: burp.api.montoya.persistence.PersistedObject)</ID>
     <ID>CyclomaticComplexMethod:ChatPanel.kt$ChatPanel$private fun sendMessage( sessionId: String, userText: String, contextJson: String?, allowToolCalls: Boolean, actionName: String? = null, onCompleted: ((String, Throwable?) -> Unit)? = null, toolIterationsLeft: Int = MAX_AUTO_TOOL_ITERATIONS, traceId: String = "chat-turn-" + UUID.randomUUID().toString(), )</ID>
-    <ID>CyclomaticComplexMethod:CliBackend.kt$CliBackend.CliConnection$private fun readEmbeddedResponse( text: String, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, )</ID>
     <ID>CyclomaticComplexMethod:CliBackend.kt$CliBackend.NonInteractiveCliConnection$override fun send( text: String, history: List&lt;ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
     <ID>CyclomaticComplexMethod:CustomPromptDialog.kt$CustomPromptDialog$fun ask( parent: Component?, targetLabel: String, relevantSaved: List&lt;CustomPromptDefinition>, ): String?</ID>
     <ID>CyclomaticComplexMethod:CustomPromptLibraryEditor.kt$CustomPromptEditDialog$fun show( parent: JComponent, existing: CustomPromptDefinition?, ): CustomPromptDefinition?</ID>
@@ -80,7 +78,6 @@
     <ID>LongMethod:AgentSettings.kt$AgentSettingsRepository$fun save(settings: AgentSettings)</ID>
     <ID>LongMethod:AgentSupervisor.kt$AgentSupervisor$fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>? = null, contextJson: String?, privacyMode: PrivacyMode, determinismMode: Boolean, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, traceId: String? = null, systemPrompt: String? = null, jsonMode: Boolean = false, maxOutputTokens: Int? = null, )</ID>
     <ID>LongMethod:AgentSupervisor.kt$AgentSupervisor$fun sendChat( chatSessionId: String, backendId: String, text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>? = null, contextJson: String?, privacyMode: PrivacyMode, determinismMode: Boolean, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, traceId: String? = null, systemPrompt: String? = null, maxOutputTokens: Int? = null, launchMetadata: Map&lt;String, String>? = null, ): com.six2dez.burp.aiagent.backends.AgentConnection?</ID>
-    <ID>LongMethod:AgentSupervisor.kt$AgentSupervisor$private fun buildLaunchConfig( backendId: String, sessionId: String, embeddedMode: Boolean, cliSessionId: String? = null, ): BackendLaunchConfig</ID>
     <ID>LongMethod:AiPassiveScanCheckTest.kt$AiPassiveScanCheckTest$private fun testSettings(): AgentSettings</ID>
     <ID>LongMethod:AnthropicBackend.kt$AnthropicBackend.AnthropicConnection$override fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
     <ID>LongMethod:App.kt$App$fun initialize(montoyaApi: MontoyaApi)</ID>
@@ -127,7 +124,6 @@
     <ID>LoopWithTooManyJumpStatements:BountyPromptLoader.kt$BountyPromptLoader$for</ID>
     <ID>LoopWithTooManyJumpStatements:BountyPromptOutputParser.kt$BountyPromptOutputParser$for</ID>
     <ID>LoopWithTooManyJumpStatements:ChatPanel.kt$ChatPanel$for</ID>
-    <ID>LoopWithTooManyJumpStatements:CliBackend.kt$CliBackend.CliConnection$while</ID>
     <ID>LoopWithTooManyJumpStatements:CliBackend.kt$CliBackend.NonInteractiveCliConnection$for</ID>
     <ID>LoopWithTooManyJumpStatements:CliBackend.kt$CliBackend.NonInteractiveCliConnection$while</ID>
     <ID>LoopWithTooManyJumpStatements:CliBackend.kt$for</ID>
@@ -347,14 +343,6 @@
     <ID>MagicNumber:ChatPanel.kt$ChatPanel.TokenBar$80</ID>
     <ID>MagicNumber:CliBackend.kt$CliBackend$30</ID>
     <ID>MagicNumber:CliBackend.kt$CliBackend$3600</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$1000L</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$1500</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$200</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$2000</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$250</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$3</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$50</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$60_000</ID>
     <ID>MagicNumber:CliBackend.kt$CliBackend.NonInteractiveCliConnection$1000L</ID>
     <ID>MagicNumber:CliBackend.kt$CliBackend.NonInteractiveCliConnection$120</ID>
     <ID>MagicNumber:CliBackend.kt$CliBackend.NonInteractiveCliConnection$200</ID>
@@ -975,7 +963,6 @@
     <ID>TooGenericExceptionCaught:BurpAiBackend.kt$BurpAiConnection$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ChatPanel.kt$ChatPanel$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ChatSessionManager.kt$ChatSessionManager$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:CliBackend.kt$CliBackend.CliConnection$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CliBackend.kt$CliBackend.NonInteractiveCliConnection$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CustomPromptDefinition.kt$CustomPromptDefinition.Companion$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CustomPromptLibraryEditor.kt$CustomPromptLibraryEditor$e: Exception</ID>

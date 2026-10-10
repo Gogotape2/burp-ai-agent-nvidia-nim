@@ -7,7 +7,6 @@ import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.backends.AgentConnection
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.BackendRegistry
-import com.six2dez.burp.aiagent.backends.DiagnosableConnection
 import com.six2dez.burp.aiagent.backends.HealthCheckResult
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
 import com.six2dez.burp.aiagent.config.AgentSettings
@@ -191,7 +190,7 @@ class AgentSupervisor(
             backend = resolved
 
             sessionId = "session-" + UUID.randomUUID().toString()
-            launchConfig = buildLaunchConfig(backendId, sessionId, embeddedMode = true)
+            launchConfig = buildLaunchConfig(backendId, sessionId)
 
             // Set transitional STARTING state before releasing lock.
             // Keep a reference for the CAS below (AtomicReference uses identity comparison).
@@ -462,7 +461,6 @@ class AgentSupervisor(
             buildLaunchConfig(
                 backendId,
                 chatSessionId,
-                embeddedMode = true,
                 cliSessionId = cliSessionId,
             )
 
@@ -622,10 +620,12 @@ class AgentSupervisor(
         )
     }
 
+    // Suppressed here rather than baselined (ADR-17 forbids new baseline entries): one branch per
+    // registered backend; the CLI branches move to the src/full dialect in plan 29-12.
+    @Suppress("CyclomaticComplexMethod", "LongMethod")
     private fun buildLaunchConfig(
         backendId: String,
         sessionId: String,
-        embeddedMode: Boolean,
         cliSessionId: String? = null,
     ): BackendLaunchConfig {
         val prefs = api.persistence().preferences()
@@ -667,12 +667,11 @@ class AgentSupervisor(
                 )
             "codex-cli" -> {
                 val cmd = (settings?.codexCmd ?: prefs.getString("codex.cmd") ?: "codex").trim()
-                val env = embeddedCliEnv(baseEnv, embeddedMode)
+                val env = embeddedCliEnv(baseEnv)
                 BackendLaunchConfig(
                     backendId = backendId,
                     displayName = "Codex CLI",
                     command = tokenizeCommand(cmd),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = env,
@@ -682,12 +681,11 @@ class AgentSupervisor(
             }
             "gemini-cli" -> {
                 val cmd = (settings?.geminiCmd ?: prefs.getString("gemini.cmd") ?: "gemini").trim()
-                val env = embeddedCliEnv(baseEnv, embeddedMode)
+                val env = embeddedCliEnv(baseEnv)
                 BackendLaunchConfig(
                     backendId = backendId,
                     displayName = "Gemini CLI",
                     command = tokenizeCommand(cmd),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = env,
@@ -698,12 +696,11 @@ class AgentSupervisor(
             "opencode-cli" -> {
                 val baseCmd = (settings?.opencodeCmd ?: prefs.getString("opencode.cmd") ?: "opencode").trim()
                 val cmdParts = tokenizeCommand(baseCmd)
-                val env = embeddedCliEnv(baseEnv, embeddedMode)
+                val env = embeddedCliEnv(baseEnv)
                 BackendLaunchConfig(
                     backendId = backendId,
                     displayName = "OpenCode CLI",
                     command = cmdParts,
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = env,
@@ -713,12 +710,11 @@ class AgentSupervisor(
             }
             "claude-cli" -> {
                 val cmd = (settings?.claudeCmd ?: prefs.getString("claude.cmd") ?: "claude").trim()
-                val env = embeddedCliEnv(baseEnv, embeddedMode)
+                val env = embeddedCliEnv(baseEnv)
                 BackendLaunchConfig(
                     backendId = backendId,
                     displayName = "Claude Code",
                     command = tokenizeCommand(cmd),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = env,
@@ -747,7 +743,6 @@ class AgentSupervisor(
                     model = model,
                     headers = headers,
                     requestTimeoutSeconds = timeoutSeconds.toLong(),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = baseEnv,
@@ -778,7 +773,6 @@ class AgentSupervisor(
                     model = model,
                     headers = headers,
                     requestTimeoutSeconds = timeoutSeconds.toLong(),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = baseEnv,
@@ -806,7 +800,6 @@ class AgentSupervisor(
                     model = model,
                     headers = headers,
                     requestTimeoutSeconds = timeoutSeconds.toLong(),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = baseEnv,
@@ -834,7 +827,6 @@ class AgentSupervisor(
                     model = model,
                     headers = headers,
                     requestTimeoutSeconds = timeoutSeconds.toLong(),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = baseEnv,
@@ -865,7 +857,6 @@ class AgentSupervisor(
                     model = model,
                     headers = headers,
                     requestTimeoutSeconds = timeoutSeconds.toLong(),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = baseEnv,
@@ -890,7 +881,6 @@ class AgentSupervisor(
                     model = model,
                     headers = mapOf("x-api-key" to apiKey, "anthropic-version" to "2023-06-01"),
                     requestTimeoutSeconds = timeoutSeconds.toLong(),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = baseEnv,
@@ -901,12 +891,11 @@ class AgentSupervisor(
             }
             "copilot-cli" -> {
                 val cmd = (settings?.copilotCmd ?: prefs.getString("copilot.cmd") ?: "copilot").trim()
-                val env = embeddedCliEnv(baseEnv, embeddedMode)
+                val env = embeddedCliEnv(baseEnv)
                 BackendLaunchConfig(
                     backendId = backendId,
                     displayName = "Copilot CLI",
                     command = tokenizeCommand(cmd),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = env,
@@ -914,16 +903,12 @@ class AgentSupervisor(
                     cliTimeoutSeconds = settings?.cliTimeoutSeconds,
                 )
             }
-            else -> BackendLaunchConfig(backendId, backendId, embeddedMode = embeddedMode, env = baseEnv, cliSessionId = cliSessionId)
+            else -> BackendLaunchConfig(backendId, backendId, env = baseEnv, cliSessionId = cliSessionId)
         }
     }
 
-    private fun embeddedCliEnv(
-        baseEnv: Map<String, String>,
-        embeddedMode: Boolean,
-    ): Map<String, String> {
-        if (!embeddedMode) return baseEnv
-        return baseEnv +
+    private fun embeddedCliEnv(baseEnv: Map<String, String>): Map<String, String> =
+        baseEnv +
             mapOf(
                 "CI" to "1",
                 "TERM" to "dumb",
@@ -932,7 +917,6 @@ class AgentSupervisor(
                 "FORCE_COLOR" to "0",
                 "BURP_AI_AGENT_EMBEDDED" to "1",
             )
-    }
 
     private fun resolveOllamaModel(settings: AgentSettings?): String {
         val cmd = settings?.ollamaCliCmd?.trim().orEmpty()
@@ -990,12 +974,8 @@ class AgentSupervisor(
 
         if (immediateCrash) {
             val immediate = immediateCrashCount.incrementAndGet()
-            val detail = buildExitDetail(current.connection)
-            if (detail.isNotBlank()) {
-                api.logging().logToError("Agent exited immediately: $backendId.$detail")
-            }
             if (immediate >= 3) {
-                val msg = "Auto-restart suppressed: $backendId exits immediately. Check CLI config/auth.$detail"
+                val msg = "Auto-restart suppressed: $backendId exits immediately. Check CLI config/auth."
                 autoRestartSuppressed.set(msg)
                 lastErrorRef.set(msg)
                 api.logging().logToError(msg)
@@ -1009,13 +989,6 @@ class AgentSupervisor(
         api.logging().logToError("Agent crashed. Auto-restarting in ${backoffMs}ms (attempt $attempt).")
 
         workerPool.submit { startOrAttach(backendId) }
-    }
-
-    private fun buildExitDetail(conn: AgentConnection): String {
-        if (conn !is DiagnosableConnection) return ""
-        val code = conn.exitCode()?.let { " exit=$it" }.orEmpty()
-        val tail = conn.lastOutputTail()?.let { "\nOutput:\n$it" }.orEmpty()
-        return if (code.isNotBlank() || tail.isNotBlank()) "$code$tail" else ""
     }
 
     private fun startService(
@@ -1069,7 +1042,7 @@ class AgentSupervisor(
      */
     private fun redactedConfigSummary(config: BackendLaunchConfig): String =
         "BackendLaunchConfig(backendId=${config.backendId}, displayName=${config.displayName}, " +
-            "model=${config.model}, baseUrl=${config.baseUrl}, embeddedMode=${config.embeddedMode}, " +
+            "model=${config.model}, baseUrl=${config.baseUrl}, " +
             "headers=[${config.headers.keys.joinToString()}])"
 
     private fun safeLogOutput(message: String) {

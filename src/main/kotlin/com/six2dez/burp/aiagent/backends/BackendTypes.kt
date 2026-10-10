@@ -10,7 +10,6 @@ data class BackendLaunchConfig(
     val model: String? = null,
     val headers: Map<String, String> = emptyMap(),
     val requestTimeoutSeconds: Long? = null,
-    val embeddedMode: Boolean = false,
     val sessionId: String? = null,
     val determinismMode: Boolean = false,
     val env: Map<String, String> = emptyMap(),
@@ -73,12 +72,6 @@ interface AgentConnection {
     )
 
     fun stop()
-}
-
-interface DiagnosableConnection {
-    fun exitCode(): Int?
-
-    fun lastOutputTail(): String?
 }
 
 interface UsageAwareConnection {
