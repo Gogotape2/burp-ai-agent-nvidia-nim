@@ -34,8 +34,9 @@ import java.io.File
 class SchedulerGuardCoverageTest {
     /**
      * REL-06-D — the allowlist. Every file under either production root (`src/main/kotlin`,
-     * `src/full/kotlin`) that still calls a recurring schedule directly must be one of the three that
-     * are allowed to.
+     * `src/full/kotlin`) that still calls a recurring schedule directly must be one of the two that
+     * are allowed to. (AgentSupervisor.kt left the list when DEAD-01, plan 29-05, deleted its
+     * auto-restart health monitor.)
      *
      * Compared as a **sorted set of file names**, never a list: a directory walk returns files in
      * filesystem order, which is not stable across platforms, and an order-sensitive assertion would
@@ -48,10 +49,9 @@ class SchedulerGuardCoverageTest {
         assertEquals(
             ALLOWLIST.toSortedSet(),
             actual,
-            "REL-06 scheduler allowlist. Exactly three files under ${SourceRoots.PRODUCTION} may call " +
+            "REL-06 scheduler allowlist. Exactly two files under ${SourceRoots.PRODUCTION} may call " +
                 "a recurring schedule directly:\n" +
                 "  - GuardedScheduling.kt — the guard helper itself; the one place the JDK call is made.\n" +
-                "  - AgentSupervisor.kt — the health monitor's pre-existing inline try/catch guard.\n" +
                 "  - ActiveAiScanner.kt — the OAST poller's pre-existing inline try/catch guard.\n" +
                 "Any OTHER file name in this set means a new recurring schedule was added that bypasses " +
                 "`scheduleGuarded`, so a single throw in its body will silently cancel it for the rest " +
@@ -64,8 +64,8 @@ class SchedulerGuardCoverageTest {
     }
 
     /**
-     * The two grandfathered survivors really are guarded, rather than merely being on the list by
-     * name. Without this, deleting `AgentSupervisor`'s inline `try` would leave assertion 1 green.
+     * The grandfathered survivor really is guarded, rather than merely being on the list by name.
+     * Without this, deleting `ActiveAiScanner`'s inline `try` would leave assertion 1 green.
      */
     @Test
     fun everyAllowlistedRecurringScheduleOutsideTheHelperOpensATryImmediatelyBelowIt() {
@@ -156,7 +156,7 @@ class SchedulerGuardCoverageTest {
         const val AT_FIXED_RATE = "scheduleAtFixedRate("
         const val WITH_FIXED_DELAY = "scheduleWithFixedDelay("
 
-        val ALLOWLIST = listOf(GUARD_HELPER, "AgentSupervisor.kt", "ActiveAiScanner.kt")
+        val ALLOWLIST = listOf(GUARD_HELPER, "ActiveAiScanner.kt")
 
         val ONE_SHOT_SCHEDULERS = listOf("ExternalMcpClientManager.kt", "McpSupervisor.kt")
     }

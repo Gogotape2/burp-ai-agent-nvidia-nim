@@ -25,7 +25,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
@@ -398,8 +397,7 @@ class AuditWritePathTest {
         logger.verbose = verbose
         val registry = mock<BackendRegistry>()
         whenever(registry.get(BACKEND_ID)).thenReturn(FakeBackend())
-        val pool = Executors.newSingleThreadExecutor { r -> Thread(r, "audit-test-worker").apply { isDaemon = true } }
-        val supervisor = AgentSupervisor(api = api, registry = registry, audit = logger, workerPool = pool)
+        val supervisor = AgentSupervisor(api = api, registry = registry, audit = logger)
         try {
             val baseline = TestSettings.baselineSettings(BACKEND_ID)
             supervisor.applySettings(
@@ -414,7 +412,6 @@ class AuditWritePathTest {
             block(supervisor)
         } finally {
             supervisor.shutdown()
-            pool.shutdownNow()
         }
     }
 

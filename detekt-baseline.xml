@@ -212,11 +212,7 @@
     <ID>MagicNumber:AgentSettings.kt$AgentSettingsRepository$64</ID>
     <ID>MagicNumber:AgentSettings.kt$AgentSettingsRepository$65535</ID>
     <ID>MagicNumber:AgentSettings.kt$AgentSettingsRepository$80_000</ID>
-    <ID>MagicNumber:AgentSupervisor.kt$AgentSupervisor$1000L</ID>
     <ID>MagicNumber:AgentSupervisor.kt$AgentSupervisor$3</ID>
-    <ID>MagicNumber:AgentSupervisor.kt$AgentSupervisor$30_000L</ID>
-    <ID>MagicNumber:AgentSupervisor.kt$AgentSupervisor$5</ID>
-    <ID>MagicNumber:AgentSupervisor.kt$AgentSupervisor$5_000</ID>
     <ID>MagicNumber:AgentSupervisor.kt$AgentSupervisor.Companion$5</ID>
     <ID>MagicNumber:AiLoggerPanel.kt$AiLoggerPanel$0.7</ID>
     <ID>MagicNumber:AiLoggerPanel.kt$AiLoggerPanel$10</ID>
@@ -266,7 +262,6 @@
     <ID>MagicNumber:AnthropicBackend.kt$AnthropicBackend.AnthropicConnection$500</ID>
     <ID>MagicNumber:AnthropicBackend.kt$AnthropicBackend.AnthropicConnection$6</ID>
     <ID>MagicNumber:AnthropicBackend.kt$AnthropicBackend.AnthropicConnection$800</ID>
-    <ID>MagicNumber:App.kt$App$5</ID>
     <ID>MagicNumber:AuditLogger.kt$AuditLogger$8</ID>
     <ID>MagicNumber:BackendConfigPanel.kt$BackendConfigPanel$20</ID>
     <ID>MagicNumber:BackendConfigPanel.kt$BackendConfigPanel$3</ID>
@@ -828,7 +823,6 @@
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>? = null, contextJson: String?, privacyMode: PrivacyMode, determinismMode: Boolean, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, traceId: String? = null, systemPrompt: String? = null, jsonMode: Boolean = false, maxOutputTokens: Int? = null, )</ID>
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$fun sendChat( chatSessionId: String, backendId: String, text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>? = null, contextJson: String?, privacyMode: PrivacyMode, determinismMode: Boolean, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, traceId: String? = null, systemPrompt: String? = null, maxOutputTokens: Int? = null, launchMetadata: Map&lt;String, String>? = null, ): com.six2dez.burp.aiagent.backends.AgentConnection?</ID>
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$fun startOrAttach(backendId: String): Boolean</ID>
-    <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$private fun checkHealth()</ID>
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$private fun parseOllamaModelFromCli(cmd: String): String?</ID>
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$private fun startService( name: String, cmd: String, ): Boolean</ID>
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor.Companion$fun buildCliPathStatic(): String</ID>
@@ -952,7 +946,6 @@
     <ID>TooGenericExceptionCaught:AgentSettings.kt$AgentSettingsRepository$e: Throwable</ID>
     <ID>TooGenericExceptionCaught:AgentSettings.kt$AgentSettingsRepository.Companion$e: Exception</ID>
     <ID>TooGenericExceptionCaught:AgentSupervisor.kt$AgentSupervisor$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:AgentSupervisor.kt$AgentSupervisor$e: Throwable</ID>
     <ID>TooGenericExceptionCaught:AiLoggerPanel.kt$AiLoggerPanel$e: Exception</ID>
     <ID>TooGenericExceptionCaught:AiScanCheck.kt$AiScanCheck$e: Exception</ID>
     <ID>TooGenericExceptionCaught:AnthropicBackend.kt$AnthropicBackend.AnthropicConnection$e: Exception</ID>

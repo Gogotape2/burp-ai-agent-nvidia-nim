@@ -10,7 +10,6 @@ import org.junit.jupiter.api.Test
 import org.mockito.Answers
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
-import java.util.concurrent.Executors
 
 /**
  * Regression tests for the v0.6.0 → v0.6.x bug where Burp Pro's "Use AI" toggle was incorrectly
@@ -87,6 +86,5 @@ class BurpAiGateScopingTest {
             api = api,
             registry = BackendRegistry(api),
             audit = mock<AuditLogger>(),
-            workerPool = Executors.newSingleThreadExecutor { r -> Thread(r, "test-worker").apply { isDaemon = true } },
         )
 }

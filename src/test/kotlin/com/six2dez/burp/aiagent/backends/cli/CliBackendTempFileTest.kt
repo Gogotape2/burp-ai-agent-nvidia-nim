@@ -464,7 +464,7 @@ class CliBackendTempFileTest {
      * T-24-07).
      */
     @Test
-    fun appShutdownDrainsTheRegistryAfterTheBackendRegistryAndBeforeTheWorkerPool() {
+    fun appShutdownDrainsTheRegistryAfterTheBackendRegistryAndBeforeTheRedactionMappings() {
         val code = codeLinesOf(APP_SOURCE)
 
         assertEquals(
@@ -483,12 +483,14 @@ class CliBackendTempFileTest {
 
         val backendRegistryStep = code.indexOfFirst { it.contains("safeShutdownStep(\"Backend registry\")") }
         val cliTempFilesStep = code.indexOfFirst { it.contains("safeShutdownStep(\"CLI temp files\")") }
-        val workerPoolStep = code.indexOfFirst { it.contains("safeShutdownStep(\"Worker pool\")") }
+        // The "Worker pool" step that used to follow the drain went with the pool (DEAD-01, plan 29-05);
+        // "Redaction mappings" is now the drain's next neighbour.
+        val redactionMappingsStep = code.indexOfFirst { it.contains("safeShutdownStep(\"Redaction mappings\")") }
 
         assertTrue(
-            backendRegistryStep >= 0 && workerPoolStep >= 0,
+            backendRegistryStep >= 0 && redactionMappingsStep >= 0,
             "App ledger: both neighbouring steps must still exist, or this ordering assertion is vacuous. " +
-                "Found Backend registry at $backendRegistryStep and Worker pool at $workerPoolStep.",
+                "Found Backend registry at $backendRegistryStep and Redaction mappings at $redactionMappingsStep.",
         )
         assertTrue(
             cliTempFilesStep > backendRegistryStep,
@@ -498,9 +500,9 @@ class CliBackendTempFileTest {
                 "out from under it.",
         )
         assertTrue(
-            cliTempFilesStep < workerPoolStep,
-            "App ledger: the drain must run BEFORE the worker pool is torn down, so the step order stays " +
-                "the one D-03 fixed and reviewed.",
+            cliTempFilesStep < redactionMappingsStep,
+            "App ledger: the drain must run BEFORE the redaction mappings are cleared, so the step order " +
+                "stays the one D-03 fixed and reviewed.",
         )
     }
 

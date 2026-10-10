@@ -14,11 +14,7 @@ import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.util.HeaderParser
 import java.util.UUID
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -27,7 +23,6 @@ class AgentSupervisor(
     private val api: MontoyaApi,
     private val registry: BackendRegistry,
     private val audit: AuditLogger,
-    private val workerPool: ExecutorService,
 ) {
     var aiRequestLogger: AiRequestLogger? = null
 
@@ -54,46 +49,18 @@ class AgentSupervisor(
             val sessionId: String,
             val connection: AgentConnection,
             val launchConfig: BackendLaunchConfig,
-            val startedAt: Long,
         ) : AgentState()
     }
 
     private val stateRef = AtomicReference<AgentState>(AgentState.Idle)
     private val settingsRef = AtomicReference<AgentSettings?>(null)
     private val lastErrorRef = AtomicReference<String?>(null)
-    private val crashCount = AtomicInteger(0)
-    private val lastRestartAt = AtomicLong(0)
-    private val autoRestartSuppressed = AtomicReference<String?>(null)
-    private val immediateCrashCount = AtomicInteger(0)
     private val chatSessionManager = ChatSessionManager()
     internal val httpTransport = MontoyaHttpTransport(api)
     private val services = java.util.concurrent.ConcurrentHashMap<String, Process>()
     private val lifecycleLock = ReentrantLock()
 
-    // REL-07 / SC6: a named daemon factory so a Burp thread dump identifies this scheduler as the
-    // supervisor's health monitor instead of showing an anonymous `pool-N-thread-M`. Size and
-    // interval are unchanged; this is naming only.
-    private val monitorExec =
-        Executors.newSingleThreadScheduledExecutor { runnable ->
-            Thread(runnable, "burp-ai-agent-supervisor-monitor").apply { isDaemon = true }
-        }
-
     init {
-        monitorExec.scheduleAtFixedRate(
-            {
-                // scheduleAtFixedRate silently cancels the recurring task if any run throws an
-                // uncaught exception — guard so a transient checkHealth() failure can't stop the
-                // health monitor (and with it auto-restart) for the rest of the session.
-                try {
-                    checkHealth()
-                } catch (e: Throwable) {
-                    api.logging().logToError("[AgentSupervisor] health check failed: ${e.message}")
-                }
-            },
-            Defaults.HEALTH_CHECK_INTERVAL_MS,
-            Defaults.HEALTH_CHECK_INTERVAL_MS,
-            TimeUnit.MILLISECONDS,
-        )
         // BUG-69-01: HTTP backends' health checks must use Burp's HTTP stack (upstream proxy /
         // SOCKS / cert store). The registry remembers the transport and re-applies it to every
         // HttpTransportAware backend on reload(), so a Settings save no longer drops it.
@@ -161,8 +128,6 @@ class AgentSupervisor(
 
         lifecycleLock.withLock {
             lastErrorRef.set(null)
-            autoRestartSuppressed.set(null)
-            immediateCrashCount.set(0)
 
             // Check if already running the requested backend
             val current = stateRef.get()
@@ -209,7 +174,6 @@ class AgentSupervisor(
                     sessionId = sessionId,
                     connection = conn,
                     launchConfig = launchConfig,
-                    startedAt = System.currentTimeMillis(),
                 )
 
             // Only transition if still in STARTING state (stop() may have been called).
@@ -282,18 +246,6 @@ class AgentSupervisor(
                 }
                 is AgentState.Idle -> { /* nothing */ }
             }
-            autoRestartSuppressed.set(null)
-            immediateCrashCount.set(0)
-        }
-    }
-
-    fun restart(): Boolean {
-        return lifecycleLock.withLock {
-            val current = stateRef.get()
-            if (current !is AgentState.Running) return@withLock false
-            val backendId = current.backendId
-            stop()
-            startOrAttach(backendId)
         }
     }
 
@@ -939,58 +891,6 @@ class AgentSupervisor(
         return null
     }
 
-    private fun checkHealth() {
-        // Snapshot state atomically — if it's not Running, skip
-        val current = stateRef.get() as? AgentState.Running ?: return
-
-        if (current.connection.isAlive()) {
-            val startedAt = current.startedAt
-            if (startedAt > 0 && System.currentTimeMillis() - startedAt > 5_000) {
-                crashCount.set(0)
-                autoRestartSuppressed.set(null)
-                immediateCrashCount.set(0)
-            }
-            return
-        }
-
-        // Verify state hasn't changed since we checked isAlive (another thread may have called stop())
-        if (stateRef.get() !== current) return
-
-        val settings = settingsRef.get() ?: return
-        if (!settings.autoRestart) return
-        if (autoRestartSuppressed.get() != null) return
-
-        val startedAt = current.startedAt
-        val now = System.currentTimeMillis()
-        val immediateCrash = startedAt > 0 && (now - startedAt) < 5_000
-
-        val failures = crashCount.get().coerceAtLeast(1)
-        val backoffMs = (1000L * (1 shl failures.coerceAtMost(5))).coerceAtMost(30_000L)
-        val last = lastRestartAt.get()
-        if (now - last < backoffMs) return
-
-        val attempt = crashCount.incrementAndGet()
-        val backendId = current.backendId
-
-        if (immediateCrash) {
-            val immediate = immediateCrashCount.incrementAndGet()
-            if (immediate >= 3) {
-                val msg = "Auto-restart suppressed: $backendId exits immediately. Check CLI config/auth."
-                autoRestartSuppressed.set(msg)
-                lastErrorRef.set(msg)
-                api.logging().logToError(msg)
-                return
-            }
-        } else {
-            immediateCrashCount.set(0)
-        }
-
-        lastRestartAt.set(now)
-        api.logging().logToError("Agent crashed. Auto-restarting in ${backoffMs}ms (attempt $attempt).")
-
-        workerPool.submit { startOrAttach(backendId) }
-    }
-
     private fun startService(
         name: String,
         cmd: String,
@@ -1006,11 +906,9 @@ class AgentSupervisor(
                     .start()
             services[name] = process
             // REL-07 / SC6: this pump calls reader.forEachLine, which occupies its thread for the
-            // ENTIRE lifetime of the service process. It used to run on the shared workerPool; once
-            // that pool is bounded (App.kt) a never-returning task on it parks one worker thread per
-            // managed service and queues the auto-restart submit in scheduleRestart forever.
-            // Unbounded-duration work belongs on its own dedicated daemon thread (Phase 23 D-05),
-            // the same shape CliBackend.kt already uses for its reader thread. The body is unchanged.
+            // ENTIRE lifetime of the service process. Unbounded-duration work belongs on its own
+            // dedicated, named daemon thread (Phase 23 D-05), never on a shared pool where it would
+            // park a worker for as long as the service runs.
             val pumpThread =
                 Thread({
                     try {
@@ -1066,15 +964,6 @@ class AgentSupervisor(
     fun shutdown() {
         stop()
         chatSessionManager.shutdown()
-        monitorExec.shutdown()
-        try {
-            if (!monitorExec.awaitTermination(3, TimeUnit.SECONDS)) {
-                monitorExec.shutdownNow()
-            }
-        } catch (_: InterruptedException) {
-            // INTENTIONAL: interrupt during monitor shutdown; shutdownNow() called; interrupt flag restored via JVM
-            monitorExec.shutdownNow()
-        }
         for ((name, process) in services) {
             try {
                 process.destroyForcibly()
