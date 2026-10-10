@@ -8,7 +8,10 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Answers
 import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
 class AgentSettingsMigrationTest {
@@ -200,10 +203,40 @@ class AgentSettingsMigrationTest {
         }
     }
 
+    /**
+     * DEAD-01 (plan 29-05): the auto-restart setting is gone, and its stored preference is left where
+     * it is. Core neither reads `agent.autorestart` on load nor writes or deletes it on save, so a
+     * value an earlier version stored survives a save byte for byte (D-08 spirit: removed keys stay).
+     */
+    @Test
+    fun storedAutoRestartPreferenceSurvivesSaveAndIsNeverRead() {
+        val prefs = InMemoryPrefs()
+        prefs.booleans[REMOVED_AUTO_RESTART_KEY] = false
+        val repo = AgentSettingsRepository(apiWith(prefs.mock))
+
+        repo.load()
+        // defaultSettings() rather than the loaded snapshot: while the field existed its default (true)
+        // would overwrite the stored false, so this save is what proves the key is no longer written.
+        repo.save(repo.defaultSettings())
+
+        assertEquals(
+            false,
+            prefs.booleans[REMOVED_AUTO_RESTART_KEY],
+            "a save must leave the stored `$REMOVED_AUTO_RESTART_KEY` value untouched",
+        )
+        verify(prefs.mock, never()).getBoolean(eq(REMOVED_AUTO_RESTART_KEY))
+        verify(prefs.mock, never()).setBoolean(eq(REMOVED_AUTO_RESTART_KEY), any())
+        verify(prefs.mock, never()).deleteBoolean(eq(REMOVED_AUTO_RESTART_KEY))
+    }
+
     private fun apiWith(preferences: Preferences): MontoyaApi {
         val api = mock<MontoyaApi>(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
         whenever(api.persistence().preferences()).thenReturn(preferences)
         return api
+    }
+
+    private companion object {
+        const val REMOVED_AUTO_RESTART_KEY = "agent.autorestart"
     }
 
     private class InMemoryPrefs {

@@ -74,6 +74,9 @@ class DeadCodeGuardTest {
                 "val myMcpToolLegacyNote = 2",
                 "import com.six2dez.burp.aiagent.alertsv2.Thing",
                 "val mcpToolCount = 3",
+                "private class NonInteractiveCliConnection(",
+                "if (recheckHealth) requestHealthCheck()",
+                "val autoRestartLabel = 4",
             )
         assertEquals(
             emptyList<String>(),
@@ -131,6 +134,26 @@ class DeadCodeGuardTest {
                 DeletedSymbol("toLowerSnakeCase", "DEAD-01: tool-name helper, only called by the deleted Server.mcpTool"),
                 DeletedSymbol("Alerting", "NET-02: unwired webhook object with its own OkHttp client, deleted by plan 29-04"),
                 DeletedSymbol("com.six2dez.burp.aiagent.alerts", "NET-02: the alerts package, which held only Alerting"),
+                DeletedSymbol("CliConnection", "DEAD-01 (plan 29-05): the interactive CLI connection behind the always-true embedded switch"),
+                DeletedSymbol("buildPtyCommand", "DEAD-01 (plan 29-05): the PTY wrapper that joined escaped argv into one shell string"),
+                DeletedSymbol("shellEscape", "DEAD-01 (plan 29-05): shell quoting for the deleted PTY wrapper"),
+                DeletedSymbol("isUnixLike", "DEAD-01 (plan 29-05): the PTY wrapper's OS check"),
+                DeletedSymbol("usePty", "DEAD-01 (plan 29-05): the PTY switch in CliBackend.launch"),
+                DeletedSymbol("embeddedMode", "DEAD-01 (plan 29-05): BackendLaunchConfig switch that was always true"),
+                DeletedSymbol("DiagnosableConnection", "DEAD-01 (plan 29-05): implemented only by the deleted CliConnection"),
+                DeletedSymbol("monitorExec", "DEAD-01 (plan 29-05): the auto-restart health monitor's scheduler"),
+                DeletedSymbol("checkHealth", "DEAD-01 (plan 29-05): the auto-restart health monitor's recurring task"),
+                DeletedSymbol("buildExitDetail", "DEAD-01 (plan 29-05): the monitor's exit-detail reader of DiagnosableConnection"),
+                DeletedSymbol("autoRestartSuppressed", "DEAD-01 (plan 29-05): auto-restart monitor counter"),
+                DeletedSymbol("immediateCrashCount", "DEAD-01 (plan 29-05): auto-restart monitor counter"),
+                DeletedSymbol("lastRestartAt", "DEAD-01 (plan 29-05): auto-restart monitor counter"),
+                DeletedSymbol("HEALTH_CHECK_INTERVAL_MS", "DEAD-01 (plan 29-05): the auto-restart monitor's interval"),
+                DeletedSymbol("workerPool", "DEAD-01 (plan 29-05): App's fixed pool, whose only work was the auto-restart submit"),
+                DeletedSymbol("workerPoolThreadFactory", "DEAD-01 (plan 29-05): thread factory of the deleted worker pool"),
+                DeletedSymbol("MAX_WORKER_THREADS", "DEAD-01 (plan 29-05): ceiling of the deleted worker pool"),
+                DeletedSymbol("autoRestart", "DEAD-01 (plan 29-05): the auto-restart setting and its Privacy tab row"),
+                DeletedSymbol("KEY_AUTORESTART", "DEAD-01 (plan 29-05): preference key constant of the removed setting"),
+                DeletedSymbol("agent.autorestart", "DEAD-01 (plan 29-05): the stored key is left in preferences, never read or written"),
             )
 
         /** Root-relative paths that must exist in neither production root. Append-only. */
