@@ -3,18 +3,9 @@ package com.six2dez.burp.aiagent.mcp.tools
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.audit.Hashing
 import com.six2dez.burp.aiagent.mcp.McpToolContext
-import com.six2dez.burp.aiagent.mcp.schema.asInputSchema
 import io.modelcontextprotocol.kotlin.sdk.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.TextContent
-import io.modelcontextprotocol.kotlin.sdk.Tool
-import io.modelcontextprotocol.kotlin.sdk.server.Server
-import kotlinx.serialization.InternalSerializationApi
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.serializer
-import kotlin.experimental.ExperimentalTypeInference
 
-@PublishedApi
-internal val json = Json { ignoreUnknownKeys = true }
 private const val MAX_ERROR_MESSAGE_LENGTH = 500
 private const val MCP_TOOL_EVENT_START = "mcp_tool_start"
 private const val MCP_TOOL_EVENT_END = "mcp_tool_end"
@@ -22,87 +13,6 @@ private const val MCP_TOOL_EVENT_BLOCKED = "mcp_tool_blocked"
 private val unixAbsPathRegex = Regex("""/(?:Users|home|var|tmp|opt|etc|private|Library|Applications)(?:/[^\s:]+)+""")
 private val windowsAbsPathRegex = Regex("""[A-Za-z]:\\(?:[^\\\s:]+\\)*[^\\\s:]*""")
 private val packageClassRegex = Regex("""\b(?:[a-z_][a-z0-9_]*\.){2,}[A-Za-z_][A-Za-z0-9_$]*\b""")
-
-@OptIn(InternalSerializationApi::class)
-inline fun <reified I : Any> Server.mcpTool(
-    description: String,
-    context: McpToolContext,
-    toolName: String? = null,
-    crossinline execute: I.() -> String,
-) {
-    val name = toolName ?: I::class.simpleName?.toLowerSnakeCase() ?: error("Missing tool name for ${I::class}")
-    addTool(
-        name = name,
-        description = description,
-        inputSchema = I::class.asInputSchema(),
-        handler = { request ->
-            runTool(context, name, request.arguments.toString()) {
-                val input =
-                    json.decodeFromJsonElement(
-                        I::class.serializer(),
-                        request.arguments,
-                    )
-                context.redactIfNeeded(execute(input))
-            }
-        },
-    )
-}
-
-@OptIn(ExperimentalTypeInference::class)
-@OverloadResolutionByLambdaReturnType
-@JvmName("mcpToolUnit")
-inline fun <reified I : Any> Server.mcpTool(
-    description: String,
-    context: McpToolContext,
-    toolName: String? = null,
-    crossinline execute: I.() -> Unit,
-) {
-    mcpTool<I>(description, context, toolName) {
-        execute(this)
-        "Executed tool"
-    }
-}
-
-inline fun Server.mcpTool(
-    name: String,
-    description: String,
-    context: McpToolContext,
-    crossinline execute: () -> String,
-) {
-    addTool(
-        name = name,
-        description = description,
-        inputSchema = Tool.Input(),
-        handler = {
-            runTool(context, name, null) {
-                context.redactIfNeeded(execute())
-            }
-        },
-    )
-}
-
-inline fun <reified I : Paginated> Server.mcpPaginatedTool(
-    description: String,
-    context: McpToolContext,
-    toolName: String? = null,
-    crossinline execute: I.() -> Sequence<String>,
-) {
-    mcpTool<I>(description, context, toolName) {
-        val items = execute(this).drop(offset).take(count).toList()
-        if (items.isEmpty()) {
-            "Reached end of items"
-        } else {
-            items.joinToString(separator = "\n\n")
-        }
-    }
-}
-
-fun String.toLowerSnakeCase(): String =
-    this
-        .replace(Regex("([a-z0-9])([A-Z])"), "$1_$2")
-        .replace(Regex("([A-Z])([A-Z][a-z])"), "$1_$2")
-        .replace(Regex("[\\s-]+"), "_")
-        .lowercase()
 
 interface Paginated {
     val count: Int

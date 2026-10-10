@@ -374,7 +374,6 @@ class CookieCarrierInventoryTest {
         val HEADER_VALUE_ARGUMENT = Regex("""\.headerValue\("([^"]*)"\)""")
 
         const val EXECUTOR_MODERN = "com/six2dez/burp/aiagent/mcp/tools/McpToolExecutorImpl.kt"
-        const val EXECUTOR_LEGACY = "com/six2dez/burp/aiagent/mcp/tools/McpToolLegacy.kt"
         const val SERIALIZATION = "com/six2dez/burp/aiagent/mcp/schema/Serialization.kt"
         const val CONTEXT_COLLECTOR = "com/six2dez/burp/aiagent/context/ContextCollector.kt"
         const val BOUNTY_TAG_RESOLVER = "com/six2dez/burp/aiagent/prompts/bountyprompt/BountyPromptTagResolver.kt"
@@ -398,11 +397,16 @@ class CookieCarrierInventoryTest {
          * The two must move together — declaring a route without extending the accessor set turns
          * [everyCookieByteCarrierSiteIsRoutedOrClassified] red, and moving either without
          * [EXPECTED_TOTAL_CARRIER_SITES] turns [theMeasuredPerFilePerAccessorCountsArePinned] red.
+         *
+         * RE-MEASURED 2026-10-11 by plan 29-04 (DEAD-01): the legacy MCP registrar was deleted, not
+         * moved, and its eleven sites went with it (headerList 2, parameterList 3, rawMessage 5,
+         * cookieJar 1). Its four entries below were removed and nothing else changed: 63 sites across
+         * 11 files. Every other file's counts, and the whole-tree scan over both production roots, are
+         * as they were, so a new unlisted site in either root still turns this class red.
          */
         val MEASURED_CARRIER_SITES: Map<String, Map<String, Int>> =
             mapOf(
                 EXECUTOR_MODERN to mapOf(HEADER_LIST to 2, PARAMETER_LIST to 3, RAW_MESSAGE to 5, COOKIE_JAR to 1),
-                EXECUTOR_LEGACY to mapOf(HEADER_LIST to 2, PARAMETER_LIST to 3, RAW_MESSAGE to 5, COOKIE_JAR to 1),
                 SERIALIZATION to mapOf(RAW_MESSAGE to 5),
                 CONTEXT_COLLECTOR to mapOf(RAW_MESSAGE to 2),
                 BOUNTY_TAG_RESOLVER to mapOf(PARAMETER_LIST to 1, RAW_MESSAGE to 2),
@@ -415,7 +419,7 @@ class CookieCarrierInventoryTest {
                 AI_SCAN_CHECK to mapOf(INSERTION_POINT_BASE_VALUE to 2),
             )
 
-        const val EXPECTED_TOTAL_CARRIER_SITES = 74
+        const val EXPECTED_TOTAL_CARRIER_SITES = 63
 
         /** Measured 2026-08-25. `Cookie` ×3 is the population that matters; the rest are the control. */
         val MEASURED_HEADER_VALUE_ARGUMENTS: Map<String, Int> =
@@ -436,17 +440,11 @@ class CookieCarrierInventoryTest {
                 CarrierSite(EXECUTOR_MODERN, HEADER_LIST) to
                     "McpToolHelpers.sanitizeHeaders. Consumer read: :376 and :395 pass the list straight " +
                     "into it as ParsedRequest.headers / ParsedResponse.headers.",
-                CarrierSite(EXECUTOR_LEGACY, HEADER_LIST) to
-                    "McpToolHelpers.sanitizeHeaders. Consumer read: :184 and :207, the same two shapes.",
                 CarrierSite(EXECUTOR_MODERN, PARAMETER_LIST) to
                     "McpToolHelpers.sanitizeParameters at :360 (params_extract) and :381 (request_parse). " +
                     "THE THIRD CALL, :406, IS NON-CARRYING: consumer read at :406-411, find_reflected " +
                     "uses the value only as a needle for countOccurrences and emits " +
                     "`name=… type=… count=…`, never the value itself.",
-                CarrierSite(EXECUTOR_LEGACY, PARAMETER_LIST) to
-                    "McpToolHelpers.sanitizeParameters at :160 (params_extract) and :189 (request_parse). " +
-                    "THE THIRD CALL, :222, IS NON-CARRYING for the same reason: consumer read at " +
-                    ":222-227, find_reflected emits name, type and an occurrence count only.",
                 CarrierSite(INJECTION_EXTRACTOR, PARAMETER_LIST) to
                     "TWO CONSUMERS, BOTH READ, AND BOTH NOW CONTROLLED — BY DIFFERENT MECHANISMS, which is " +
                     "precisely the kind of thing this inventory exists to surface. MOVED HERE FROM " +
@@ -495,10 +493,6 @@ class CookieCarrierInventoryTest {
                     "(:592, :593, :732, :761, :811) sit inside the dispatch `when` whose result is " +
                     "wrapped at McpToolExecutorImpl.kt:1045. The logical-line cookie header rules fire " +
                     "there; SerializedEmissionSiteInventoryTest pins the same choke point.",
-                CarrierSite(EXECUTOR_LEGACY, RAW_MESSAGE) to
-                    "Redaction.apply at the redactIfNeeded choke point. Consumer read: all five sites " +
-                    "(:460, :461, :622, :640, :690) sit inside mcpTool/mcpPaginatedTool registrations " +
-                    "whose handler wraps output at McpTool.kt:45 and :78.",
                 CarrierSite(SERIALIZATION, RAW_MESSAGE) to
                     "Redaction.apply at the redactIfNeeded choke point. Consumer read: :44, :45, :50, :59 " +
                     "and :82 build HttpRequestResponse / SiteMapEntry carriers, which only the two " +
@@ -576,9 +570,6 @@ class CookieCarrierInventoryTest {
                     "emits cookie.value() ONLY when `includeValues && privacyMode == OFF`, writing " +
                     "[REDACTED] otherwise; the domain is additionally anonymised under STRICT. Under " +
                     "every redacting policy the value never enters CookieEntry.",
-                CarrierSite(EXECUTOR_LEGACY, COOKIE_JAR) to
-                    "MODE-GATED AT THE FIELD, byte-identical logic. Consumer read: :316 reads the jar and " +
-                    ":348-353 applies the same `includeValues && privacyMode == OFF` gate.",
                 CarrierSite(ACTIVE_SCANNER, HEADER_LIST) to
                     "LOCAL ANALYSIS and TARGET-BOUND MUTATION, no AI-facing emission. Consumers read: :933 " +
                     "hasAuthContext reduces to a Boolean; :943 stripAuthHeaders REMOVES the matched " +
@@ -860,6 +851,14 @@ class CookieCarrierInventoryTest {
                 "redactor's reach makes this residual's naming MORE accurate, not weaker, and " +
                 "D-28-09 and D-28-10 stand exactly as recorded. The retired phrases are " +
                 "deliberately not quoted anywhere in this file: the greps that enforce their " +
-                "retirement are literal."
+                "retirement are literal." +
+                " RELOCATED 2026-10-11 (phase 29, plan 29-04) — THIS NOTE WITHDRAWS NOTHING AND " +
+                "ADDS NO CONTROL. The two McpTool.kt handlers that clause (a) and the 28-09 block " +
+                "cite by line were deleted with the legacy MCP registrar (DEAD-01). The read-time " +
+                "pass those blocks describe still runs, unchanged in behaviour, at the one " +
+                "remaining wrapper: McpToolExecutorImpl's context.redactIfNeeded(output) choke " +
+                "point, which every registered tool reaches through " +
+                "McpToolHandlers.registerToolHandler (SerializedEmissionSiteInventoryTest pins " +
+                "it). Every disposition above, and AR-27-08's OPEN status, stand as recorded."
     }
 }

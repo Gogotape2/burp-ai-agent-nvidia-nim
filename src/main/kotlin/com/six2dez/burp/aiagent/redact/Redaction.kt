@@ -588,8 +588,8 @@ object Redaction {
      *    in a URL query) but whose type is URL or BODY is NOT matched here, and is not in PRIV-05's
      *    cookie wording — see [com.six2dez.burp.aiagent.mcp.tools.sanitizeParameters]'s KDoc and D-27-20.
      *
-     * 2. This predicate owns the cookie-type question for the THREE producers plan 27-07 rewires —
-     *    `McpToolExecutorImpl`, `McpToolLegacy` and `BountyPromptTagResolver`. It is NOT the only
+     * 2. This predicate owns the cookie-type question for the producers plan 27-07 rewired —
+     *    `McpToolExecutorImpl` and `BountyPromptTagResolver`. It is NOT the only
      *    cookie-type test in `src/main/kotlin`. `scanner/InjectionPointExtractor.kt:29` writes its
      *    own `it.type().name == "COOKIE"` filter and is deliberately NOT converted (D-27-17): its
      *    value feeds `InjectionPoint.originalValue` and from there the issue-detail route, which

@@ -39,7 +39,6 @@
     <ID>CyclomaticComplexMethod:McpToolExecutorImpl.kt$McpToolExecutor$fun executeToolResult( name: String, argsJson: String?, context: McpToolContext, ): CallToolResult</ID>
     <ID>CyclomaticComplexMethod:McpToolExecutorImpl.kt$McpToolExecutor$fun inputSchema( toolName: String, context: McpToolContext? = null, ): Tool.Input</ID>
     <ID>CyclomaticComplexMethod:McpToolHandlers.kt$internal fun Server.registerToolHandler( toolId: String, context: McpToolContext, )</ID>
-    <ID>CyclomaticComplexMethod:McpToolLegacy.kt$@Suppress("unused") internal fun Server.registerToolsLegacy( api: MontoyaApi, context: McpToolContext, )</ID>
     <ID>CyclomaticComplexMethod:NvidiaNimBackendFactory.kt$NvidiaNimBackendFactory.Companion$private fun nimHealthCheck( settings: AgentSettings, transport: MontoyaHttpTransport?, ): HealthCheckResult</ID>
     <ID>CyclomaticComplexMethod:OllamaBackend.kt$OllamaBackend$private fun detectContextWindow( baseUrl: String, model: String, headers: Map&lt;String, String>, fallback: Int?, transport: MontoyaHttpTransport? = null, ): Int?</ID>
     <ID>CyclomaticComplexMethod:OllamaBackend.kt$OllamaBackend.OllamaConnection$override fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
@@ -96,7 +95,6 @@
     <ID>LongMethod:LmStudioBackend.kt$LmStudioBackend.LmStudioConnection$override fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
     <ID>LongMethod:McpTool.kt$@PublishedApi internal fun runTool( context: McpToolContext, name: String, argsJson: String? = null, execute: () -> String, ): CallToolResult</ID>
     <ID>LongMethod:McpToolExecutorImpl.kt$McpToolExecutor$fun executeToolResult( name: String, argsJson: String?, context: McpToolContext, ): CallToolResult</ID>
-    <ID>LongMethod:McpToolLegacy.kt$@Suppress("unused") internal fun Server.registerToolsLegacy( api: MontoyaApi, context: McpToolContext, )</ID>
     <ID>LongMethod:OllamaBackend.kt$OllamaBackend.OllamaConnection$override fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
     <ID>LongMethod:OpenAiCompatibleBackend.kt$OpenAiCompatibleBackend.OpenAiCompatibleConnection$override fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
     <ID>LongMethod:PassiveAiScannerConfidenceTest.kt$PassiveAiScannerConfidenceTest$private fun baselineSettings(): AgentSettings</ID>
@@ -137,7 +135,6 @@
     <ID>LoopWithTooManyJumpStatements:InjectionPointExtractor.kt$InjectionPointExtractor$for</ID>
     <ID>LoopWithTooManyJumpStatements:McpToolContext.kt$McpToolContext$for</ID>
     <ID>LoopWithTooManyJumpStatements:McpToolExecutorImpl.kt$McpToolExecutor$for</ID>
-    <ID>LoopWithTooManyJumpStatements:McpToolLegacy.kt$for</ID>
     <ID>LoopWithTooManyJumpStatements:PassiveAiScannerParsing.kt$for</ID>
     <ID>LoopWithTooManyJumpStatements:ResponseAnalyzer.kt$ResponseAnalyzer$for</ID>
     <ID>LoopWithTooManyJumpStatements:SecurityExcerpts.kt$SecurityExcerpts$for</ID>
@@ -521,7 +518,6 @@
     <ID>MagicNumber:McpToolExecutorImpl.kt$McpToolExecutor$500</ID>
     <ID>MagicNumber:McpToolHandlers.kt$120</ID>
     <ID>MagicNumber:McpToolHelpers.kt$4</ID>
-    <ID>MagicNumber:McpToolLegacy.kt$500</ID>
     <ID>MagicNumber:MontoyaHttpTransport.kt$MontoyaHttpTransport$401</ID>
     <ID>MagicNumber:MontoyaHttpTransport.kt$MontoyaHttpTransport$403</ID>
     <ID>MagicNumber:NvidiaNimBackendFactory.kt$NvidiaNimBackendFactory.Companion$16</ID>
@@ -953,10 +949,6 @@
     <ID>SpreadOperator:McpToolExecutorImpl.kt$McpToolExecutor$(*input.seedUrls.toTypedArray())</ID>
     <ID>SpreadOperator:McpToolExecutorImpl.kt$McpToolExecutor$(*opts)</ID>
     <ID>SpreadOperator:McpToolExecutorImpl.kt$McpToolExecutor$(input.customData.trim(), *opts)</ID>
-    <ID>SpreadOperator:McpToolLegacy.kt$(*byteArrays.toTypedArray())</ID>
-    <ID>SpreadOperator:McpToolLegacy.kt$(*opts)</ID>
-    <ID>SpreadOperator:McpToolLegacy.kt$(*seedUrls.toTypedArray())</ID>
-    <ID>SpreadOperator:McpToolLegacy.kt$(customData.trim(), *opts)</ID>
     <ID>SwallowedException:ActiveAiScanner.kt$ActiveAiScanner$e: TimeoutException</ID>
     <ID>SwallowedException:AgentSettings.kt$AgentSettingsRepository$e: Exception</ID>
     <ID>SwallowedException:BurpAiBackend.kt$BurpAiConnection$e: java.util.concurrent.RejectedExecutionException</ID>

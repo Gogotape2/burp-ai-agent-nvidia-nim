@@ -17,17 +17,19 @@ import org.junit.jupiter.api.Test
  * "did we get them all?" stayed a review question when it should have been a test result.
  *
  * This file converts it into a test result. The inventory is measured, declared as named constants,
- * and asserted. A fifteenth site, a site that exists in one executor and not the other, or a fourth
- * tool-registration path all read as a DATA CHANGE here — visible, deliberate, and reviewable —
- * rather than as silence.
+ * and asserted. An eighth site, a site outside the executor, or a second tool-registration path all
+ * read as a DATA CHANGE here — visible, deliberate, and reviewable — rather than as silence.
  *
- * WHAT MAKES A RULE-LEVEL FIX REACH EVERY SITE. None of the 14 emission sites redacts anything
- * itself. `McpToolLegacy.kt`'s seven all sit inside `mcpPaginatedTool<…>` registrations, which
- * delegate to `mcpTool<I>` (`McpTool.kt:82`), whose handler wraps its output in
- * `context.redactIfNeeded(` (`McpTool.kt:45`). `McpToolExecutorImpl.kt`'s seven all sit inside the
- * dispatch `when` whose result is wrapped at `McpToolExecutorImpl.kt:1037`. That is why changing a
- * regex in `redact/Redaction.kt` reaches all 14 — and it is asserted below from source rather than
+ * WHAT MAKES A RULE-LEVEL FIX REACH EVERY SITE. None of the 7 emission sites redacts anything
+ * itself. All seven sit in `McpToolExecutorImpl.kt`, inside the dispatch `when` whose result is
+ * wrapped at the executor's single `context.redactIfNeeded(output)` line. That is why changing a
+ * regex in `redact/Redaction.kt` reaches all 7 — and it is asserted below from source rather than
  * argued in prose.
+ *
+ * Phase 29 plan 29-04 (DEAD-01) deleted the legacy MCP registrar, which carried a second copy of
+ * the same seven sites behind its own wrapping registration helpers in `McpTool.kt`. Its rows were
+ * removed from this inventory and the helpers went with it; the whole-tree scans below still walk
+ * both production roots, so a site that reappears anywhere fails here.
  *
  * ── BOUND 1, on the EMISSION-SITE scans (count, per-file split, tool-name presence, choke point) ──
  *
@@ -36,15 +38,15 @@ import org.junit.jupiter.api.Test
  * called through a local variable, a hand-built JSON string, a third serializable carrier with a
  * new conversion function — is invisible to every scan in this file and leaves it GREEN.
  *
- * The per-file split, the tool-name presence check and the choke-point assertion are additionally
- * scoped to the TWO NAMED EXECUTOR FILES in [EMISSION_EXECUTOR_FILES]. `theMeasuredEmissionSiteCountIsPinned`
- * does scan all of `src/main/kotlin` for the call shape, so a site added in a THIRD file fails that
+ * The per-file count, the tool-name presence check and the choke-point assertion are additionally
+ * scoped to the NAMED EXECUTOR FILE in [EMISSION_EXECUTOR_FILES]. `theMeasuredEmissionSiteCountIsPinned`
+ * does scan every production root for the call shape, so a site added in ANOTHER file fails that
  * one assertion — but the shape bound above still holds over the whole tree, and the other three
- * scans still see only two files.
+ * scans still see only the executor.
  *
  * ── BOUND 2, on the REGISTRATION-PATH scan, which is a DIFFERENT AND WEAKER BOUND ──
  *
- * `everyToolRegistrationPathReachesTheChokePoint` covers ALL of `src/main/kotlin` for one call name,
+ * `everyToolRegistrationPathReachesTheChokePoint` covers every production root for one call name,
  * `addTool(`. But it proves choke-point reachability only for the DELEGATION SHAPE AS WRITTEN: it
  * asserts that `McpToolHandlers.registerToolHandler`'s handler calls
  * `McpToolExecutor.executeToolResult(` and carries no wrapper of its own. A future handler that KEPT
@@ -100,7 +102,7 @@ class SerializedEmissionSiteInventoryTest {
             "the two carrier splits must account for the whole inventory, or a site belongs to neither",
         )
 
-        // The one place the emission scan is NOT limited to the two named executors. A third file
+        // The one place the emission scan is NOT limited to the named executor. Another file
         // that adopted this call shape is the "eleventh site" failure mode in its purest form, and
         // it costs three lines to make it fail here instead of being discovered by an audit.
         val strays =
@@ -111,15 +113,15 @@ class SerializedEmissionSiteInventoryTest {
                 .filter { emissionSitesIn(it).isNotEmpty() }
         assertTrue(
             strays.isEmpty(),
-            "the measured serialized-emission call shape appears OUTSIDE the two pinned executor " +
-                "files, so this inventory no longer describes the tree: $strays. Add the file to " +
+            "the measured serialized-emission call shape appears OUTSIDE the pinned executor " +
+                "file, so this inventory no longer describes the tree: $strays. Add the file to " +
                 "EMISSION_EXECUTOR_FILES and re-measure every constant here, or route the new site " +
                 "through an existing executor.",
         )
     }
 
     @Test
-    fun everyEmissionToolNameAppearsInBothExecutors() {
+    fun everyEmissionToolNameAppearsInTheExecutor() {
         val allNames = RAW_HTTP_EMISSION_TOOL_NAMES + WEBSOCKET_EMISSION_TOOL_NAMES
 
         EMISSION_EXECUTOR_FILES.forEach { path ->
@@ -127,11 +129,10 @@ class SerializedEmissionSiteInventoryTest {
             allNames.forEach { name ->
                 assertTrue(
                     code.any { it.text.contains("\"$name\"") },
-                    "the tool name \"$name\" is not registered in $path. Every emitting tool exists " +
-                        "in BOTH executors — the modern dispatcher and the legacy registrar — and a " +
-                        "name present in one and absent from the other is a site whose privacy " +
-                        "behaviour was only ever checked on one path. That asymmetry is the defect " +
-                        "class this phase exists to close.",
+                    "the tool name \"$name\" is not registered in $path. Every emitting tool in " +
+                        "the pinned inventory is dispatched by the executor; a name that disappeared " +
+                        "means the counts above describe a tool set that no longer exists, so " +
+                        "re-measure the whole inventory rather than one number.",
                 )
             }
         }
@@ -140,37 +141,8 @@ class SerializedEmissionSiteInventoryTest {
     @Test
     fun everyEmissionSiteIsDownstreamOfTheSingleRedactingChokePoint() {
         // WHY THIS MATTERS: it is the structural reason a one-line change to a regex in
-        // redact/Redaction.kt reaches all 14 emission sites. Without it, "we fixed the rule" would
-        // be a claim about one call site and a hope about thirteen others.
-
-        // ── the legacy registrar: every emission site sits inside an mcpPaginatedTool registration,
-        //    which delegates to mcpTool<I>, whose handler wraps in context.redactIfNeeded(.
-        val legacyRegistrations = codeLines(LEGACY_EXECUTOR).filter { REGISTRATION_CALL.containsMatchIn(it.text) }
-        assertTrue(legacyRegistrations.isNotEmpty(), "no mcpTool/mcpPaginatedTool registration found in $LEGACY_EXECUTOR")
-
-        emissionSitesIn(LEGACY_EXECUTOR).forEach { site ->
-            val enclosing =
-                legacyRegistrations.lastOrNull { it.number < site.number }
-                    ?: throw AssertionError(
-                        "the emission site at $LEGACY_EXECUTOR:${site.number} has no mcpTool/mcpPaginatedTool " +
-                            "registration in front of it, so nothing in this file places it behind " +
-                            "context.redactIfNeeded(",
-                    )
-            assertTrue(
-                enclosing.text.contains("mcpPaginatedTool<"),
-                "$LEGACY_EXECUTOR:${site.number} is registered by ${enclosing.text.trim()} " +
-                    "(line ${enclosing.number}) rather than by mcpPaginatedTool<…>. Both registrars route " +
-                    "through mcpTool<I> and its context.redactIfNeeded( wrapper, so this is a drift " +
-                    "signal rather than a leak — but it means the inventory's shape claim is stale, " +
-                    "so re-measure before relaxing it.",
-            )
-        }
-        assertEquals(
-            0,
-            codeLines(LEGACY_EXECUTOR).count { it.text.contains("redactIfNeeded") },
-            "$LEGACY_EXECUTOR redacts nothing itself. If that changes, the claim that its sites are " +
-                "safe BY REGISTRATION rather than by local wrapping needs re-stating.",
-        )
+        // redact/Redaction.kt reaches all 7 emission sites. Without it, "we fixed the rule" would
+        // be a claim about one call site and a hope about six others.
 
         // ── the modern dispatcher: every emission site sits inside the dispatch `when` whose result
         //    is wrapped at the single choke point below.
@@ -196,8 +168,9 @@ class SerializedEmissionSiteInventoryTest {
 
     @Test
     fun everyToolRegistrationPathReachesTheChokePoint() {
-        // The THIRD registration path is the one the criterion above cannot see, and it is the one a
-        // reader of the choke-point claim would otherwise never meet.
+        // The registration path is the one the criterion above cannot see, and it is the one a
+        // reader of the choke-point claim would otherwise never meet. Since plan 29-04 deleted the
+        // wrapping registration helpers in McpTool.kt it is also the ONLY `addTool(` site.
         val hitsByFile =
             SourceRoots
                 .kotlinFiles()
@@ -216,29 +189,10 @@ class SerializedEmissionSiteInventoryTest {
                 "CookieHeaderRuleOwnershipTest's path-keyed allowlist).",
         )
 
-        // Path A and B — McpTool.kt's two addTool calls each wrap their own handler output.
-        val wrapperRegions = regionsAfter(WRAPPER_REGISTRAR, ADD_TOOL_CALL)
-        assertEquals(
-            EXPECTED_ADD_TOOL_SITES.getValue(WRAPPER_REGISTRAR),
-            wrapperRegions.size,
-            "expected ${EXPECTED_ADD_TOOL_SITES.getValue(WRAPPER_REGISTRAR)} addTool regions in $WRAPPER_REGISTRAR",
-        )
-        wrapperRegions.forEach { (startLine, region) ->
-            assertTrue(
-                region.any { it.text.contains(HANDLER_WRAPPER) },
-                "$WRAPPER_REGISTRAR:$startLine registers a tool whose handler does NOT wrap its output " +
-                    "in `$HANDLER_WRAPPER`. This is THE choke point: mcpTool, its Unit overload and " +
-                    "mcpPaginatedTool all funnel through these two handlers, so an unwrapped one " +
-                    "un-redacts every tool registered through it.",
-            )
-        }
-
-        // Path C — McpToolHandlers.kt:registerToolHandler. It carries NO wrapper of its own and is
-        // safe ONLY because its handler delegates to McpToolExecutor.executeToolResult, which reaches
+        // McpToolHandlers.kt:registerToolHandler. It carries NO wrapper of its own and is safe ONLY
+        // because its handler delegates to McpToolExecutor.executeToolResult, which reaches
         // context.redactIfNeeded(output) inside McpToolExecutorImpl. Asserted explicitly rather than
-        // left unnamed: a version of the choke-point claim that mentions only mcpTool and
-        // mcpPaginatedTool leaves this path unmeasured, which is the same shape of omission as the
-        // partial emission-site inventory this file exists to replace.
+        // left unnamed, because the delegation IS its only control.
         val delegatingRegions = regionsAfter(DELEGATING_REGISTRAR, ADD_TOOL_CALL)
         assertEquals(
             EXPECTED_ADD_TOOL_SITES.getValue(DELEGATING_REGISTRAR),
@@ -312,7 +266,7 @@ class SerializedEmissionSiteInventoryTest {
         assertTrue(isCommentOnly("    // $EMISSION_FIXTURE"), "the comment filter no longer recognises a line comment")
         assertTrue(isCommentOnly("     * $EMISSION_FIXTURE"), "the comment filter no longer recognises a KDoc body line")
         assertTrue(
-            emissionSitesIn(LEGACY_EXECUTOR).none { isCommentOnly(it.text) },
+            emissionSitesIn(MODERN_EXECUTOR).none { isCommentOnly(it.text) },
             "a comment-only line reached the emission inventory",
         )
     }
@@ -361,28 +315,26 @@ class SerializedEmissionSiteInventoryTest {
     private companion object {
         const val TOOLS_PACKAGE = "com/six2dez/burp/aiagent/mcp/tools"
 
-        /** Measured at 172 .kt files. The floor catches a walk that reaches nothing, not drift. */
+        /** Measured at 172 .kt files (185 at plan 29-04). The floor catches a walk that reaches nothing, not drift. */
         const val MIN_EXPECTED_MAIN_FILES = 150
 
-        // ── the two executors that carry every measured emission site ─────────────────────
+        // ── the executor that carries every measured emission site ────────────────────────
         const val MODERN_EXECUTOR = "$TOOLS_PACKAGE/McpToolExecutorImpl.kt"
-        const val LEGACY_EXECUTOR = "$TOOLS_PACKAGE/McpToolLegacy.kt"
-        val EMISSION_EXECUTOR_FILES = listOf(MODERN_EXECUTOR, LEGACY_EXECUTOR)
+        val EMISSION_EXECUTOR_FILES = listOf(MODERN_EXECUTOR)
 
         // ── the measured inventory ────────────────────────────────────────────────────────
         //
         // grep -rhE "encodeToString\(it\.(toSerializableForm|toSiteMapEntry)\(" \
-        //   src/main/kotlin/com/six2dez/burp/aiagent/mcp/tools/ --include=*.kt | wc -l  ->  14
+        //   src/main/kotlin src/full/kotlin --include=*.kt | wc -l  ->  7   (plan 29-04)
         //
-        // McpToolExecutorImpl.kt  608 740 760 836 855 873 896   (7)
-        // McpToolLegacy.kt        475 622 639 713 729 744 764   (7)
+        // McpToolExecutorImpl.kt  620 752 772 848 867 885 908   (7)
         //
-        // Seven tool names, each registered once per executor. Five carry a raw HTTP message; two
-        // carry a WebSocket payload, which has no header block and therefore no header rule to miss.
-        const val EXPECTED_EMISSION_SITES = 14
+        // Seven tool names, each dispatched once. Five carry a raw HTTP message; two carry a
+        // WebSocket payload, which has no header block and therefore no header rule to miss.
+        const val EXPECTED_EMISSION_SITES = 7
         const val EXPECTED_SITES_PER_EXECUTOR = 7
-        const val EXPECTED_RAW_HTTP_EMISSION_SITES = 10
-        const val EXPECTED_WEBSOCKET_EMISSION_SITES = 4
+        const val EXPECTED_RAW_HTTP_EMISSION_SITES = 5
+        const val EXPECTED_WEBSOCKET_EMISSION_SITES = 2
 
         val RAW_HTTP_EMISSION_TOOL_NAMES =
             setOf(
@@ -403,30 +355,24 @@ class SerializedEmissionSiteInventoryTest {
         val EMISSION_FUNCTIONS = listOf("toSerializableForm", "toSiteMapEntry")
         const val EMISSION_FIXTURE = ".map { toolJson.encodeToString(it.toSerializableForm(preprocess)) },"
 
-        /** The legacy registrars, either of which routes through mcpTool<I>'s wrapping handler. */
-        val REGISTRATION_CALL = Regex("""\bmcp(?:Paginated)?Tool\s*[<(]""")
-
-        // ── the three registration paths, measured ────────────────────────────────────────
+        // ── the registration path, measured ───────────────────────────────────────────────
         //
-        // grep -rn 'addTool(' src/main/kotlin --include=*.kt  ->  McpTool.kt:34, McpTool.kt:72,
-        // McpToolHandlers.kt:122. Pinned by path and count rather than by line number, so an
-        // unrelated edit above line 34 does not rot the gate; the line numbers are recorded in the
-        // plan's SUMMARY where they cost nothing to keep accurate.
+        // grep -rn 'addTool(' src/main/kotlin src/full/kotlin --include=*.kt  ->
+        // McpToolHandlers.kt:122 (plan 29-04; the two McpTool.kt sites were deleted with the
+        // legacy registrar's helpers). Pinned by path and count rather than by line number, so an
+        // unrelated edit above the call does not rot the gate.
         const val ADD_TOOL_CALL = "addTool("
-        const val WRAPPER_REGISTRAR = "$TOOLS_PACKAGE/McpTool.kt"
         const val DELEGATING_REGISTRAR = "$TOOLS_PACKAGE/McpToolHandlers.kt"
-        val EXPECTED_ADD_TOOL_SITES = mapOf(WRAPPER_REGISTRAR to 2, DELEGATING_REGISTRAR to 1)
+        val EXPECTED_ADD_TOOL_SITES = mapOf(DELEGATING_REGISTRAR to 1)
 
         const val HANDLER_WRAPPER = "context.redactIfNeeded("
         const val EXECUTOR_CHOKE_POINT = "context.redactIfNeeded(output)"
         const val EXECUTOR_DELEGATION = "McpToolExecutor.executeToolResult("
 
-        /** Floors, not counts. Measured: 1363 / 840 / 242 / 174. */
+        /** Floors, not counts. Measured at plan 29-04: 1380 / 174. */
         val MIN_EXPECTED_LINES =
             mapOf(
                 MODERN_EXECUTOR to 1000,
-                LEGACY_EXECUTOR to 600,
-                WRAPPER_REGISTRAR to 150,
                 DELEGATING_REGISTRAR to 100,
             )
     }

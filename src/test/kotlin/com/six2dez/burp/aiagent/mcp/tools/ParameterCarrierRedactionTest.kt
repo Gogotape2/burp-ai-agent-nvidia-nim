@@ -27,7 +27,8 @@ import org.mockito.kotlin.whenever
  * WHAT THIS FILE ASSERTS ON, and why it is a different shape from both `RedactionTest`'s cookie
  * fixtures and `SerializedEmissionRedactionTest`'s raw-message carrier: Burp parses the `Cookie:`
  * header into `HttpParameterType.COOKIE` parameters, and `HttpRequest.parameters()` hands those
- * VALUES to four live MCP producers — `request_parse` and `params_extract`, once per executor. In
+ * VALUES to two live MCP producers — `request_parse` and `params_extract` in the executor (four
+ * until plan 29-04 deleted the legacy registrar, which carried a second copy of each). In
  * `request_parse` the leak sat inside the same JSON object as its own control: `headers` was
  * cookie-stripped by `sanitizeHeaders` while `parameters` returned the identical value verbatim.
  *
@@ -464,8 +465,8 @@ class ParameterCarrierRedactionTest {
     // ── the producer pin: the behavioural probes above cannot reach the branch ───────────
 
     @Test
-    fun theProducerInventoryIsExactlyFourAndEveryOneRoutesThroughTheSanitizer() {
-        // WHY THIS IS A SOURCE SCAN AND NOT AN END-TO-END CALL. Every one of the four producers
+    fun theProducerInventoryIsExactlyTwoAndEveryOneRoutesThroughTheSanitizer() {
+        // WHY THIS IS A SOURCE SCAN AND NOT AN END-TO-END CALL. Every one of the two producers
         // begins `HttpRequest.httpRequest(content)`, a Montoya STATIC FACTORY that needs Burp's
         // internal ObjectFactory and cannot run in a pure-JVM test — `McpToolScopeEnforcementTest`
         // records the same constraint at its own site. So the probes above prove the SANITIZER, and
@@ -475,8 +476,10 @@ class ParameterCarrierRedactionTest {
         //
         // ── THE BOUND OF THIS PIN, stated where a reader meets it ──
         //
-        // It sees ONE CALL SHAPE (`sanitizeParameters(`) in TWO NAMED FILES. A fifth producer written
-        // in a different shape, or in a third file, is INVISIBLE to it and leaves it GREEN. It is a
+        // It sees ONE CALL SHAPE (`sanitizeParameters(`). The per-file counts are scoped to the NAMED
+        // executor; the stray scan below walks every production root for the same call shape, so a
+        // call in another file fails. A producer written in a DIFFERENT shape is INVISIBLE to both
+        // and leaves them GREEN. It is a
         // tripwire over a measured inventory, not a proof of coverage — plan 27-08 builds the wider
         // mechanism and states its own, different bound.
         //
@@ -488,7 +491,7 @@ class ParameterCarrierRedactionTest {
         // to this pin. Phase 28 controlled that route (plan 28-01) and then routed the predicate
         // through `Redaction.isCookieParameterType` (plan 28-02). THE PIN'S BLINDNESS IS UNCHANGED BY
         // THAT — the conversion removed an instance, not the gap; this pin still sees one call shape
-        // in two named files and nothing else.
+        // in the named file (plus the stray scan) and nothing else.
         //
         // THE REPLACEMENT LIVE EXAMPLE, which does exist: `prompts/bountyprompt/
         // BountyPromptTagResolver.kt` (buildRequestParameters) renders `name=value (TYPE)` for prompt
@@ -516,6 +519,22 @@ class ParameterCarrierRedactionTest {
             EXPECTED_PRODUCERS,
             perFile.values.sum(),
             "the measured parameter-producer inventory has drifted from the pinned total. Per file: $perFile",
+        )
+
+        // The stray scan: the per-file counts above see only the named executor, so a sanitizer call
+        // (and therefore a new producer) in any other production file is caught here instead. The
+        // sanitizer's own declaration in HELPERS_FILE is the one non-producer occurrence.
+        val strays =
+            SourceRoots
+                .kotlinFiles()
+                .map(SourceRoots::relativePath)
+                .filterNot { it in PRODUCER_FILES || it == HELPERS_FILE }
+                .filter { path -> codeLines(path).any { it.text.contains(SANITIZER_CALL) } }
+        assertTrue(
+            strays.isEmpty(),
+            "`$SANITIZER_CALL` appears outside the pinned producer files in $strays. Each call is a " +
+                "parameter producer this inventory has not been re-measured against: add the file to " +
+                "PRODUCER_FILES and re-measure every constant here.",
         )
 
         // The split is asserted against the tool-name set rather than restated as a second literal,
@@ -755,25 +774,25 @@ class ParameterCarrierRedactionTest {
 
         const val TOOLS_PACKAGE = "com/six2dez/burp/aiagent/mcp/tools"
         const val MODERN_EXECUTOR = "$TOOLS_PACKAGE/McpToolExecutorImpl.kt"
-        const val LEGACY_EXECUTOR = "$TOOLS_PACKAGE/McpToolLegacy.kt"
         const val HELPERS_FILE = "$TOOLS_PACKAGE/McpToolHelpers.kt"
 
         /**
-         * The two executor files that carry every measured parameter producer. Keyed by PATH and
+         * The executor file that carries every measured parameter producer. Keyed by PATH and
          * COUNT, never by line number, so the pin does not rot the first time a file above one of
          * these sites is reformatted (WINDOWS.md 11/13/14/15).
          */
-        val PRODUCER_FILES = listOf(MODERN_EXECUTOR, LEGACY_EXECUTOR)
+        val PRODUCER_FILES = listOf(MODERN_EXECUTOR)
 
         /**
-         * MEASURED, not assumed. Before this plan:
-         *   grep -c 'param.value()' McpToolExecutorImpl.kt McpToolLegacy.kt  ->  3 + 3 = 6
-         *   grep -c 'ParsedParam('  McpToolExecutorImpl.kt McpToolLegacy.kt  ->  1 + 1 = 2
-         * Two tools per executor read a parameter VALUE for rendering: request_parse and
-         * params_extract. find_reflected is the third reader in each file and is NOT a producer —
+         * MEASURED, not assumed. Before plan 27-07:
+         *   grep -c 'param.value()' McpToolExecutorImpl.kt  ->  3
+         *   grep -c 'ParsedParam('  McpToolExecutorImpl.kt  ->  1
+         * (The legacy registrar carried the same 3 and 1; plan 29-04 deleted it and dropped its half
+         * of this record.) Two tools in the executor read a parameter VALUE for rendering: request_parse
+         * and params_extract. find_reflected is the third reader in the file and is NOT a producer —
          * it emits name, type and an occurrence count, never the value (T-27-07-07).
          */
-        const val EXPECTED_PRODUCERS = 4
+        const val EXPECTED_PRODUCERS = 2
         const val EXPECTED_PRODUCERS_PER_EXECUTOR = 2
         const val EXPECTED_DIRECT_VALUE_READERS_PER_EXECUTOR = 1
 
@@ -783,7 +802,6 @@ class ParameterCarrierRedactionTest {
         val MIN_EXPECTED_LINES =
             mapOf(
                 MODERN_EXECUTOR to 600,
-                LEGACY_EXECUTOR to 400,
                 HELPERS_FILE to 300,
             )
 
