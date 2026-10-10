@@ -172,7 +172,7 @@ class AgentSettingsRepository(
 
     /**
      * SEC-01 secret encryption. Reuses the existing [prefs] instance so the per-install master
-     * key is shared across encrypt/decrypt — do NOT call api.persistence().preferences() again
+     * key is shared across encrypt/decrypt — do NOT ask the Montoya API for the preferences again
      * (a second mock instance in tests would store the master key separately and break round-trips).
      */
     private val cipher: SecretCipher = SecretCipher(prefs)
@@ -768,40 +768,49 @@ class AgentSettingsRepository(
             updated
         }
 
-    /** RED scaffolding (29-07 Task 2): a store that persists nothing. Replaced in GREEN. */
-    fun pluginSettings(): PluginSettingsStore =
-        object : PluginSettingsStore {
-            override fun getString(key: String): String? = null
+    /**
+     * Phase 29 / D-06 — the [PluginSettingsStore] plug-ins use for their own keys. It reads and writes
+     * this repository's one [prefs] and encrypts with its one [cipher] (never a second Preferences or a
+     * second SecretCipher, which would be a second master key), and every setter takes [writeLock], so
+     * a plug-in write never interleaves a [save]. Setters do not notify the change listeners: plug-in
+     * keys are not part of the [AgentSettings] snapshot.
+     */
+    fun pluginSettings(): PluginSettingsStore = pluginSettingsStore
 
-            override fun setString(
-                key: String,
-                value: String,
-            ) = Unit
+    private val pluginSettingsStore: PluginSettingsStore = RepositoryPluginSettings()
 
-            override fun getBoolean(key: String): Boolean? = null
+    private inner class RepositoryPluginSettings : PluginSettingsStore {
+        override fun getString(key: String): String? = prefs.getString(key)
 
-            override fun setBoolean(
-                key: String,
-                value: Boolean,
-            ) = Unit
+        override fun setString(
+            key: String,
+            value: String,
+        ) = synchronized(writeLock) { prefs.setString(key, value) }
 
-            override fun getInteger(key: String): Int? = null
+        override fun getBoolean(key: String): Boolean? = prefs.getBoolean(key)
 
-            override fun setInteger(
-                key: String,
-                value: Int,
-            ) = Unit
+        override fun setBoolean(
+            key: String,
+            value: Boolean,
+        ) = synchronized(writeLock) { prefs.setBoolean(key, value) }
 
-            override fun encrypt(
-                plain: String,
-                keyName: String,
-            ): String = plain
+        override fun getInteger(key: String): Int? = prefs.getInteger(key)
 
-            override fun decrypt(
-                stored: String,
-                keyName: String,
-            ): String = stored
-        }
+        override fun setInteger(
+            key: String,
+            value: Int,
+        ) = synchronized(writeLock) { prefs.setInteger(key, value) }
+
+        override fun encrypt(
+            plain: String,
+            keyName: String,
+        ): String = cipher.encrypt(plain, keyName)
+
+        override fun decrypt(
+            stored: String,
+            keyName: String,
+        ): String = cipher.decrypt(stored, keyName)
+    }
 
     private fun migrateIfNeeded() {
         val storedVersion = prefs.getInteger(KEY_SETTINGS_SCHEMA_VERSION) ?: 1
