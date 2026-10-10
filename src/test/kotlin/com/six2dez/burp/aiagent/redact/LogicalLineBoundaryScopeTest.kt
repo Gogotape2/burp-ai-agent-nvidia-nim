@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.redact
 
+import com.six2dez.burp.aiagent.SourceRoots
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -417,22 +418,14 @@ class LogicalLineBoundaryScopeTest {
         return trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")
     }
 
-    /** Resolved by walking up from the Gradle test working directory. FAILS rather than skips. */
-    private fun sourceFile(): File {
-        var candidate: File? = File(System.getProperty("user.dir")).absoluteFile
-        while (candidate != null) {
-            val file = File(candidate, RULE_OWNER)
-            if (file.isFile) return file
-            candidate = candidate.parentFile
-        }
-        throw AssertionError(
-            "could not resolve $RULE_OWNER from user.dir=${System.getProperty("user.dir")}. " +
-                "Resolve the path rather than weakening this test into a skip.",
-        )
-    }
+    /**
+     * Resolved through [SourceRoots.file] in whichever production root holds it. FAILS rather than skips:
+     * a path in neither root, or in both, is an AssertionError naming the roots it looked at.
+     */
+    private fun sourceFile(): File = SourceRoots.file(RULE_OWNER)
 
     private companion object {
-        const val RULE_OWNER = "src/main/kotlin/com/six2dez/burp/aiagent/redact/Redaction.kt"
+        const val RULE_OWNER = "com/six2dez/burp/aiagent/redact/Redaction.kt"
 
         /** Measured at 2018 lines. A floor, not a count. */
         const val MIN_EXPECTED_LINES = 1500

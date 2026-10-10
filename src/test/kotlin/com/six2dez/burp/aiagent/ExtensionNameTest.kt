@@ -13,7 +13,6 @@ import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
-import java.io.File
 
 /**
  * An SPI with no provider anywhere on the classpath. Top-level and not private: ServiceLoader rejects a
@@ -64,9 +63,8 @@ class ExtensionNameTest {
 
     @Test
     fun appKtNamesTheExtensionInExactlyOnePlace() {
-        val file = File("src/main/kotlin/com/six2dez/burp/aiagent/App.kt")
-        assertTrue(file.isFile, "App.kt not found from ${System.getProperty("user.dir")}")
-        val source = file.readText()
+        // SourceRoots.file fails naming both production roots when App.kt is in neither or in both.
+        val source = SourceRoots.file("com/six2dez/burp/aiagent/App.kt").readText()
 
         val occurrences = Regex("""setName\(""").findAll(source).map { it.range.first }.toList()
         assertEquals(1, occurrences.size, "App.kt must call setName( exactly once, found ${occurrences.size}")

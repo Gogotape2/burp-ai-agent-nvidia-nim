@@ -19,7 +19,7 @@ private const val AUTO_DEFINITION: String =
         "nor pulls bulk attacker-controlled traffic into model context"
 
 private const val DECISIONS_FILE = "DECISIONS.md"
-private const val CATALOG_FILE = "src/main/kotlin/com/six2dez/burp/aiagent/mcp/McpToolCatalog.kt"
+private const val CATALOG_FILE = "com/six2dez/burp/aiagent/mcp/McpToolCatalog.kt"
 
 /**
  * The number of `Residual:` bullets ADR-16 actually ships, and therefore the bound below which the
@@ -237,7 +237,7 @@ class DecisionsAdrTest {
      * happening to appear anywhere in a 1000-line catalog.
      */
     private fun secTierKdoc(): String {
-        val catalog = readProjectFile(CATALOG_FILE)
+        val catalog = SourceRoots.file(CATALOG_FILE).readText()
         val declaration = catalog.indexOf("enum class SecTier(")
         assertTrue(declaration >= 0, "$CATALOG_FILE no longer declares `enum class SecTier(`.")
         val kdocStart = catalog.lastIndexOf("/**", declaration)

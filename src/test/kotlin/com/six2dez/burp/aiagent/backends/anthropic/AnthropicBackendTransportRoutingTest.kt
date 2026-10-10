@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.backends.anthropic
 
 import burp.api.montoya.MontoyaApi
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
 import com.six2dez.burp.aiagent.backends.http.TransportResponse
@@ -15,7 +16,6 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.spy
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
-import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -122,18 +122,9 @@ class AnthropicBackendTransportRoutingTest {
     fun `AnthropicBackend source file contains no okhttp3 or OkHttpClient reference`() {
         // SC2c: source-string guard — read the production .kt file from disk and assert it
         // contains neither "okhttp3" nor "OkHttpClient". Mirrors HttpBackendTransportRoutingTest.
-        val candidates =
-            listOf(
-                "src/main/kotlin/com/six2dez/burp/aiagent/backends/anthropic/AnthropicBackend.kt",
-                "../src/main/kotlin/com/six2dez/burp/aiagent/backends/anthropic/AnthropicBackend.kt",
-                "../../src/main/kotlin/com/six2dez/burp/aiagent/backends/anthropic/AnthropicBackend.kt",
-            )
-        val source =
-            candidates
-                .map { File(it) }
-                .firstOrNull { it.exists() && it.canRead() }
-                ?.readText()
-                ?: error("AnthropicBackend.kt not readable from CWD ${File(".").absolutePath}")
+        // SourceRoots.file walks up from user.dir to the project and fails naming both production roots
+        // when the file is in neither or in both.
+        val source = SourceRoots.file("com/six2dez/burp/aiagent/backends/anthropic/AnthropicBackend.kt").readText()
 
         assertTrue(
             !source.contains("okhttp3"),

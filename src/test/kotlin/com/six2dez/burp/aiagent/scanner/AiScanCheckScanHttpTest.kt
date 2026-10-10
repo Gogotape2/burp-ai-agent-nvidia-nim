@@ -11,6 +11,7 @@ import burp.api.montoya.internal.MontoyaObjectFactory
 import burp.api.montoya.internal.ObjectFactoryLocator
 import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPoint
 import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPointType
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.TestSettings
 import com.six2dez.burp.aiagent.config.AgentSettings
 import org.junit.jupiter.api.AfterEach
@@ -28,7 +29,6 @@ import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import org.mockito.stubbing.Answer
-import java.io.File
 import java.time.Duration
 import java.util.Collections
 import burp.api.montoya.core.ByteArray as MontoyaByteArray
@@ -116,7 +116,7 @@ class AiScanCheckScanHttpTest {
         assertTrue(apiSends.sent.size + scanSends.sent.size >= 2, "the check must still send its payloads")
 
         val code =
-            File(SOURCE).readText(Charsets.UTF_8).lines().filterNot { line ->
+            SourceRoots.file(SOURCE).readText(Charsets.UTF_8).lines().filterNot { line ->
                 val trimmed = line.trimStart()
                 trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")
             }
@@ -219,7 +219,7 @@ class AiScanCheckScanHttpTest {
         }
 
     private companion object {
-        const val SOURCE = "src/main/kotlin/com/six2dez/burp/aiagent/scanner/AiScanCheck.kt"
+        const val SOURCE = "com/six2dez/burp/aiagent/scanner/AiScanCheck.kt"
         val TIME_MARKERS = listOf("SLEEP(5)", "WAITFOR DELAY", "pg_sleep(5)")
     }
 }

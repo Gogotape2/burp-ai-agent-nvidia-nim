@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.backends.http
 
 import burp.api.montoya.MontoyaApi
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.TestSettings
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.HealthCheckResult
@@ -23,7 +24,6 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.spy
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
-import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -159,18 +159,9 @@ class HttpBackendTransportRoutingTest {
     fun `buildClient KDoc declares test-only and does not claim proxy honoring`() {
         // Source-string guard: read the .kt file directly from the project tree. This is the
         // simplest, most direct way to enforce the comment fix per the plan's behavior block.
-        val candidates =
-            listOf(
-                "src/main/kotlin/com/six2dez/burp/aiagent/backends/http/HttpBackendSupport.kt",
-                "../src/main/kotlin/com/six2dez/burp/aiagent/backends/http/HttpBackendSupport.kt",
-                "../../src/main/kotlin/com/six2dez/burp/aiagent/backends/http/HttpBackendSupport.kt",
-            )
-        val source =
-            candidates
-                .map { File(it) }
-                .firstOrNull { it.exists() && it.canRead() }
-                ?.readText()
-                ?: error("HttpBackendSupport.kt not readable from CWD ${File(".").absolutePath}")
+        // SourceRoots.file walks up from user.dir to the project and fails naming both production roots
+        // when the file is in neither or in both.
+        val source = SourceRoots.file("com/six2dez/burp/aiagent/backends/http/HttpBackendSupport.kt").readText()
         assertTrue(
             source.contains("OkHttp client for unit tests only"),
             "Expected truthful KDoc 'OkHttp client for unit tests only' in HttpBackendSupport.kt",

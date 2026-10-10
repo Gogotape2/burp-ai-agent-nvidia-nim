@@ -6,7 +6,6 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertTimeoutPreemptively
-import java.io.File
 import java.time.Duration
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
@@ -312,14 +311,8 @@ class WorkerPoolExecutorTest {
      * a literal opener inside this KDoc would open a nested comment and swallow the rest of the file.)
      */
     private fun codeLinesOf(path: String): List<String> {
-        val file = File(path)
-        assertTrue(
-            file.isFile,
-            "Expected to find `$path` relative to the test working directory " +
-                "`${System.getProperty("user.dir")}`, resolved as `${file.absolutePath}`. If the build " +
-                "layout changed, fix the path here and in the matching `tasks.test` input declaration " +
-                "(`mainSourceTreeStructuralInputs` in build.gradle.kts).",
-        )
+        // SourceRoots.file fails naming both production roots when the file is in neither or in both.
+        val file = SourceRoots.file(path)
         return file
             .readLines()
             .filterNot { line ->
@@ -329,8 +322,8 @@ class WorkerPoolExecutorTest {
     }
 
     private companion object {
-        const val APP_SOURCE = "src/main/kotlin/com/six2dez/burp/aiagent/App.kt"
-        const val SUPERVISOR_SOURCE = "src/main/kotlin/com/six2dez/burp/aiagent/supervisor/AgentSupervisor.kt"
+        const val APP_SOURCE = "com/six2dez/burp/aiagent/App.kt"
+        const val SUPERVISOR_SOURCE = "com/six2dez/burp/aiagent/supervisor/AgentSupervisor.kt"
         const val THREAD_NAME_PREFIX = "burp-ai-agent-worker-"
         const val SERVICE_THREAD_NAME_PREFIX = "burp-ai-agent-service-"
         const val SERVICE_PUMP_DAEMON_FLAG = "pumpThread.isDaemon = true"

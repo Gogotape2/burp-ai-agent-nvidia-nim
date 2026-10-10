@@ -1,12 +1,12 @@
 package com.six2dez.burp.aiagent.backends.cli
 
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.config.Defaults
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertTimeoutPreemptively
-import java.io.File
 import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -339,14 +339,9 @@ class CliOutputBufferTest {
      * nested comment and swallow the rest of the file.)
      */
     private fun codeLinesOf(path: String): List<String> {
-        val file = File(path)
-        assertTrue(
-            file.isFile,
-            "Expected to find `$path` relative to the test working directory " +
-                "`${System.getProperty("user.dir")}`, resolved as `${file.absolutePath}`. If the build " +
-                "layout changed, fix the path here and the matching `tasks.test` input declaration " +
-                "`mainSourceTreeStructuralInputs` in build.gradle.kts.",
-        )
+        // SourceRoots.file fails naming both production roots when the file is in neither or in both, so
+        // a whole-file move between src/main and src/full keeps this guard reading the real file.
+        val file = SourceRoots.file(path)
         return file
             .readLines()
             .filterNot { line ->
@@ -381,6 +376,6 @@ class CliOutputBufferTest {
         const val SMALL_CAP = 64
         const val OVERFLOW_LINE_COUNT = 20
         const val BOUNDARY_CAP = 128
-        const val CLI_BACKEND_SOURCE = "src/main/kotlin/com/six2dez/burp/aiagent/backends/cli/CliBackend.kt"
+        const val CLI_BACKEND_SOURCE = "com/six2dez/burp/aiagent/backends/cli/CliBackend.kt"
     }
 }

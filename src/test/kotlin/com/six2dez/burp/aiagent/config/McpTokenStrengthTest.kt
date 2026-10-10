@@ -1,9 +1,9 @@
 package com.six2dez.burp.aiagent.config
 
+import com.six2dez.burp.aiagent.SourceRoots
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.io.File
 
 /**
  * WR-01 (25-REVIEW): the MCP bearer token is the key of the bind-conflict takeover proof's HMAC, and
@@ -119,18 +119,12 @@ class McpTokenStrengthTest {
     private companion object {
         const val GENERATED_TOKEN_SAMPLES = 50
 
-        const val MCP_TABS_SOURCE = "src/main/kotlin/com/six2dez/burp/aiagent/ui/SettingsPanelMcpTabs.kt"
+        const val MCP_TABS_SOURCE = "com/six2dez/burp/aiagent/ui/SettingsPanelMcpTabs.kt"
 
         /** Brace-matched body of [declaration], mirroring `ChatPanelToolGateTest.functionBody`. */
         fun functionBody(declaration: String): String {
-            val file = File(MCP_TABS_SOURCE)
-            assertTrue(
-                file.isFile,
-                "Expected to find `$MCP_TABS_SOURCE` relative to the test working directory " +
-                    "`${System.getProperty("user.dir")}`, resolved as `${file.absolutePath}`. If the " +
-                    "build layout changed, fix the path here.",
-            )
-            val source = file.readText()
+            // SourceRoots.file fails naming both production roots when the file is in neither or in both.
+            val source = SourceRoots.file(MCP_TABS_SOURCE).readText()
             val start = source.indexOf(declaration)
             require(start >= 0) { "No '$declaration' in $MCP_TABS_SOURCE — this assertion is stale." }
             val open = source.indexOf('{', start)

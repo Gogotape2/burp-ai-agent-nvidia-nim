@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.backends.cli
 
+import com.six2dez.burp.aiagent.SourceRoots
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -519,14 +520,9 @@ class CliBackendTempFileTest {
      * nested comment and swallow the rest of the file.)
      */
     private fun codeLinesOf(path: String): List<String> {
-        val file = File(path)
-        assertTrue(
-            file.isFile,
-            "Expected to find `$path` relative to the test working directory " +
-                "`${System.getProperty("user.dir")}`, resolved as `${file.absolutePath}`. If the build " +
-                "layout changed, fix the path here and the matching `tasks.test` input declaration " +
-                "`mainSourceTreeStructuralInputs` in build.gradle.kts.",
-        )
+        // SourceRoots.file fails naming both production roots when the file is in neither or in both, so
+        // a whole-file move between src/main and src/full keeps this guard reading the real file.
+        val file = SourceRoots.file(path)
         return file
             .readLines()
             .filterNot { line ->
@@ -537,7 +533,7 @@ class CliBackendTempFileTest {
 
     private companion object {
         const val SIMULATED_CALL_COUNT = 10
-        const val CLI_BACKEND_SOURCE = "src/main/kotlin/com/six2dez/burp/aiagent/backends/cli/CliBackend.kt"
-        const val APP_SOURCE = "src/main/kotlin/com/six2dez/burp/aiagent/App.kt"
+        const val CLI_BACKEND_SOURCE = "com/six2dez/burp/aiagent/backends/cli/CliBackend.kt"
+        const val APP_SOURCE = "com/six2dez/burp/aiagent/App.kt"
     }
 }

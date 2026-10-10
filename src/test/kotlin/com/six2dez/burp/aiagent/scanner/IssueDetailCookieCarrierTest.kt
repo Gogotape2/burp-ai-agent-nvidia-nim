@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.scanner
 
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.mcp.schema.AuditIssueConfidence
 import com.six2dez.burp.aiagent.mcp.schema.AuditIssueDefinition
 import com.six2dez.burp.aiagent.mcp.schema.AuditIssueSeverity
@@ -23,7 +24,6 @@ import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import java.io.File
 
 /**
  * (PRIV-05) Phase 28 plans 28-01 and 28-04 — `AR-27-08`, the issue-detail cookie carrier.
@@ -693,17 +693,11 @@ class IssueDetailCookieCarrierTest {
         }
     }
 
-    private fun activeScannerSource(): String {
-        val file = File(ACTIVE_SCANNER_SOURCE_PATH)
-        assertTrue(
-            file.isFile,
-            "Expected `$ACTIVE_SCANNER_SOURCE_PATH` relative to the test working directory " +
-                "`${System.getProperty("user.dir")}`, resolved as `${file.absolutePath}`. If the " +
-                "build layout changed, fix the path here. Asserted rather than left to surface as a " +
-                "bare FileNotFoundException.",
-        )
-        return file.readText()
-    }
+    /**
+     * Resolved through [SourceRoots.file], which fails naming both production roots rather than letting a
+     * missing or duplicated file surface as a bare FileNotFoundException.
+     */
+    private fun activeScannerSource(): String = SourceRoots.file(ACTIVE_SCANNER_SOURCE_PATH).readText()
 
     private fun assertSentinelsAreDistinctAndNonOverlapping() {
         assertNotEquals(
@@ -812,7 +806,7 @@ class IssueDetailCookieCarrierTest {
 
         const val HOST_SALT = "phase-28-fixed-salt"
 
-        const val ACTIVE_SCANNER_SOURCE_PATH = "src/main/kotlin/com/six2dez/burp/aiagent/scanner/ActiveAiScanner.kt"
+        const val ACTIVE_SCANNER_SOURCE_PATH = "com/six2dez/burp/aiagent/scanner/ActiveAiScanner.kt"
 
         /** How many payloads the derived fixture asks `PayloadGenerator` for. */
         const val DERIVED_PAYLOAD_LIMIT = 5
