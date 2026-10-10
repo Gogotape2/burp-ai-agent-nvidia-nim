@@ -621,8 +621,9 @@ class ChatPanel(
     ) {
         val settings = getSettings()
         updatePrivacyPill()
-        if (supervisor.requiresBurpAiAndDisabled(settings.preferredBackendId)) {
-            showError("Burp AI is disabled in Burp Suite settings. Enable 'Use AI' for extensions, or pick a different backend.")
+        val accessRefusal = supervisor.aiAccessRefusal(settings.preferredBackendId)
+        if (accessRefusal != null) {
+            showError(accessRefusal)
             return
         }
         if (!ensureBackendReady(settings)) return

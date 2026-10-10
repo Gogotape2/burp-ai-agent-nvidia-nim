@@ -251,13 +251,13 @@ class PassiveAiScanner(
 
     /**
      * The AI half's gates for Burp Scanner check work: the scanner is on, the token budget is not
-     * paused and the Burp AI gate is open. Shared by [enqueueForScanCheck] and [recordScanCheckFindings].
+     * paused and the AI access policy allows the running backend. Shared by [enqueueForScanCheck] and [recordScanCheckFindings].
      */
     private fun acceptsScanCheckWork(): Boolean =
         enabled.get() &&
             // CAP-04: no-op when paused (does NOT clear KB or flip enabled)
             !budgetPaused.get() &&
-            !supervisor.isBlockedByBurpAiGate()
+            !supervisor.isBlockedByAiAccessPolicy()
 
     /**
      * Enqueues a request/response for asynchronous AI deep-analysis.
@@ -275,7 +275,7 @@ class PassiveAiScanner(
      * AuditResult (quick 261009-1ao): counter, Output line, knowledge-base signal, auto-queue,
      * `passive_ai_issue` audit record and findings buffer, once per new issue, consolidated on repeats.
      * Same gates as the AI half ([acceptsScanCheckWork]): nothing is recorded while the scanner is off,
-     * the token budget is paused or the Burp AI gate is closed.
+     * the token budget is paused or the AI access policy refuses the running backend.
      *
      * Runs synchronously, before doCheck returns: the consolidation check reads the site map, and on the
      * executor it would race Burp adding the check's own, same-named issue and usually see it, dropping

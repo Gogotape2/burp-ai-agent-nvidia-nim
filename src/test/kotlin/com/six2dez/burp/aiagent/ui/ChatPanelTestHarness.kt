@@ -121,7 +121,7 @@ object ChatPanelTestHarness {
         whenever(api.burpSuite().version().edition()).thenReturn(BurpSuiteEdition.COMMUNITY_EDITION)
 
         val supervisor: AgentSupervisor = mock(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
-        whenever(supervisor.requiresBurpAiAndDisabled(any())).thenReturn(false)
+        whenever(supervisor.aiAccessRefusal(any())).thenReturn(null)
         val sentTraceIds = CopyOnWriteArrayList<String>()
         whenever(
             // 13 matchers, one per parameter of AgentSupervisor.sendChat; nullable parameters use

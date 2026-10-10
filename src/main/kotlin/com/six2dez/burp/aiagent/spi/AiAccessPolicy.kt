@@ -25,11 +25,21 @@ interface AiAccessPolicy {
 }
 
 /**
- * RED scaffolding (29-07 Task 1): allows everything. Replaced by the real strict policy in GREEN.
+ * The core default, and the policy of the BApp Store build: while Burp's "Use AI" setting is off, a
+ * request to ANY backend is refused, whatever its id. While it is on, every backend is allowed.
+ *
+ * This decides only whether a request may start; the single egress enforcement point that proves no
+ * provider request bypasses it is Phase 31 (GATE-01).
  */
 class StoreAiAccessPolicy : AiAccessPolicy {
     override fun refusal(
         backendId: String,
         burpAiEnabled: Boolean,
-    ): String? = null
+    ): String? = if (burpAiEnabled) null else REFUSAL
+
+    private companion object {
+        const val REFUSAL =
+            "This build sends AI requests only while Burp's 'Use AI' setting is enabled. " +
+                "Turn it on in Burp's settings to use any AI backend."
+    }
 }

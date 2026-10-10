@@ -83,7 +83,14 @@ object App {
         backendRegistry = BackendRegistry(api)
         auditLogger = AuditLogger(api)
         AuditLogger.registerGlobalEmitter { type, payload -> auditLogger.logEvent(type, payload) }
-        supervisor = AgentSupervisor(api, backendRegistry, auditLogger)
+        val aiAccessPolicy =
+            resolveAiAccessPolicy { providers ->
+                api.logging().logToError(
+                    "More than one AiAccessPolicy provider found (${providers.joinToString(", ")}); " +
+                        "the strict BApp Store AI access policy is in force.",
+                )
+            }
+        supervisor = AgentSupervisor(api, backendRegistry, auditLogger, aiAccessPolicy)
         mirrorAppliedSettingsInto(settingsRepo, supervisor)
         aiRequestLogger = AiRequestLogger()
         supervisor.aiRequestLogger = aiRequestLogger
@@ -341,8 +348,7 @@ internal fun resolveFlavorProfile(onConflict: (List<String>) -> Unit = {}): Flav
  * provider also resolves to [StoreAiAccessPolicy] after [onConflict] receives the provider class names,
  * so a packaging error can only make the build stricter.
  */
-internal fun resolveAiAccessPolicy(onConflict: (List<String>) -> Unit = {}): AiAccessPolicy =
-    Plugins.single(AiAccessPolicy::class.java, onConflict) ?: StoreAiAccessPolicy()
+internal fun resolveAiAccessPolicy(onConflict: (List<String>) -> Unit = {}): AiAccessPolicy = Plugins.single(AiAccessPolicy::class.java, onConflict) ?: StoreAiAccessPolicy()
 
 /**
  * Phase 29 — the ONLY place the extension names itself to Burp. The name is [EXTENSION_NAME] in every

@@ -12,6 +12,7 @@ import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.redact.PrivacyMode
+import com.six2dez.burp.aiagent.spi.AiAccessPolicy
 import com.six2dez.burp.aiagent.util.HeaderParser
 import java.util.UUID
 import java.util.concurrent.TimeUnit
@@ -23,6 +24,9 @@ class AgentSupervisor(
     private val api: MontoyaApi,
     private val registry: BackendRegistry,
     private val audit: AuditLogger,
+    // Phase 29 / BUILD-04: no default value on purpose (Pitfall 11). Every caller, tests included,
+    // states which flavor's access policy it runs under, so none silently inherits one.
+    private val aiAccessPolicy: AiAccessPolicy,
 ) {
     var aiRequestLogger: AiRequestLogger? = null
 
@@ -72,16 +76,12 @@ class AgentSupervisor(
     }
 
     /**
-     * Returns the state of Burp Pro's built-in **"Use AI" for extensions** preference.
+     * Returns the state of Burp Pro's built-in **"Use AI" for extensions** preference (always `false`
+     * in Burp Community, where the preference does not exist).
      *
-     * IMPORTANT: this flag is *only* relevant to the `burp-ai` backend, which delegates inference
-     * to Burp Pro's bundled AI provider. Every other backend in this plugin (CLI agents like
-     * Claude Code / Codex / Gemini, plus HTTP backends like Ollama, LM Studio, OpenAI-compatible,
-     * NVIDIA NIM, Perplexity) is independent of Burp's AI features and must keep working when the
-     * toggle is off — including in Burp Community where the toggle does not exist at all.
-     *
-     * Callers should prefer [requiresBurpAiAndDisabled] to gate startup / send paths, so non-AI
-     * backends are not accidentally blocked by Burp's preference.
+     * Which backends need it is decided by the injected [AiAccessPolicy], not here: the BApp Store
+     * build requires it for every backend, the full build only for `burp-ai`. Callers gating start /
+     * send paths should use [aiAccessRefusal], never this raw value.
      */
     fun isAiEnabled(): Boolean =
         try {
@@ -92,20 +92,20 @@ class AgentSupervisor(
         }
 
     /**
-     * `true` iff [backendId] is the Burp-bundled `burp-ai` backend AND Burp Pro's `Use AI`
-     * preference is currently OFF. Used to short-circuit start / send paths with a clear error
-     * message; non-AI backends always return `false` regardless of the preference.
+     * `null` when the injected [AiAccessPolicy] allows a request to [backendId] under the current
+     * value of Burp's `Use AI` preference; otherwise the user-facing refusal message. Start / send
+     * paths short-circuit on a non-null result and surface the message as the error.
      */
-    fun requiresBurpAiAndDisabled(backendId: String): Boolean = backendId == "burp-ai" && !isAiEnabled()
+    fun aiAccessRefusal(backendId: String): String? = aiAccessPolicy.refusal(backendId, isAiEnabled())
 
     /**
-     * `true` iff the currently-running backend is `burp-ai` AND Burp Pro's `Use AI` toggle is OFF.
-     * Returns false when no backend is running, or when the running backend doesn't depend on
-     * Burp's bundled AI. Background scanners use this to skip work that would fail at send time.
+     * `true` iff a backend is running AND the [AiAccessPolicy] currently refuses it. Returns false
+     * when no backend is running. Background scanners use this to skip work that would fail at send
+     * time.
      */
-    fun isBlockedByBurpAiGate(): Boolean {
+    fun isBlockedByAiAccessPolicy(): Boolean {
         val running = stateRef.get() as? AgentState.Running ?: return false
-        return requiresBurpAiAndDisabled(running.backendId)
+        return aiAccessRefusal(running.backendId) != null
     }
 
     fun currentSessionId(): String? = (stateRef.get() as? AgentState.Running)?.sessionId
@@ -113,10 +113,10 @@ class AgentSupervisor(
     fun lastStartError(): String? = lastErrorRef.get()
 
     fun startOrAttach(backendId: String): Boolean {
-        if (requiresBurpAiAndDisabled(backendId)) {
-            val msg = "Burp AI is disabled in Burp Suite settings. Enable 'Use AI' for extensions, or pick a different backend."
-            lastErrorRef.set(msg)
-            api.logging().logToOutput(msg)
+        val refusal = aiAccessRefusal(backendId)
+        if (refusal != null) {
+            lastErrorRef.set(refusal)
+            api.logging().logToOutput(refusal)
             return false
         }
 
@@ -267,8 +267,9 @@ class AgentSupervisor(
             onComplete(IllegalStateException("No active session"))
             return
         }
-        if (requiresBurpAiAndDisabled(current.backendId)) {
-            onComplete(IllegalStateException("Burp AI is disabled in Burp Suite settings."))
+        val refusal = aiAccessRefusal(current.backendId)
+        if (refusal != null) {
+            onComplete(IllegalStateException(refusal))
             return
         }
 
@@ -393,8 +394,9 @@ class AgentSupervisor(
         maxOutputTokens: Int? = null,
         launchMetadata: Map<String, String>? = null,
     ): com.six2dez.burp.aiagent.backends.AgentConnection? {
-        if (requiresBurpAiAndDisabled(backendId)) {
-            onComplete(IllegalStateException("Burp AI is disabled in Burp Suite settings."))
+        val refusal = aiAccessRefusal(backendId)
+        if (refusal != null) {
+            onComplete(IllegalStateException(refusal))
             return null
         }
 
