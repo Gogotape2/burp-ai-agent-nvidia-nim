@@ -14,7 +14,10 @@ private const val BASELINE_FILE = "detekt-baseline.xml"
  * always-true launch-mode parameter of buildLaunchConfig (two entries, replaced by a local suppression),
  * then to 1011 in the commit that deleted the auto-restart monitor and the worker pool (seven entries),
  * then to 1010 in the commit that removed the auto-restart setting (PrivacyConfigPanel's constructor
- * entry, replaced by a local suppression).
+ * entry, replaced by a local suppression), then to 1002 in the commit that replaced the executor's
+ * dispatch `when` with the tool registry (plan 29-06: the executeToolResult / inputSchema complexity
+ * entries, two executor magic numbers, parseArgsObject, the swallowed MissingFieldException and the
+ * deleted McpToolRegistrations object).
  *
  * This is a CEILING, not a target. ADR-17 clause 1 says the baseline may lose entries and may never
  * gain them, so the only edit this constant is ever allowed to receive is a DOWNWARD one, made in the
@@ -22,7 +25,7 @@ private const val BASELINE_FILE = "detekt-baseline.xml"
  * somebody would otherwise have had to answer into a finding nobody will ever see again — which is
  * precisely the inversion ADR-17 clause 1 exists to forbid.
  */
-private const val MAX_BASELINE_ENTRIES = 1010
+private const val MAX_BASELINE_ENTRIES = 1002
 
 /**
  * QUAL-07 / SC3 gate on ADR-17 clause 1 — "`detekt-baseline.xml` shrinks and is never appended to".

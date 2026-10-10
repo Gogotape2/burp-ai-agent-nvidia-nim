@@ -359,6 +359,7 @@ internal object ToolApprovalGate {
      * canonicalise, then test the external namespace, then look the catalog up. If this gate grew its
      * own alias table, an aliased call would be labelled "unknown tool" on the card while the executor
      * ran it as a known one, and the audit record would name a tool that never executed (T-22-12).
+     * Since phase 29 the one alias table is the tool registry's merged table, which that function reads.
      */
     internal fun tierFor(rawToolName: String): SecTier {
         val canonical = McpToolExecutor.canonicalToolId(rawToolName)

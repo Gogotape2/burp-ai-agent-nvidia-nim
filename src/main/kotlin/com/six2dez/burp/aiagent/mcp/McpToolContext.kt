@@ -9,6 +9,7 @@ import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.mcp.external.ExternalMcpClientManager
 import com.six2dez.burp.aiagent.mcp.tools.LimitedStringBuilder
 import com.six2dez.burp.aiagent.mcp.tools.ResponsePreprocessorSettings
+import com.six2dez.burp.aiagent.mcp.tools.ToolRegistry
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.redact.Redaction
 import com.six2dez.burp.aiagent.redact.RedactionPolicy
@@ -45,6 +46,10 @@ data class McpToolContext(
     // Phase 16 (CAP-02): optional external MCP client manager. Null when no external servers
     // are configured. Defaults to null so all existing construction sites compile unchanged.
     val externalClientManager: ExternalMcpClientManager? = null,
+    // Phase 29 (D-13): the registry this context dispatches through. Production always uses the
+    // catalog's; a test injects its own here instead of registering fakes through META-INF/services,
+    // which every store test would then see.
+    val toolRegistry: ToolRegistry = McpToolCatalog.registry,
 ) {
     fun isToolEnabled(name: String): Boolean = toolToggles[name] ?: false
 

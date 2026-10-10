@@ -34,8 +34,6 @@
     <ID>CyclomaticComplexMethod:LmStudioBackend.kt$LmStudioBackend.LmStudioConnection$override fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
     <ID>CyclomaticComplexMethod:MainTab.kt$MainTab$internal fun validateBackendCommand(settings: com.six2dez.burp.aiagent.config.AgentSettings): String?</ID>
     <ID>CyclomaticComplexMethod:MainTab.kt$MainTab$private fun updateSafetySummary()</ID>
-    <ID>CyclomaticComplexMethod:McpToolExecutorImpl.kt$McpToolExecutor$fun executeToolResult( name: String, argsJson: String?, context: McpToolContext, ): CallToolResult</ID>
-    <ID>CyclomaticComplexMethod:McpToolExecutorImpl.kt$McpToolExecutor$fun inputSchema( toolName: String, context: McpToolContext? = null, ): Tool.Input</ID>
     <ID>CyclomaticComplexMethod:McpToolHandlers.kt$internal fun Server.registerToolHandler( toolId: String, context: McpToolContext, )</ID>
     <ID>CyclomaticComplexMethod:NvidiaNimBackendFactory.kt$NvidiaNimBackendFactory.Companion$private fun nimHealthCheck( settings: AgentSettings, transport: MontoyaHttpTransport?, ): HealthCheckResult</ID>
     <ID>CyclomaticComplexMethod:OllamaBackend.kt$OllamaBackend$private fun detectContextWindow( baseUrl: String, model: String, headers: Map&lt;String, String>, fallback: Int?, transport: MontoyaHttpTransport? = null, ): Int?</ID>
@@ -91,7 +89,6 @@
     <ID>LongMethod:KtorMcpServerManager.kt$KtorMcpServerManager$override fun start( settings: McpSettings, privacyMode: PrivacyMode, determinismMode: Boolean, preprocessSettings: ResponsePreprocessorSettings, callback: (McpServerState) -> Unit, )</ID>
     <ID>LongMethod:LmStudioBackend.kt$LmStudioBackend.LmStudioConnection$override fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
     <ID>LongMethod:McpTool.kt$@PublishedApi internal fun runTool( context: McpToolContext, name: String, argsJson: String? = null, execute: () -> String, ): CallToolResult</ID>
-    <ID>LongMethod:McpToolExecutorImpl.kt$McpToolExecutor$fun executeToolResult( name: String, argsJson: String?, context: McpToolContext, ): CallToolResult</ID>
     <ID>LongMethod:OllamaBackend.kt$OllamaBackend.OllamaConnection$override fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
     <ID>LongMethod:OpenAiCompatibleBackend.kt$OpenAiCompatibleBackend.OpenAiCompatibleConnection$override fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
     <ID>LongMethod:PassiveAiScannerConfidenceTest.kt$PassiveAiScannerConfidenceTest$private fun baselineSettings(): AgentSettings</ID>
@@ -494,8 +491,6 @@
     <ID>MagicNumber:McpSupervisor.kt$McpSupervisor$500</ID>
     <ID>MagicNumber:McpSupervisor.kt$McpSupervisor$800</ID>
     <ID>MagicNumber:McpTool.kt$1_000_000L</ID>
-    <ID>MagicNumber:McpToolExecutorImpl.kt$McpToolExecutor$120_000L</ID>
-    <ID>MagicNumber:McpToolExecutorImpl.kt$McpToolExecutor$5</ID>
     <ID>MagicNumber:McpToolExecutorImpl.kt$McpToolExecutor$500</ID>
     <ID>MagicNumber:McpToolHandlers.kt$120</ID>
     <ID>MagicNumber:McpToolHelpers.kt$4</ID>
@@ -773,7 +768,6 @@
     <ID>MagicNumber:UiTheme.kt$UiTheme.Typography$14</ID>
     <ID>MatchingDeclarationName:Components.kt$BadgeStyle</ID>
     <ID>MatchingDeclarationName:McpToolExecutorImpl.kt$McpToolExecutor</ID>
-    <ID>MatchingDeclarationName:McpToolHandlers.kt$McpToolRegistrations</ID>
     <ID>MayBeConst:DesignTokens.kt$DesignTokens.Spacing$/** 12 px — label-to-field insets inside form grid rows (horizontal). */ val md = 12</ID>
     <ID>MayBeConst:DesignTokens.kt$DesignTokens.Spacing$/** 16 px — tab content outer padding (horizontal); section header bottom gap. */ val lg = 16</ID>
     <ID>MayBeConst:DesignTokens.kt$DesignTokens.Spacing$/** 24 px — major section break between accordion panels. */ val xl = 24</ID>
@@ -872,7 +866,6 @@
     <ID>ReturnCount:McpTool.kt$@PublishedApi internal fun runTool( context: McpToolContext, name: String, argsJson: String? = null, execute: () -> String, ): CallToolResult</ID>
     <ID>ReturnCount:McpToolContext.kt$McpToolContext$fun isUnsafeToolAllowed(name: String): Boolean</ID>
     <ID>ReturnCount:McpToolExecutorImpl.kt$McpToolExecutor$fun executeToolResult( name: String, argsJson: String?, context: McpToolContext, ): CallToolResult</ID>
-    <ID>ReturnCount:McpToolExecutorImpl.kt$McpToolExecutor$private fun parseArgsObject(rawArgs: String?): Map&lt;String, JsonElement></ID>
     <ID>ReturnCount:McpToolHelpers.kt$internal fun executeIssueCreate( input: CreateAuditIssue, api: MontoyaApi, context: McpToolContext, ): String</ID>
     <ID>ReturnCount:McpToolHelpers.kt$internal fun maybeAnonymizeUrl( rawUrl: String, context: McpToolContext, ): String</ID>
     <ID>ReturnCount:McpToolHelpers.kt$internal fun normalizeHttpRequest(content: String): String</ID>
@@ -935,7 +928,6 @@
     <ID>SwallowedException:ChatPanelConcurrencyTest.kt$ChatPanelConcurrencyTest$e: Exception</ID>
     <ID>SwallowedException:CustomPromptDefinition.kt$CustomPromptDefinition.Companion$e: Exception</ID>
     <ID>SwallowedException:KtorMcpServerManager.kt$KtorMcpServerManager$e: TimeoutException</ID>
-    <ID>SwallowedException:McpToolExecutorImpl.kt$McpToolExecutor$e: kotlinx.serialization.MissingFieldException</ID>
     <ID>SwallowedException:SecretCipher.kt$SecretCipher$e: Exception</ID>
     <ID>SwallowedException:SsrfGuard.kt$SsrfGuard$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ActiveAiScanner.kt$ActiveAiScanner$e: Exception</ID>

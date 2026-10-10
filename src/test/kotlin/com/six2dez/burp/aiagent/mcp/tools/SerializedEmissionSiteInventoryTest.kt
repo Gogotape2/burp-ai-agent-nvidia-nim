@@ -21,10 +21,12 @@ import org.junit.jupiter.api.Test
  * read as a DATA CHANGE here — visible, deliberate, and reviewable — rather than as silence.
  *
  * WHAT MAKES A RULE-LEVEL FIX REACH EVERY SITE. None of the 7 emission sites redacts anything
- * itself. All seven sit in `McpToolExecutorImpl.kt`, inside the dispatch `when` whose result is
- * wrapped at the executor's single `context.redactIfNeeded(output)` line. That is why changing a
- * regex in `redact/Redaction.kt` reaches all 7 — and it is asserted below from source rather than
- * argued in prose.
+ * itself. Since plan 29-06 every one of them sits inside a tool HANDLER BODY — a `toolHandler(`
+ * lambda in a handler file, or the residual `dispatchGenericTool` that GenericToolProvider's handlers
+ * delegate to — and `McpToolExecutor.executeToolResult` wraps every `handler.execute(...)` result at
+ * its single `context.redactIfNeeded(handler.execute(` line. That is why changing a regex in
+ * `redact/Redaction.kt` reaches all 7 — and it is asserted below from source rather than argued in
+ * prose.
  *
  * Phase 29 plan 29-04 (DEAD-01) deleted the legacy MCP registrar, which carried a second copy of
  * the same seven sites behind its own wrapping registration helpers in `McpTool.kt`. Its rows were
@@ -38,11 +40,12 @@ import org.junit.jupiter.api.Test
  * called through a local variable, a hand-built JSON string, a third serializable carrier with a
  * new conversion function — is invisible to every scan in this file and leaves it GREEN.
  *
- * The per-file count, the tool-name presence check and the choke-point assertion are additionally
- * scoped to the NAMED EXECUTOR FILE in [EMISSION_EXECUTOR_FILES]. `theMeasuredEmissionSiteCountIsPinned`
- * does scan every production root for the call shape, so a site added in ANOTHER file fails that
- * one assertion — but the shape bound above still holds over the whole tree, and the other three
- * scans still see only the executor.
+ * The per-file count, the tool-name presence check and the handler-body attribution are additionally
+ * scoped to the NAMED FILES in [EMISSION_SITE_FILES]. `theMeasuredEmissionSiteCountIsPinned` does scan
+ * every production root for the call shape, so a site added in ANOTHER file fails that one assertion —
+ * but the shape bound above still holds over the whole tree, and the other scans still see only the
+ * named files. The handler-body attribution is a LINE-REGION proxy (a site after a `toolHandler(` call,
+ * or between `fun dispatchGenericTool(` and its closing brace), not a parse of Kotlin.
  *
  * ── BOUND 2, on the REGISTRATION-PATH scan, which is a DIFFERENT AND WEAKER BOUND ──
  *
@@ -64,18 +67,16 @@ import org.junit.jupiter.api.Test
 class SerializedEmissionSiteInventoryTest {
     @Test
     fun theMeasuredEmissionSiteCountIsPinned() {
-        val perFile = EMISSION_EXECUTOR_FILES.associateWith { emissionSitesIn(it).size }
+        val perFile = EMISSION_SITE_FILES.keys.associateWith { emissionSitesIn(it).size }
 
-        perFile.forEach { (path, count) ->
-            assertEquals(
-                EXPECTED_SITES_PER_EXECUTOR,
-                count,
-                "$path carries $count serialized-emission sites, not $EXPECTED_SITES_PER_EXECUTOR. " +
-                    "If that is deliberate, update EXPECTED_SITES_PER_EXECUTOR and the tool-name sets " +
-                    "together and re-measure the whole inventory — do not adjust one number in " +
-                    "isolation. Sites found: ${emissionSitesIn(path)}",
-            )
-        }
+        assertEquals(
+            EMISSION_SITE_FILES,
+            perFile,
+            "the per-file serialized-emission inventory has drifted. If that is deliberate, update " +
+                "EMISSION_SITE_FILES and the tool-name sets together and re-measure the whole inventory " +
+                "— do not adjust one number in isolation. Sites found: " +
+                EMISSION_SITE_FILES.keys.associateWith { emissionSitesIn(it) },
+        )
         assertEquals(
             EXPECTED_EMISSION_SITES,
             perFile.values.sum(),
@@ -83,18 +84,16 @@ class SerializedEmissionSiteInventoryTest {
         )
 
         // The split is asserted against the tool-name sets rather than restated as a second literal,
-        // so the counts and the names cannot disagree with each other.
+        // so the counts and the names cannot disagree with each other. Each tool emits at ONE site.
         assertEquals(
             EXPECTED_RAW_HTTP_EMISSION_SITES,
-            RAW_HTTP_EMISSION_TOOL_NAMES.size * EMISSION_EXECUTOR_FILES.size,
-            "the raw-HTTP site count and the raw-HTTP tool-name set disagree: " +
-                "${RAW_HTTP_EMISSION_TOOL_NAMES.size} names across ${EMISSION_EXECUTOR_FILES.size} executors",
+            RAW_HTTP_EMISSION_TOOL_NAMES.size,
+            "the raw-HTTP site count and the raw-HTTP tool-name set disagree",
         )
         assertEquals(
             EXPECTED_WEBSOCKET_EMISSION_SITES,
-            WEBSOCKET_EMISSION_TOOL_NAMES.size * EMISSION_EXECUTOR_FILES.size,
-            "the WebSocket site count and the WebSocket tool-name set disagree: " +
-                "${WEBSOCKET_EMISSION_TOOL_NAMES.size} names across ${EMISSION_EXECUTOR_FILES.size} executors",
+            WEBSOCKET_EMISSION_TOOL_NAMES.size,
+            "the WebSocket site count and the WebSocket tool-name set disagree",
         )
         assertEquals(
             EXPECTED_EMISSION_SITES,
@@ -102,39 +101,35 @@ class SerializedEmissionSiteInventoryTest {
             "the two carrier splits must account for the whole inventory, or a site belongs to neither",
         )
 
-        // The one place the emission scan is NOT limited to the named executor. Another file
-        // that adopted this call shape is the "eleventh site" failure mode in its purest form, and
-        // it costs three lines to make it fail here instead of being discovered by an audit.
+        // The one place the emission scan is NOT limited to the named files. Another file that adopted
+        // this call shape is the "eleventh site" failure mode in its purest form, and it costs three
+        // lines to make it fail here instead of being discovered by an audit.
         val strays =
             SourceRoots
                 .kotlinFiles()
                 .map(SourceRoots::relativePath)
-                .filterNot { it in EMISSION_EXECUTOR_FILES }
+                .filterNot { it in EMISSION_SITE_FILES.keys }
                 .filter { emissionSitesIn(it).isNotEmpty() }
         assertTrue(
             strays.isEmpty(),
-            "the measured serialized-emission call shape appears OUTSIDE the pinned executor " +
-                "file, so this inventory no longer describes the tree: $strays. Add the file to " +
-                "EMISSION_EXECUTOR_FILES and re-measure every constant here, or route the new site " +
-                "through an existing executor.",
+            "the measured serialized-emission call shape appears OUTSIDE the pinned files, so this " +
+                "inventory no longer describes the tree: $strays. Add the file to EMISSION_SITE_FILES " +
+                "and re-measure every constant here.",
         )
     }
 
     @Test
-    fun everyEmissionToolNameAppearsInTheExecutor() {
+    fun everyEmissionToolNameIsDeclaredInAPinnedFile() {
         val allNames = RAW_HTTP_EMISSION_TOOL_NAMES + WEBSOCKET_EMISSION_TOOL_NAMES
-
-        EMISSION_EXECUTOR_FILES.forEach { path ->
-            val code = codeLines(path)
-            allNames.forEach { name ->
-                assertTrue(
-                    code.any { it.text.contains("\"$name\"") },
-                    "the tool name \"$name\" is not registered in $path. Every emitting tool in " +
-                        "the pinned inventory is dispatched by the executor; a name that disappeared " +
-                        "means the counts above describe a tool set that no longer exists, so " +
-                        "re-measure the whole inventory rather than one number.",
-                )
-            }
+        val code = EMISSION_SITE_FILES.keys.flatMap { codeLines(it) }
+        allNames.forEach { name ->
+            assertTrue(
+                code.any { it.text.contains("\"$name\"") },
+                "the tool name \"$name\" is not declared in any of ${EMISSION_SITE_FILES.keys}. Every " +
+                    "emitting tool in the pinned inventory is a handler in one of them; a name that " +
+                    "disappeared means the counts above describe a tool set that no longer exists, so " +
+                    "re-measure the whole inventory rather than one number.",
+            )
         }
     }
 
@@ -144,25 +139,51 @@ class SerializedEmissionSiteInventoryTest {
         // redact/Redaction.kt reaches all 7 emission sites. Without it, "we fixed the rule" would
         // be a claim about one call site and a hope about six others.
 
-        // ── the modern dispatcher: every emission site sits inside the dispatch `when` whose result
-        //    is wrapped at the single choke point below.
-        val executorSites = emissionSitesIn(MODERN_EXECUTOR)
+        // 1. The executor wraps every handler's result, exactly once, inside executeToolResult.
         val chokePoints = codeLines(MODERN_EXECUTOR).filter { it.text.contains(EXECUTOR_CHOKE_POINT) }
         assertEquals(
             1,
             chokePoints.size,
             "$MODERN_EXECUTOR must carry exactly ONE `$EXECUTOR_CHOKE_POINT` line — the single point " +
-                "every dispatched tool's output passes through. Found: $chokePoints",
+                "every dispatched handler's output passes through. Found: $chokePoints",
         )
-        // POSITIONAL PROXY, stated rather than hidden: the wrapper being the LAST thing in the
-        // function, after every branch that produces a payload, is what a line scan can see of
-        // "the whole `when` result flows through it". A restructure that moved a branch after the
-        // wrapper is what this catches; a branch that returned early past it is not.
+        val executeToolResult = memberFunctionRegion(MODERN_EXECUTOR, "fun executeToolResult(")
         assertTrue(
-            chokePoints.single().number > executorSites.maxOf { it.number },
-            "$MODERN_EXECUTOR's `$EXECUTOR_CHOKE_POINT` is at line ${chokePoints.single().number}, " +
-                "BEFORE its last emission site at line ${executorSites.maxOf { it.number }}. An " +
-                "emission branch that runs after the wrapper is not redacted by it.",
+            chokePoints.single().number in executeToolResult,
+            "$MODERN_EXECUTOR's `$EXECUTOR_CHOKE_POINT` (line ${chokePoints.single().number}) is not inside " +
+                "executeToolResult ($executeToolResult), the one door every MCP and chat tool call passes.",
+        )
+
+        // 2. Every emission site is inside a handler body, so it is what handler.execute returns.
+        EMISSION_SITE_FILES.keys.forEach { path ->
+            val bodies =
+                if (path == MODERN_EXECUTOR) {
+                    listOf(memberFunctionRegion(path, RESIDUAL_DISPATCH))
+                } else {
+                    regionsAfter(path, HANDLER_FACTORY).map { (start, region) -> start..region.last().number }
+                }
+            emissionSitesIn(path).forEach { site ->
+                assertTrue(
+                    bodies.any { site.number in it },
+                    "$path:${site.number} is a serialized-emission site outside every tool handler body " +
+                        "($bodies). Only a handler's result passes the choke point; a site anywhere else " +
+                        "is not redacted by it: $site",
+                )
+            }
+        }
+
+        // 3. The residual dispatch is reachable only from a handler body: GenericToolProvider's.
+        val dispatchCalls =
+            SourceRoots
+                .kotlinFiles()
+                .map(SourceRoots::relativePath)
+                .associateWith { path -> codeLines(path).count { it.text.contains(RESIDUAL_DISPATCH_CALL) } }
+                .filterValues { it > 0 }
+        assertEquals(
+            mapOf(GENERIC_PROVIDER to 1),
+            dispatchCalls,
+            "`$RESIDUAL_DISPATCH_CALL` must be called from exactly one place, GenericToolProvider's " +
+                "delegating handler, so every branch it runs is a handler.execute result.",
         )
     }
 
@@ -244,10 +265,10 @@ class SerializedEmissionSiteInventoryTest {
         // Each scanned symbol proven live against a real positive, so an inventory of zero cannot
         // pass as agreement with a pinned count of zero.
         EMISSION_FUNCTIONS.forEach { function ->
-            val hits = EMISSION_EXECUTOR_FILES.sumOf { path -> emissionSitesIn(path).count { it.text.contains(function) } }
+            val hits = EMISSION_SITE_FILES.keys.sumOf { path -> emissionSitesIn(path).count { it.text.contains(function) } }
             assertTrue(
                 hits >= 1,
-                "the emission scan found no `$function` call in either executor — the regex " +
+                "the emission scan found no `$function` call in the pinned files — the regex " +
                     "/${EMISSION_CALL.pattern}/ can no longer detect the shape it exists to detect",
             )
         }
@@ -266,9 +287,12 @@ class SerializedEmissionSiteInventoryTest {
         assertTrue(isCommentOnly("    // $EMISSION_FIXTURE"), "the comment filter no longer recognises a line comment")
         assertTrue(isCommentOnly("     * $EMISSION_FIXTURE"), "the comment filter no longer recognises a KDoc body line")
         assertTrue(
-            emissionSitesIn(MODERN_EXECUTOR).none { isCommentOnly(it.text) },
+            EMISSION_SITE_FILES.keys.flatMap { emissionSitesIn(it) }.none { isCommentOnly(it.text) },
             "a comment-only line reached the emission inventory",
         )
+        // And the region scans are proven to find what they look for.
+        assertTrue(memberFunctionRegion(MODERN_EXECUTOR, RESIDUAL_DISPATCH).count() > 1, "the residual dispatch region is empty")
+        assertTrue(memberFunctionRegion(MODERN_EXECUTOR, "fun executeToolResult(").count() > 1, "the executeToolResult region is empty")
     }
 
     // ── the scans ─────────────────────────────────────────────────────────────────────────
@@ -307,6 +331,21 @@ class SerializedEmissionSiteInventoryTest {
         }
     }
 
+    /**
+     * The 1-based line range of the `McpToolExecutor` member whose declaration contains [declaration]:
+     * from that line to the first line that is exactly the member's closing brace (four-space indent).
+     */
+    private fun memberFunctionRegion(
+        relPath: String,
+        declaration: String,
+    ): IntRange {
+        val lines = SourceRoots.file(relPath).readLines()
+        val start = lines.indexOfFirst { it.contains(declaration) }
+        assertTrue(start >= 0, "$relPath no longer declares `$declaration`")
+        val end = (start + 1 until lines.size).first { lines[it] == "    }" }
+        return (start + 1)..(end + 1)
+    }
+
     private fun isCommentOnly(line: String): Boolean {
         val trimmed = line.trimStart()
         return trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")
@@ -318,21 +357,24 @@ class SerializedEmissionSiteInventoryTest {
         /** Measured at 172 .kt files (185 at plan 29-04). The floor catches a walk that reaches nothing, not drift. */
         const val MIN_EXPECTED_MAIN_FILES = 150
 
-        // ── the executor that carries every measured emission site ────────────────────────
+        // ── the files that carry every measured emission site, with their measured counts ────
         const val MODERN_EXECUTOR = "$TOOLS_PACKAGE/McpToolExecutorImpl.kt"
-        val EMISSION_EXECUTOR_FILES = listOf(MODERN_EXECUTOR)
+        const val GENERIC_PROVIDER = "$TOOLS_PACKAGE/GenericToolProvider.kt"
 
         // ── the measured inventory ────────────────────────────────────────────────────────
         //
         // grep -rhE "encodeToString\(it\.(toSerializableForm|toSiteMapEntry)\(" \
-        //   src/main/kotlin src/full/kotlin --include=*.kt | wc -l  ->  7   (plan 29-04)
+        //   src/main/kotlin src/full/kotlin --include=*.kt | wc -l  ->  7   (plan 29-06, task 1)
         //
-        // McpToolExecutorImpl.kt  620 752 772 848 867 885 908   (7)
+        // McpToolExecutorImpl.kt  7, all inside dispatchGenericTool
         //
         // Seven tool names, each dispatched once. Five carry a raw HTTP message; two carry a
         // WebSocket payload, which has no header block and therefore no header rule to miss.
+        val EMISSION_SITE_FILES: Map<String, Int> =
+            mapOf(
+                MODERN_EXECUTOR to 7,
+            )
         const val EXPECTED_EMISSION_SITES = 7
-        const val EXPECTED_SITES_PER_EXECUTOR = 7
         const val EXPECTED_RAW_HTTP_EMISSION_SITES = 5
         const val EXPECTED_WEBSOCKET_EMISSION_SITES = 2
 
@@ -366,14 +408,19 @@ class SerializedEmissionSiteInventoryTest {
         val EXPECTED_ADD_TOOL_SITES = mapOf(DELEGATING_REGISTRAR to 1)
 
         const val HANDLER_WRAPPER = "context.redactIfNeeded("
-        const val EXECUTOR_CHOKE_POINT = "context.redactIfNeeded(output)"
+        const val EXECUTOR_CHOKE_POINT = "context.redactIfNeeded(handler.execute("
         const val EXECUTOR_DELEGATION = "McpToolExecutor.executeToolResult("
 
-        /** Floors, not counts. Measured at plan 29-04: 1380 / 174. */
+        // ── handler bodies ──────────────────────────────────────────────────────────────────
+        const val HANDLER_FACTORY = "toolHandler("
+        const val RESIDUAL_DISPATCH = "fun dispatchGenericTool("
+        const val RESIDUAL_DISPATCH_CALL = "McpToolExecutor.dispatchGenericTool("
+
+        /** Floors, not counts. Measured at plan 29-06 task 1: 1215 / 70. */
         val MIN_EXPECTED_LINES =
             mapOf(
                 MODERN_EXECUTOR to 1000,
-                DELEGATING_REGISTRAR to 100,
+                DELEGATING_REGISTRAR to 50,
             )
     }
 }

@@ -20,8 +20,9 @@ class McpToolCatalogTierParityTest {
      * The catalog size is asserted, not derived, because the tier sets below are exhaustive
      * partitions of it: 19 AUTO + 24 CONFIRM + 16 CONFIRM_EACH = 59.
      *
-     * Note for whoever sees this fail: `grep -c 'McpToolDescriptor('` reports 60, not 59, because it
-     * also counts the `data class` declaration line. 59 is the number of construction sites. If this
+     * Note for whoever sees this fail: since plan 29-06 the descriptors live with their handlers, so
+     * count `McpToolDescriptor(` across NativeTools.kt and the generic provider's files — 59
+     * construction sites; McpToolCatalog.kt keeps only the `data class` declaration. If this
      * test fails because a tool was added, that is correct and expected — the author must also place
      * the new tool in exactly one of the tier sets below.
      */
