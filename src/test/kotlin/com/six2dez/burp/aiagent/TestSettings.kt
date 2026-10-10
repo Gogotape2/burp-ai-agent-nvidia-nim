@@ -49,7 +49,6 @@ object TestSettings {
             preferredBackendId = preferredBackendId,
             privacyMode = PrivacyMode.STRICT,
             determinismMode = false,
-            autoRestart = true,
             auditEnabled = true,
             mcpSettings =
                 McpSettings(

@@ -237,7 +237,6 @@ class ActiveScannerQueueModelTest {
             preferredBackendId = "codex-cli",
             privacyMode = PrivacyMode.STRICT,
             determinismMode = false,
-            autoRestart = true,
             auditEnabled = true,
             mcpSettings =
                 McpSettings(

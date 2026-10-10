@@ -141,7 +141,6 @@ internal fun SettingsPanel.currentSettings(): AgentSettings {
         preferredBackendId = preferredBackendId(),
         privacyMode = privacyMode.selectedItem as? PrivacyMode ?: PrivacyMode.STRICT,
         determinismMode = determinism.isSelected,
-        autoRestart = autoRestart.isSelected,
         auditEnabled = auditEnabled.isSelected,
         auditVerbose = auditVerbose.isSelected,
         mcpSettings = mcpSettings,
@@ -342,7 +341,6 @@ internal fun SettingsPanel.applySettingsToUi(
     profilePicker.selectedItem = updated.agentProfile
     privacyMode.selectedItem = updated.privacyMode
     determinism.isSelected = updated.determinismMode
-    autoRestart.isSelected = updated.autoRestart
     auditEnabled.isSelected = updated.auditEnabled
     auditVerbose.isSelected = updated.auditVerbose
     // 07-02 D-02: keep the small-model-mode toggle in sync with persisted state.

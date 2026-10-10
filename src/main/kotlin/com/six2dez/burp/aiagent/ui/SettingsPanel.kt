@@ -163,7 +163,6 @@ class SettingsPanel(
             maximumSize = java.awt.Dimension(120, preferredSize.height)
         }
     internal val determinism = ToggleSwitch(settings.determinismMode)
-    internal val autoRestart = ToggleSwitch(settings.autoRestart)
     internal val auditEnabled = ToggleSwitch(settings.auditEnabled)
     internal val auditVerbose = ToggleSwitch(settings.auditVerbose)
 

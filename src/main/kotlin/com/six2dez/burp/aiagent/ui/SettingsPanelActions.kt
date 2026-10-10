@@ -204,7 +204,7 @@ internal fun SettingsPanel.helpSection(): JPanel =
 internal fun SettingsPanel.privacySection(): JPanel =
     PrivacyConfigPanel(
         privacyMode = privacyMode,
-        // Quick 261008-sqa (PD-12): PrivacyConfigPanel's constructor is baselined by its exact text, so
+        // Quick 261008-sqa (PD-12): PrivacyConfigPanel's constructor is held at its parameter count, so
         // the Verbose switch is composed INTO the Audit logging row here rather than added as a parameter.
         auditEnabled =
             JPanel(FlowLayout(FlowLayout.LEADING, 0, 0)).apply {
@@ -222,7 +222,6 @@ internal fun SettingsPanel.privacySection(): JPanel =
                 add(Box.createHorizontalStrut(DesignTokens.Spacing.xs))
                 add(auditVerbose)
             },
-        autoRestart = autoRestart,
         determinism = determinism,
         rotateSaltBtn = rotateSaltBtn,
         privacyNotice = privacyNotice,

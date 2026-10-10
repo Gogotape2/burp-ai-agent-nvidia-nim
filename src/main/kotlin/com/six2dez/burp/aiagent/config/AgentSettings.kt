@@ -91,7 +91,6 @@ data class AgentSettings(
     val preferredBackendId: String,
     val privacyMode: PrivacyMode,
     val determinismMode: Boolean,
-    val autoRestart: Boolean,
     val auditEnabled: Boolean,
     val auditVerbose: Boolean = false,
     val mcpSettings: McpSettings,
@@ -370,7 +369,6 @@ class AgentSettingsRepository(
             preferredBackendId = (prefs.getString(KEY_PREFERRED_BACKEND) ?: "burp-ai").trim(),
             privacyMode = privacy,
             determinismMode = prefs.getBoolean(KEY_DETERMINISM) ?: false,
-            autoRestart = prefs.getBoolean(KEY_AUTORESTART) ?: true,
             auditEnabled = prefs.getBoolean(KEY_AUDIT_ENABLED) ?: false,
             // A missing key is an install from 1.0.0 or earlier: verbose audit stays off (quick 261008-sqa).
             auditVerbose = prefs.getBoolean(KEY_AUDIT_VERBOSE) ?: false,
@@ -526,7 +524,6 @@ class AgentSettingsRepository(
             preferredBackendId = "burp-ai",
             privacyMode = PrivacyMode.BALANCED,
             determinismMode = false,
-            autoRestart = true,
             auditEnabled = false,
             auditVerbose = false,
             mcpSettings = defaultMcpSettings(),
@@ -639,7 +636,6 @@ class AgentSettingsRepository(
                 prefs.setString(KEY_PREFERRED_BACKEND, settings.preferredBackendId)
                 prefs.setString(KEY_PRIVACY_MODE, settings.privacyMode.name)
                 prefs.setBoolean(KEY_DETERMINISM, settings.determinismMode)
-                prefs.setBoolean(KEY_AUTORESTART, settings.autoRestart)
                 prefs.setBoolean(KEY_AUDIT_ENABLED, settings.auditEnabled)
                 prefs.setBoolean(KEY_AUDIT_VERBOSE, settings.auditVerbose)
                 saveMcpSettings(settings.mcpSettings)
@@ -929,7 +925,6 @@ class AgentSettingsRepository(
         private const val KEY_PREFERRED_BACKEND = "backend.preferred"
         private const val KEY_PRIVACY_MODE = "privacy.mode"
         private const val KEY_DETERMINISM = "determinism.enabled"
-        private const val KEY_AUTORESTART = "agent.autorestart"
         private const val KEY_AUDIT_ENABLED = "audit.enabled"
         private const val KEY_AUDIT_VERBOSE = "audit.verbose"
         private const val KEY_MCP_ENABLED = "mcp.enabled"

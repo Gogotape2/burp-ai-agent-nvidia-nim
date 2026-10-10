@@ -129,10 +129,6 @@ internal fun SettingsPanel.initUiWiring() {
     determinism.background = DesignTokens.Colors.surface
     determinism.foreground = DesignTokens.Colors.onSurface
     determinism.toolTipText = "Stable ordering for reproducible prompts. Advanced use only."
-    autoRestart.font = DesignTokens.Typography.body
-    autoRestart.background = DesignTokens.Colors.surface
-    autoRestart.foreground = DesignTokens.Colors.onSurface
-    autoRestart.toolTipText = "Automatically restart a crashed agent session."
     auditEnabled.font = DesignTokens.Typography.body
     auditEnabled.background = DesignTokens.Colors.surface
     auditEnabled.foreground = DesignTokens.Colors.onSurface
