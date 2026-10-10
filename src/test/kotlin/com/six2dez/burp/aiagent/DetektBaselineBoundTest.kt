@@ -9,7 +9,7 @@ private const val BASELINE_FILE = "detekt-baseline.xml"
 /**
  * The `<ID>` count of the baseline. Phase 26 plan 07 sealed it at 1040 (trimmed from 1096 with a
  * removals-only diff); phase 29 plan 04 lowered it to 1032 in the commit that deleted the legacy MCP
- * registrar and its eight entries.
+ * registrar and its eight entries, then to 1031 in the commit that deleted Alerting and its one.
  *
  * This is a CEILING, not a target. ADR-17 clause 1 says the baseline may lose entries and may never
  * gain them, so the only edit this constant is ever allowed to receive is a DOWNWARD one, made in the
@@ -17,7 +17,7 @@ private const val BASELINE_FILE = "detekt-baseline.xml"
  * somebody would otherwise have had to answer into a finding nobody will ever see again — which is
  * precisely the inversion ADR-17 clause 1 exists to forbid.
  */
-private const val MAX_BASELINE_ENTRIES = 1032
+private const val MAX_BASELINE_ENTRIES = 1031
 
 /**
  * QUAL-07 / SC3 gate on ADR-17 clause 1 — "`detekt-baseline.xml` shrinks and is never appended to".

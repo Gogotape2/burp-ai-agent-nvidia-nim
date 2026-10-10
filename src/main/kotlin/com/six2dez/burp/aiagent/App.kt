@@ -6,7 +6,6 @@ import burp.api.montoya.ui.contextmenu.AuditIssueContextMenuEvent
 import burp.api.montoya.ui.contextmenu.ContextMenuEvent
 import burp.api.montoya.ui.contextmenu.ContextMenuItemsProvider
 import com.six2dez.burp.aiagent.agents.AgentProfileLoader
-import com.six2dez.burp.aiagent.alerts.Alerting
 import com.six2dez.burp.aiagent.audit.ActivityType
 import com.six2dez.burp.aiagent.audit.AiRequestLogger
 import com.six2dez.burp.aiagent.audit.AuditLogger
@@ -109,7 +108,6 @@ object App {
         AuditLogger.registerGlobalEmitter { type, payload -> auditLogger.logEvent(type, payload) }
         supervisor = AgentSupervisor(api, backendRegistry, auditLogger, workerPool)
         mirrorAppliedSettingsInto(settingsRepo, supervisor)
-        Alerting.transport = supervisor.httpTransport
         aiRequestLogger = AiRequestLogger()
         supervisor.aiRequestLogger = aiRequestLogger
         mcpSupervisor = McpSupervisor(api)
@@ -286,7 +284,6 @@ object App {
                 throw e
             }
         }
-        safeShutdownStep("Alerting client") { Alerting.shutdownClient() }
         safeShutdownStep("Redaction mappings") { Redaction.clearMappings() }
         // (PRIV-06) WR-04 / W-08 / T-21-66: unwire the truncation sink beside clearMappings(), so
         // both pieces of Redaction's global state are released together. The lambda set in
