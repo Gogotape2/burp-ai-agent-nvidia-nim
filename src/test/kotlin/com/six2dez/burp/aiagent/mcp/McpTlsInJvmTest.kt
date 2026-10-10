@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.mcp
 
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.TestSettings
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
@@ -16,10 +17,8 @@ import java.util.Date
  * environment (KS_PASS) using -storepass:env / -keypass:env, never as a literal argv token.
  */
 class McpTlsInJvmTest {
-    private fun mcpTlsSource(): String {
-        val root = System.getProperty("user.dir")
-        return File(root, "src/main/kotlin/com/six2dez/burp/aiagent/mcp/McpTls.kt").readText()
-    }
+    /** Resolved through SourceRoots.file, which fails naming both production roots when the file is in neither or both. */
+    private fun mcpTlsSource(): String = SourceRoots.file("com/six2dez/burp/aiagent/mcp/McpTls.kt").readText()
 
     @Test
     fun generateSelfSigned_writesKeystoreFile() {

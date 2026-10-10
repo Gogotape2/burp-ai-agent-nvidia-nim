@@ -1,12 +1,12 @@
 package com.six2dez.burp.aiagent.mcp
 
+import com.six2dez.burp.aiagent.SourceRoots
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.io.File
 import java.lang.reflect.Modifier
 
-private const val GATE_FILE = "src/main/kotlin/com/six2dez/burp/aiagent/mcp/ToolApprovalGate.kt"
+private const val GATE_FILE = "com/six2dez/burp/aiagent/mcp/ToolApprovalGate.kt"
 
 /** The object-private factory that mints the model origin. Named once so both channels below agree. */
 private const val FACTORY = "approvedOrigin"
@@ -135,21 +135,12 @@ class ToolApprovalGateVisibilityTest {
     }
 
     /**
-     * Reads the gate source relative to the Gradle project directory.
+     * Reads the gate source from whichever production root holds it.
      *
-     * `tasks.test` runs with the project directory as its working directory, so a plain relative path
-     * resolves. The existence assertion names the resolved working directory rather than letting a
-     * future build-layout change surface as an unhelpful empty string that passes every `contains`.
+     * [SourceRoots.file] fails naming both roots when the file is in neither or in both, rather than
+     * letting a future build-layout change surface as an unhelpful empty string that passes every
+     * `contains`. If it fails, fix the path rather than deleting this test — it is the only automated
+     * check that SC5's minting boundary is still narrow.
      */
-    private fun gateSource(): String {
-        val file = File(GATE_FILE)
-        assertTrue(
-            file.isFile,
-            "Expected to find `$GATE_FILE` relative to the test working directory " +
-                "`${System.getProperty("user.dir")}`, resolved as `${file.absolutePath}`. If the build " +
-                "layout changed, fix the path here rather than deleting this test — it is the only " +
-                "automated check that SC5's minting boundary is still narrow.",
-        )
-        return file.readText()
-    }
+    private fun gateSource(): String = SourceRoots.file(GATE_FILE).readText()
 }

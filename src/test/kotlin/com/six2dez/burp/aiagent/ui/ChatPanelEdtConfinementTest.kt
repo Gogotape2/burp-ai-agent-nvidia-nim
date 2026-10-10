@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.ui
 
 import burp.api.montoya.proxy.ProxyHttpRequestResponse
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.TestSettings
 import com.six2dez.burp.aiagent.audit.ActivityType
 import com.six2dez.burp.aiagent.audit.AuditLogger
@@ -28,7 +29,6 @@ import org.mockito.kotlin.whenever
 import java.awt.CardLayout
 import java.awt.Component
 import java.awt.Container
-import java.io.File
 import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -2018,7 +2018,7 @@ private fun loggedErrors(h: ChatPanelTestHarness.Harness): List<String> {
 }
 
 /** Declared as a `tasks.test` input in `build.gradle.kts`; the two must stay in step. */
-private const val CHAT_PANEL_SOURCE = "src/main/kotlin/com/six2dez/burp/aiagent/ui/ChatPanel.kt"
+private const val CHAT_PANEL_SOURCE = "com/six2dez/burp/aiagent/ui/ChatPanel.kt"
 
 /**
  * The source text of one `ChatPanel` function, brace-matched from its declaration.
@@ -2049,19 +2049,10 @@ private fun functionBody(declaration: String): String {
  * `ChatPanel.kt`'s source text.
  *
  * One reader for every structural assertion in this file, so the "does the file exist?" diagnostic is
- * written once. Named and asserted rather than left to surface as a bare `FileNotFoundException`,
- * which is what a build-layout change would otherwise produce here.
+ * written once. Resolved through [SourceRoots.file], which fails naming both production roots rather
+ * than letting a build-layout change surface as a bare `FileNotFoundException`.
  */
-private fun chatPanelSource(): String {
-    val file = File(CHAT_PANEL_SOURCE)
-    assertTrue(
-        file.isFile,
-        "Expected to find `$CHAT_PANEL_SOURCE` relative to the test working directory " +
-            "`${System.getProperty("user.dir")}`, resolved as `${file.absolutePath}`. If the build " +
-            "layout changed, fix the path here and in the matching `tasks.test` input declaration.",
-    )
-    return file.readText()
-}
+private fun chatPanelSource(): String = SourceRoots.file(CHAT_PANEL_SOURCE).readText()
 
 /** Literal (not regex) occurrences of [needle] in [source] — occurrences, never matching lines. */
 private fun occurrencesOf(

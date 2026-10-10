@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.mcp
 
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.config.McpSettings
 import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
@@ -14,7 +15,6 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import java.io.File
 import java.net.InetAddress
 import java.util.concurrent.TimeUnit
 
@@ -110,15 +110,8 @@ class McpTakeoverSquatterTest {
         // Behavioural tests above prove the current client is clean; this one goes red the moment a
         // future phase puts the secret back on the wire under ANY header name, including one no
         // behavioural assertion here anticipates.
-        val file = File(SUPERVISOR_SOURCE)
-        assertTrue(
-            file.isFile,
-            "Expected to find `$SUPERVISOR_SOURCE` relative to the test working directory " +
-                "`${System.getProperty("user.dir")}`, resolved as `${file.absolutePath}`. `tasks.test` " +
-                "already declares `inputs.dir(\"src/main/kotlin\")`, which covers this path — do not add " +
-                "a redundant per-file input declaration.",
-        )
-        val source = file.readText()
+        // SourceRoots.file fails naming both production roots when the file is in neither or in both.
+        val source = SourceRoots.file(SUPERVISOR_SOURCE).readText()
 
         val carrying = source.lines().filter { it.contains(TOKEN_PROPERTY) }
         assertEquals(
@@ -209,11 +202,11 @@ class McpTakeoverSquatterTest {
         private const val TAKE_REQUEST_TIMEOUT_SECONDS = 5L
 
         /**
-         * Covered by the existing `inputs.dir("src/main/kotlin")` declaration on `tasks.test`, added in
-         * Phase 24 precisely so source-text assertions are not served from a stale cache. Confirmed
-         * before writing this test; no redundant per-file declaration was added.
+         * Root-relative; resolved through [SourceRoots.file]. Covered by the production-root `inputs.dir`
+         * declarations on `tasks.test` (first added in Phase 24 precisely so source-text assertions are
+         * not served from a stale cache), so no redundant per-file declaration is added.
          */
-        private const val SUPERVISOR_SOURCE = "src/main/kotlin/com/six2dez/burp/aiagent/mcp/McpSupervisor.kt"
+        private const val SUPERVISOR_SOURCE = "com/six2dez/burp/aiagent/mcp/McpSupervisor.kt"
         private const val TOKEN_PROPERTY = "settings.token"
     }
 }

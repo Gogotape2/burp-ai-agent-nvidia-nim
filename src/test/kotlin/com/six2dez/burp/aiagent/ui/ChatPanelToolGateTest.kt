@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.ui
 
 import burp.api.montoya.proxy.ProxyHttpRequestResponse
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.audit.Hashing
 import com.six2dez.burp.aiagent.mcp.ToolApprovalGate
@@ -26,7 +27,6 @@ import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import java.awt.Component
 import java.awt.Container
-import java.io.File
 import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -1086,7 +1086,7 @@ private fun pendingSessionIds(h: ChatPanelTestHarness.Harness): Set<*> {
 }
 
 /** Declared as a `tasks.test` input in `build.gradle.kts`; the two must stay in step. */
-private const val CHAT_PANEL_SOURCE = "src/main/kotlin/com/six2dez/burp/aiagent/ui/ChatPanel.kt"
+private const val CHAT_PANEL_SOURCE = "com/six2dez/burp/aiagent/ui/ChatPanel.kt"
 
 /**
  * The source text of one `ChatPanel` function, brace-matched from its declaration.
@@ -1096,18 +1096,11 @@ private const val CHAT_PANEL_SOURCE = "src/main/kotlin/com/six2dez/burp/aiagent/
  * Every other test in this file asserts on executed behaviour.
  */
 private fun functionBody(declaration: String): String {
-    val file = File(CHAT_PANEL_SOURCE)
-    // Named, resolved and asserted rather than left to surface as a bare FileNotFoundException, which
-    // is what a build-layout change would otherwise produce here (DecisionsAdrTest.readProjectFile does
-    // the same, for the same reason). `build.gradle.kts` declares this path as a `tasks.test` input, so
-    // an edit to it invalidates the cache and these structural assertions actually re-run.
-    assertTrue(
-        file.isFile,
-        "Expected to find `$CHAT_PANEL_SOURCE` relative to the test working directory " +
-            "`${System.getProperty("user.dir")}`, resolved as `${file.absolutePath}`. If the build " +
-            "layout changed, fix the path here and in the matching `tasks.test` input declaration.",
-    )
-    val source = file.readText()
+    // Resolved through SourceRoots.file, which fails naming both production roots rather than letting a
+    // build-layout change surface as a bare FileNotFoundException. `build.gradle.kts` declares the
+    // production roots as `tasks.test` inputs, so an edit to this file invalidates the cache and these
+    // structural assertions actually re-run.
+    val source = SourceRoots.file(CHAT_PANEL_SOURCE).readText()
     val start = source.indexOf(declaration)
     require(start >= 0) { "No '$declaration' in ChatPanel.kt — this structural assertion is stale." }
     val open = source.indexOf('{', start)
