@@ -55,15 +55,17 @@ jobs:
       - name: Prove the EDT door guard still fires with JVM assertions DISABLED (REL-05 / SC1)
         run: ./gradlew edtGuardWithoutAssertionsTest --no-daemon
 
-      - name: Build shadow JAR
-        run: ./gradlew shadowJar --no-daemon
+      - name: Build both JARs (full and BApp Store)
+        run: ./gradlew bappJar fullJar --no-daemon
 
       - name: Upload JAR artifact (Linux only)
         if: matrix.os == 'ubuntu-latest'
         uses: actions/upload-artifact@v7
         with:
           name: Custom-AI-Agent-${{ github.sha }}
-          path: build/libs/Custom-AI-Agent-*.jar
+          path: |
+            build/libs/Custom-AI-Agent-*.jar
+            build/libs/custom-ai-agent-bapp.jar
 
       - name: Upload test reports
         if: always()
@@ -73,6 +75,8 @@ jobs:
           path: |
             build/reports/tests/test/**
             build/test-results/test/**
+            build/reports/tests/fullTest/**
+            build/test-results/fullTest/**
 
   coverage:
     needs: lint
@@ -90,26 +94,28 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      # Only `test` may be finalized by jacocoTestReport. If another Test task pulled in :test or
-      # :jacocoTestReport again, a single invocation would run the whole suite twice (as the
-      # assertions-disabled step in pr-gate once did). The dry run reads Gradle's real task graph.
+      # Only `test` may be finalized by jacocoTestReport, and the report is the only task that pulls
+      # in :fullTest. If another Test task pulled in :test, :fullTest or :jacocoTestReport again, a
+      # single invocation would run a whole suite twice (as the assertions-disabled step in pr-gate
+      # once did). The dry run reads Gradle's real task graph.
       - name: Only the test task pulls in the coverage report
         run: |
-          plan="$(./gradlew edtGuardWithoutAssertionsTest nightlyRegressionTest --dry-run --no-daemon)"
+          plan="$(./gradlew edtGuardWithoutAssertionsTest nightlyRegressionTest nightlyRegressionFullTest --dry-run --no-daemon)"
           printf '%s\n' "$plan"
-          for task in edtGuardWithoutAssertionsTest nightlyRegressionTest; do
+          for task in edtGuardWithoutAssertionsTest nightlyRegressionTest nightlyRegressionFullTest; do
             if ! grep -qx ":${task} SKIPPED" <<< "$plan"; then
               echo "::error::the dry run did not list :${task}, so the guard cannot read the task graph"
               exit 1
             fi
           done
-          if grep -Eqx ':(test|jacocoTestReport) SKIPPED' <<< "$plan"; then
-            echo "::error::a Test task other than test pulls in :test or :jacocoTestReport"
+          if grep -Eqx ':(test|fullTest|jacocoTestReport) SKIPPED' <<< "$plan"; then
+            echo "::error::a Test task other than test pulls in :test, :fullTest or :jacocoTestReport"
             exit 1
           fi
 
       # The floors are full-suite floors: the fast suite (-PexcludeHeavyTests=true) misses the CLI
-      # backend floors, so this job runs every test class.
+      # backend floors, so this job runs every test class. The report depends on fullTest, so this
+      # step runs both suites and the floors measure main + full.
       - name: Full test suite and the coverage floors
         run: ./gradlew test jacocoTestCoverageVerification jacocoMcpTreeCoverageVerification --continue --no-daemon
 
@@ -128,6 +134,8 @@ jobs:
           path: |
             build/reports/tests/test/**
             build/test-results/test/**
+            build/reports/tests/fullTest/**
+            build/test-results/fullTest/**
 
   store-build:
     needs: lint
@@ -146,28 +154,27 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Run fast verification suite (BApp Store flavor)
-        run: ./gradlew test -PexcludeHeavyTests=true -PstoreBuild=true --no-daemon
+        run: ./gradlew test -PexcludeHeavyTests=true --no-daemon
 
       - name: Build BApp Store JAR
-        run: ./gradlew shadowJar -PstoreBuild=true --no-daemon
+        run: ./gradlew bappJar --no-daemon
 
-      # One JAR only, the store flavor: the Montoya entry point is there and STORE_BUILD is true.
+      # The store JAR is the file BappManifest.bmf names as EntryPoint, and it carries the Montoya
+      # entry point. Phase 30 adds the full content inspection of this JAR.
       - name: Smoke-test BApp Store JAR
         run: |
-          shopt -s nullglob
-          jars=(build/libs/Custom-AI-Agent-*.jar)
-          if [ "${#jars[@]}" -ne 1 ] || [[ "${jars[0]##*/}" == *-full-* ]]; then
-            echo "::error::expected exactly one BApp Store JAR in build/libs, found: ${jars[*]:-none}"
+          jar=build/libs/custom-ai-agent-bapp.jar
+          if [ ! -f "$jar" ]; then
+            echo "::error::expected the BApp Store JAR at $jar"
             exit 1
           fi
-          javap -cp "${jars[0]}" com.six2dez.burp.aiagent.BurpAiAgentExtension | grep -F 'implements burp.api.montoya.BurpExtension'
-          javap -constants -cp "${jars[0]}" com.six2dez.burp.aiagent.BuildFlags | grep -F 'boolean STORE_BUILD = true;'
+          javap -cp "$jar" com.six2dez.burp.aiagent.BurpAiAgentExtension | grep -F 'implements burp.api.montoya.BurpExtension'
 
       - name: Upload BApp Store JAR
         uses: actions/upload-artifact@v7
         with:
           name: Custom-AI-Agent-store-${{ github.sha }}
-          path: build/libs/Custom-AI-Agent-*.jar
+          path: build/libs/custom-ai-agent-bapp.jar
           if-no-files-found: error
 
       - name: Upload test reports
@@ -178,3 +185,5 @@ jobs:
           path: |
             build/reports/tests/test/**
             build/test-results/test/**
+            build/reports/tests/fullTest/**
+            build/test-results/fullTest/**

@@ -91,13 +91,13 @@ Download the latest JAR from [Releases](https://github.com/six2dez/burp-ai-agent
 git clone https://github.com/six2dez/burp-ai-agent.git
 cd burp-ai-agent
 
-# Full build (default, GitHub releases) — all 59 MCP tools
-JAVA_HOME=/path/to/jdk-21 ./gradlew clean shadowJar
+# Full build (GitHub releases) — all 59 MCP tools
+JAVA_HOME=/path/to/jdk-21 ./gradlew clean fullJar
 # Output: build/libs/Custom-AI-Agent-full-<version>.jar
 
 # Store build (BApp Store submission) — 8 extension-native AI MCP tools only
-JAVA_HOME=/path/to/jdk-21 ./gradlew clean shadowJar -PstoreBuild=true
-# Output: build/libs/Custom-AI-Agent-<version>.jar
+JAVA_HOME=/path/to/jdk-21 ./gradlew clean bappJar
+# Output: build/libs/custom-ai-agent-bapp.jar
 ```
 
 ### 2. Load into Burp
@@ -107,6 +107,8 @@ JAVA_HOME=/path/to/jdk-21 ./gradlew clean shadowJar -PstoreBuild=true
 3. Select **Java** as extension type and choose the `.jar` file.
 
 The extension registers in Burp as **Custom AI Agent** (the name in the Extensions list and the Suite tab) to distinguish it from Burp's built-in **Burp AI** provider.
+
+**Load only one build.** The full build and the BApp Store build both register as **Custom AI Agent**, so they look identical in Burp's Extensions list. Loading both at once gives you two Custom AI Agent tabs, two MCP servers competing for the same port, and two copies writing the shared `~/.burp-ai-agent` directory. Unload one before you load the other.
 
 <!-- screenshot: Burp Extensions > Add dialog with the JAR loaded -->
 ![Load Extension](screenshots/burp-extensions-add.png)

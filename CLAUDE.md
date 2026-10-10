@@ -12,7 +12,7 @@ A production-grade Burp Suite extension (Kotlin + Montoya API) that embeds an AI
 - **Tech stack**: Kotlin (JVM 21), Gradle Kotlin DSL, Burp Montoya API — fixed by ADR-1/2/3.
 - **Target**: Burp Suite Community + Professional 2023.12+, cross-platform (macOS / Linux / Windows).
 - **Network**: MCP server binds to `127.0.0.1` by default; external access requires explicit opt-in + bearer token + optional TLS.
-- **Distribution**: single fat JAR via `./gradlew shadowJar`; artifact name `Custom-AI-Agent-<version>.jar` (renamed from `Burp-AI-Agent-*` in `v0.6.0`).
+- **Distribution**: two fat JARs: `./gradlew fullJar` -> `build/libs/Custom-AI-Agent-full-<version>.jar` (GitHub release) and `./gradlew bappJar` -> `build/libs/custom-ai-agent-bapp.jar` (BApp Store).
 - **Privacy**: STRICT / BALANCED / OFF must all stay user-visible and pre-flight; redaction is hand-curated regex + HKDF host anonymization in STRICT.
 - **License**: MIT — keep dependencies compatible.
 - **Audit defaults**: disabled by default, opt-in verbose mode; hashes only unless verbose is on.

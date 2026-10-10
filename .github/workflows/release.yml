@@ -32,8 +32,10 @@ jobs:
       - name: Run full test suite (fast + heavy)
         run: ./gradlew test nightlyRegressionTest --no-daemon
 
-      - name: Build shadow JAR
-        run: ./gradlew shadowJar --no-daemon
+      # The GitHub release ships the full JAR. The `Custom-AI-Agent-*.jar` globs below match it and
+      # not the lowercase store JAR; Phase 30 adds the store JAR and its checksum to the release.
+      - name: Build full JAR
+        run: ./gradlew fullJar --no-daemon
 
       - name: Generate SBOM (CycloneDX)
         # --no-configuration-cache: cyclonedx-gradle-plugin 1.10.0 uses Task.project
