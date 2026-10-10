@@ -1,7 +1,7 @@
 package com.six2dez.burp.aiagent.audit
 
+import com.six2dez.burp.aiagent.SourceRoots
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.io.File
 
@@ -43,15 +43,13 @@ import java.io.File
 class AuditWriteSiteLedgerTest {
     @Test
     fun everyAuditWriteSiteIsInTheLedger() {
-        val root = File(MAIN_SOURCE_ROOT)
-        assertTrue(root.isDirectory, "Expected `$MAIN_SOURCE_ROOT` under `${System.getProperty("user.dir")}`.")
+        // Both production roots: a write site moved into src/full must stay in the ledger.
         val measured =
-            root
-                .walkTopDown()
-                .filter { it.isFile && it.extension == "kt" }
+            SourceRoots
+                .kotlinFiles()
                 .associate { file ->
                     val code = codeLinesOf(file)
-                    file.relativeTo(root).invariantSeparatorsPath to
+                    SourceRoots.relativePath(file) to
                         Pair(occurrences(code, "logEvent("), occurrences(code, "emitGlobal("))
                 }.filterValues { it != Pair(0, 0) }
         assertEquals(EXPECTED_WRITE_SITES, measured.toSortedMap())
@@ -61,7 +59,7 @@ class AuditWriteSiteLedgerTest {
     fun scannerTargetUrlsGoThroughEndpointOf() {
         val measured =
             ENDPOINT_ROUTING.mapValues { (path, _) ->
-                occurrences(codeLinesOf(File(MAIN_SOURCE_ROOT, path)), "AuditLogger.endpointOf(")
+                occurrences(codeLinesOf(SourceRoots.file(path)), "AuditLogger.endpointOf(")
             }
         assertEquals(ENDPOINT_ROUTING, measured, "AuditLogger.endpointOf( call sites per scanner file")
     }
@@ -70,7 +68,7 @@ class AuditWriteSiteLedgerTest {
     fun bodiesAndErrorsGoThroughTheVerboseHelpers() {
         val measured =
             BODY_ROUTING.mapValues { (site, _) ->
-                occurrences(codeLinesOf(File(MAIN_SOURCE_ROOT, site.first)), site.second)
+                occurrences(codeLinesOf(SourceRoots.file(site.first)), site.second)
             }
         assertEquals(BODY_ROUTING, measured, "verbose-helper call sites per (file, token)")
     }
@@ -88,7 +86,6 @@ class AuditWriteSiteLedgerTest {
         }
 
     private companion object {
-        const val MAIN_SOURCE_ROOT = "src/main/kotlin"
         const val PKG = "com/six2dez/burp/aiagent"
 
         /** (logEvent call sites, emitGlobal call sites) per file; AuditLogger's are its declarations. */

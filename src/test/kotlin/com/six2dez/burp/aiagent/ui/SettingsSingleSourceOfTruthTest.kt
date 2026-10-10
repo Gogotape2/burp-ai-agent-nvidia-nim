@@ -2,6 +2,7 @@ package com.six2dez.burp.aiagent.ui
 
 import burp.api.montoya.MontoyaApi
 import burp.api.montoya.persistence.Preferences
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.config.AgentSettings
@@ -68,26 +69,19 @@ class SettingsSingleSourceOfTruthTest {
     }
 
     /**
-     * C2 — exactly one [AgentSettingsRepository] is constructed in main sources, and it is App's.
+     * C2 — exactly one [AgentSettingsRepository] is constructed in the production sources (both roots), and it is App's.
      * A second instance is a second cache that a save through the first never updates.
      */
     @Test
     fun exactlyOneSettingsRepositoryIsConstructedAndItIsApps() {
-        val root = File(MAIN_SOURCE_ROOT)
-        assertTrue(
-            root.isDirectory,
-            "Expected to find `$MAIN_SOURCE_ROOT` relative to `${System.getProperty("user.dir")}`, " +
-                "resolved as `${root.absolutePath}`.",
-        )
         val constructions =
-            root
-                .walkTopDown()
-                .filter { it.isFile && it.extension == "kt" }
+            SourceRoots
+                .kotlinFiles()
                 .flatMap { file ->
                     codeLines(file)
                         .filter { it.contains("AgentSettingsRepository(") && !it.contains("class AgentSettingsRepository(") }
-                        .map { file.relativeTo(root).invariantSeparatorsPath }
-                }.toList()
+                        .map { SourceRoots.relativePath(file) }
+                }
         assertEquals(
             listOf("com/six2dez/burp/aiagent/App.kt"),
             constructions.sorted(),
@@ -463,7 +457,6 @@ class SettingsSingleSourceOfTruthTest {
         }
 
     private companion object {
-        const val MAIN_SOURCE_ROOT = "src/main/kotlin"
         const val SEND_CHAT_BACKEND_INDEX = 1
         const val SEND_CHAT_PRIVACY_INDEX = 5
         const val FAILSAFE_SECONDS = 20L

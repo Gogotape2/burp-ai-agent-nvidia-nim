@@ -4,6 +4,7 @@ import burp.api.montoya.MontoyaApi
 import burp.api.montoya.core.BurpSuiteEdition
 import burp.api.montoya.http.message.params.HttpParameterType
 import burp.api.montoya.http.message.params.ParsedHttpParameter
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.mcp.McpRequestLimiter
 import com.six2dez.burp.aiagent.mcp.McpToolContext
 import com.six2dez.burp.aiagent.redact.PrivacyMode
@@ -18,7 +19,6 @@ import org.junit.jupiter.api.Test
 import org.mockito.Answers
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
-import java.io.File
 
 /**
  * (PRIV-05) Phase 27 plan 27-07 — the THIRD carrier of the same cookie bytes: COOKIE-typed HTTP
@@ -571,8 +571,8 @@ class ParameterCarrierRedactionTest {
     fun theProducerScanIsNonVacuous() {
         // Copied from CookieHeaderRuleOwnershipTest.theOwnershipScanIsNonVacuous. A repository-state
         // test that goes green when it cannot find the repository is worse than the grep it replaced.
-        // Note mainSourceRoot() THROWS rather than returning null, so resolving the root is itself
-        // the first assertion.
+        // Note SourceRoots.file() THROWS when no production root (or more than one) holds the path,
+        // so resolving each pinned file is itself the first assertion.
         (PRODUCER_FILES + HELPERS_FILE).forEach { path ->
             val lines = codeLines(path)
             assertTrue(
@@ -619,7 +619,8 @@ class ParameterCarrierRedactionTest {
 
     /** Non-comment lines of [relPath], 1-based, so prose about a symbol never counts as the symbol. */
     private fun codeLines(relPath: String): List<SourceLine> =
-        sourceFile(relPath)
+        SourceRoots
+            .file(relPath)
             .readLines()
             .mapIndexed { index, text -> SourceLine(index + 1, text) }
             .filterNot { isCommentOnly(it.text) }
@@ -627,22 +628,6 @@ class ParameterCarrierRedactionTest {
     private fun isCommentOnly(line: String): Boolean {
         val trimmed = line.trimStart()
         return trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")
-    }
-
-    private fun sourceFile(relPath: String): File = File(mainSourceRoot(), relPath)
-
-    /** Resolved by walking up from the Gradle test working directory. FAILS rather than skips. */
-    private fun mainSourceRoot(): File {
-        var candidate: File? = File(System.getProperty("user.dir")).absoluteFile
-        while (candidate != null) {
-            val root = File(candidate, MAIN_SOURCE_ROOT)
-            if (root.isDirectory) return root
-            candidate = candidate.parentFile
-        }
-        throw AssertionError(
-            "could not resolve $MAIN_SOURCE_ROOT from user.dir=${System.getProperty("user.dir")}. " +
-                "Resolve the path rather than weakening this test into a skip.",
-        )
     }
 
     // ── shared fixtures ─────────────────────────────────────────────────────────────────
@@ -768,7 +753,6 @@ class ParameterCarrierRedactionTest {
         // Collapsing them would erase which control acted.
         const val REDACTED_MARKER = "[REDACTED]"
 
-        const val MAIN_SOURCE_ROOT = "src/main/kotlin"
         const val TOOLS_PACKAGE = "com/six2dez/burp/aiagent/mcp/tools"
         const val MODERN_EXECUTOR = "$TOOLS_PACKAGE/McpToolExecutorImpl.kt"
         const val LEGACY_EXECUTOR = "$TOOLS_PACKAGE/McpToolLegacy.kt"

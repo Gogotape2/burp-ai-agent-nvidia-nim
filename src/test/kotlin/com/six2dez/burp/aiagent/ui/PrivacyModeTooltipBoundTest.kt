@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.ui
 
+import com.six2dez.burp.aiagent.SourceRoots
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -148,21 +149,21 @@ class PrivacyModeTooltipBoundTest {
      */
     @Test
     fun exactlyOnePrivacyModeTooltipAssignmentExistsInMainSourceAndItReferencesTheConstant() {
-        val files = mainSourceFiles()
+        val files = SourceRoots.kotlinFiles()
         assertTrue(
             files.size >= MIN_EXPECTED_MAIN_FILES,
-            "the source walk reached ${files.size} .kt files under $MAIN_SOURCE_ROOT, below the " +
+            "the source walk reached ${files.size} .kt files under ${SourceRoots.PRODUCTION}, below the " +
                 "floor of $MIN_EXPECTED_MAIN_FILES. The floor catches a walk that reached nothing " +
                 "— a scan over an empty file list would satisfy the count below by measuring no " +
                 "source at all — rather than tracking the file count.",
         )
 
-        val matches = files.flatMap { file -> assignmentLinesIn(file).map { relativePath(file) to it.trim() } }
+        val matches = files.flatMap { file -> assignmentLinesIn(file).map { SourceRoots.relativePath(file) to it.trim() } }
 
         assertEquals(
             1,
             matches.size,
-            "expected exactly ONE assignment to $TOOLTIP_ASSIGNMENT in $MAIN_SOURCE_ROOT. Found " +
+            "expected exactly ONE assignment to $TOOLTIP_ASSIGNMENT in ${SourceRoots.PRODUCTION}. Found " +
                 "${matches.size}: $matches. A second site means an operator can be shown a tooltip " +
                 "this file never sees, and the 'exactly one operator-facing surface' premise the " +
                 "D-28-10 condition rests on is stale — every site would then need the bound clauses.",
@@ -185,8 +186,8 @@ class PrivacyModeTooltipBoundTest {
     }
 
     // ---------------------------------------------------------------------------------------------
-    // Source-scan helpers. Shape copied from CookieRouteDispositionTest:383-403, the repository's
-    // working cross-platform idiom.
+    // Source-scan helpers. The walk and the relative paths come from SourceRoots, which covers both
+    // production roots and renders paths with invariant separators (the WR-05 cross-platform fix).
     // ---------------------------------------------------------------------------------------------
 
     /**
@@ -202,31 +203,7 @@ class PrivacyModeTooltipBoundTest {
                 trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")
             }.filter { it.contains(TOOLTIP_ASSIGNMENT) }
 
-    private fun mainSourceFiles(): List<File> = mainSourceRoot().walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
-
-    // Relativised against the resolved root and rendered with invariant separators rather than by
-    // slicing on a forward-slash literal joined with the platform separator: cross-platform support
-    // is a stated project constraint, and WR-05 recorded that the sliced form silently returned the
-    // whole absolute path on Windows. Same shape CookieRouteDispositionTest.kt now uses.
-    private fun relativePath(file: File): String = file.relativeTo(mainSourceRoot()).invariantSeparatorsPath
-
-    private fun mainSourceRoot(): File {
-        var candidate: File? = File(System.getProperty("user.dir")).absoluteFile
-        while (candidate != null) {
-            val root = File(candidate, MAIN_SOURCE_ROOT)
-            if (root.isDirectory) return root
-            candidate = candidate.parentFile
-        }
-        throw AssertionError(
-            "could not resolve $MAIN_SOURCE_ROOT from user.dir=${System.getProperty("user.dir")}. " +
-                "Resolve the path (for example from a system property set in build.gradle.kts) rather " +
-                "than weakening this test into a skip.",
-        )
-    }
-
     private companion object {
-        const val MAIN_SOURCE_ROOT = "src/main/kotlin"
-
         // Measured well above this when the test was written. The floor catches a walk that reached
         // nothing; it is deliberately not a file count to track.
         const val MIN_EXPECTED_MAIN_FILES = 150

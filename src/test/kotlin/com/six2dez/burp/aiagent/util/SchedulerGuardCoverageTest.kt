@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.util
 
+import com.six2dez.burp.aiagent.SourceRoots
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -23,16 +24,18 @@ import java.io.File
  * documentation as a call site. It is also what makes it safe for `GuardedScheduling.kt` to explain
  * the failure mode in prose.
  *
- * **This suite reads source from disk.** `build.gradle.kts` therefore declares
- * `inputs.dir("src/main/kotlin")` on `tasks.test` under the property name
- * `mainSourceTreeStructuralInputs`. Without it, adding an unguarded scheduler can produce a cache key
+ * **This suite reads source from disk**, from both production roots (`src/main/kotlin` and
+ * `src/full/kotlin`, through [SourceRoots]). `build.gradle.kts` therefore declares both as
+ * `inputs.dir` on the Test tasks, under the property names `mainSourceTreeStructuralInputs` and
+ * `fullSourceTreeStructuralInputs`. Without them, adding an unguarded scheduler can produce a cache key
  * close enough that the test task is served from cache and this guard never runs — in exactly the
  * commit that breaks the invariant (the measured 22-09 defect).
  */
 class SchedulerGuardCoverageTest {
     /**
-     * REL-06-D — the allowlist. Every file under `src/main/kotlin` that still calls a recurring
-     * schedule directly must be one of the three that are allowed to.
+     * REL-06-D — the allowlist. Every file under either production root (`src/main/kotlin`,
+     * `src/full/kotlin`) that still calls a recurring schedule directly must be one of the three that
+     * are allowed to.
      *
      * Compared as a **sorted set of file names**, never a list: a directory walk returns files in
      * filesystem order, which is not stable across platforms, and an order-sensitive assertion would
@@ -45,7 +48,7 @@ class SchedulerGuardCoverageTest {
         assertEquals(
             ALLOWLIST.toSortedSet(),
             actual,
-            "REL-06 scheduler allowlist. Exactly three files under `$MAIN_SOURCE_ROOT` may call " +
+            "REL-06 scheduler allowlist. Exactly three files under ${SourceRoots.PRODUCTION} may call " +
                 "a recurring schedule directly:\n" +
                 "  - GuardedScheduling.kt — the guard helper itself; the one place the JDK call is made.\n" +
                 "  - AgentSupervisor.kt — the health monitor's pre-existing inline try/catch guard.\n" +
@@ -109,32 +112,16 @@ class SchedulerGuardCoverageTest {
     // Fixture
     // ---------------------------------------------------------------------------------------------
 
-    private fun filesWithRecurringSchedule(): List<File> = mainSourceFiles().filter { file -> codeLinesOf(file).any { it.isRecurringSchedule() } }
+    /**
+     * Every production `.kt` file with a recurring schedule. [SourceRoots.kotlinFiles] walks both
+     * production roots and fails on a missing or empty root rather than returning an empty walk — an
+     * empty result would make all three assertions vacuously green, which is the one failure mode a
+     * structural guard must never have. File NAMES are what the allowlist compares, so a file that moves
+     * between `src/main/kotlin` and `src/full/kotlin` keeps matching its entry.
+     */
+    private fun filesWithRecurringSchedule(): List<File> = SourceRoots.kotlinFiles().filter { file -> codeLinesOf(file).any { it.isRecurringSchedule() } }
 
     private fun String.isRecurringSchedule(): Boolean = contains(AT_FIXED_RATE) || contains(WITH_FIXED_DELAY)
-
-    /**
-     * Every `.kt` file under the main source tree, resolved and asserted rather than left to surface
-     * as an empty walk — an empty result would make all three assertions vacuously green, which is the
-     * one failure mode a structural guard must never have.
-     */
-    private fun mainSourceFiles(): List<File> {
-        val root = File(MAIN_SOURCE_ROOT)
-        assertTrue(
-            root.isDirectory,
-            "Expected to find `$MAIN_SOURCE_ROOT` relative to the test working directory " +
-                "`${System.getProperty("user.dir")}`, resolved as `${root.absolutePath}`. If the build " +
-                "layout changed, fix the path here and in the matching `tasks.test` input declaration " +
-                "(`mainSourceTreeStructuralInputs` in build.gradle.kts).",
-        )
-        val files = root.walkTopDown().filter { it.isFile && it.extension == KOTLIN_EXTENSION }.toList()
-        assertTrue(
-            files.isNotEmpty(),
-            "The walk of `$MAIN_SOURCE_ROOT` found no Kotlin files. Every assertion in this suite would " +
-                "then pass vacuously, so this is treated as a failure rather than an empty allowlist.",
-        )
-        return files
-    }
 
     /**
      * The non-comment lines of [file], read from disk.
@@ -161,8 +148,6 @@ class SchedulerGuardCoverageTest {
     }
 
     private companion object {
-        const val MAIN_SOURCE_ROOT = "src/main/kotlin"
-        const val KOTLIN_EXTENSION = "kt"
         const val GUARD_HELPER = "GuardedScheduling.kt"
         const val TRY_OPENER = "try {"
         const val GUARD_LOOKAHEAD_LINES = 4

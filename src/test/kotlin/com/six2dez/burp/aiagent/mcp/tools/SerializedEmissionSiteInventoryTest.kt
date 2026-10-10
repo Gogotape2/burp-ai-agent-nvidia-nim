@@ -1,9 +1,9 @@
 package com.six2dez.burp.aiagent.mcp.tools
 
+import com.six2dez.burp.aiagent.SourceRoots
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.io.File
 
 /**
  * (PRIV-05) Phase 27 plan 27-05 / D-27-14 — the emission-site inventory, pinned by measurement.
@@ -104,8 +104,9 @@ class SerializedEmissionSiteInventoryTest {
         // that adopted this call shape is the "eleventh site" failure mode in its purest form, and
         // it costs three lines to make it fail here instead of being discovered by an audit.
         val strays =
-            mainSourceFiles()
-                .map(::relativePath)
+            SourceRoots
+                .kotlinFiles()
+                .map(SourceRoots::relativePath)
                 .filterNot { it in EMISSION_EXECUTOR_FILES }
                 .filter { emissionSitesIn(it).isNotEmpty() }
         assertTrue(
@@ -198,8 +199,9 @@ class SerializedEmissionSiteInventoryTest {
         // The THIRD registration path is the one the criterion above cannot see, and it is the one a
         // reader of the choke-point claim would otherwise never meet.
         val hitsByFile =
-            mainSourceFiles()
-                .associate { relativePath(it) to codeLines(relativePath(it)).count { line -> line.text.contains(ADD_TOOL_CALL) } }
+            SourceRoots
+                .kotlinFiles()
+                .associate { SourceRoots.relativePath(it) to codeLines(SourceRoots.relativePath(it)).count { line -> line.text.contains(ADD_TOOL_CALL) } }
                 .filterValues { it > 0 }
 
         assertEquals(
@@ -263,21 +265,21 @@ class SerializedEmissionSiteInventoryTest {
 
     @Test
     fun theInventoryScanIsNonVacuous() {
-        // Resolving the root is itself the first assertion: mainSourceRoot() throws AssertionError
-        // rather than returning null, so a scan that cannot find the repository FAILS. A
+        // Resolving the roots is itself the first assertion: SourceRoots.kotlinFiles() throws
+        // AssertionError on a missing or empty root, so a scan that cannot find the repository FAILS. A
         // repository-state test that goes green when it cannot see the repository is worse than the
         // grep it replaced.
-        val files = mainSourceFiles()
+        val files = SourceRoots.kotlinFiles()
         assertTrue(
             files.size >= MIN_EXPECTED_MAIN_FILES,
-            "the walk found only ${files.size} .kt files under $MAIN_SOURCE_ROOT — the scan is not " +
+            "the walk found only ${files.size} .kt files under ${SourceRoots.PRODUCTION} — the scan is not " +
                 "reaching the repository, so its other assertions prove nothing",
         )
 
         // Source-line floors. A file emptied, moved or renamed would otherwise produce zero hits and
         // read as agreement with a zero inventory.
         MIN_EXPECTED_LINES.forEach { (path, floor) ->
-            val lines = sourceFile(path).readLines().size
+            val lines = SourceRoots.file(path).readLines().size
             assertTrue(
                 lines >= floor,
                 "$path has $lines lines, below the floor of $floor — the scan is looking at the wrong " +
@@ -301,8 +303,8 @@ class SerializedEmissionSiteInventoryTest {
                 "fixture [$EMISSION_FIXTURE]",
         )
         assertTrue(
-            mainSourceFiles().sumOf { f -> codeLines(relativePath(f)).count { it.text.contains(ADD_TOOL_CALL) } } >= 1,
-            "the registration scan found no `$ADD_TOOL_CALL` call anywhere in $MAIN_SOURCE_ROOT",
+            SourceRoots.kotlinFiles().sumOf { f -> codeLines(SourceRoots.relativePath(f)).count { it.text.contains(ADD_TOOL_CALL) } } >= 1,
+            "the registration scan found no `$ADD_TOOL_CALL` call anywhere in ${SourceRoots.PRODUCTION}",
         )
 
         // And comment stripping is proven live. This file's own KDoc names every symbol the scans
@@ -326,7 +328,8 @@ class SerializedEmissionSiteInventoryTest {
 
     /** Non-comment lines of [relPath], 1-based, so prose about a symbol never counts as the symbol. */
     private fun codeLines(relPath: String): List<SourceLine> =
-        sourceFile(relPath)
+        SourceRoots
+            .file(relPath)
             .readLines()
             .mapIndexed { index, text -> SourceLine(index + 1, text) }
             .filterNot { isCommentOnly(it.text) }
@@ -355,28 +358,7 @@ class SerializedEmissionSiteInventoryTest {
         return trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")
     }
 
-    private fun mainSourceFiles(): List<File> = mainSourceRoot().walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
-
-    private fun sourceFile(relPath: String): File = File(mainSourceRoot(), relPath)
-
-    private fun relativePath(file: File): String = file.relativeTo(mainSourceRoot()).invariantSeparatorsPath
-
-    /** Resolved by walking up from the Gradle test working directory. FAILS rather than skips. */
-    private fun mainSourceRoot(): File {
-        var candidate: File? = File(System.getProperty("user.dir")).absoluteFile
-        while (candidate != null) {
-            val root = File(candidate, MAIN_SOURCE_ROOT)
-            if (root.isDirectory) return root
-            candidate = candidate.parentFile
-        }
-        throw AssertionError(
-            "could not resolve $MAIN_SOURCE_ROOT from user.dir=${System.getProperty("user.dir")}. " +
-                "Resolve the path rather than weakening this test into a skip.",
-        )
-    }
-
     private companion object {
-        const val MAIN_SOURCE_ROOT = "src/main/kotlin"
         const val TOOLS_PACKAGE = "com/six2dez/burp/aiagent/mcp/tools"
 
         /** Measured at 172 .kt files. The floor catches a walk that reaches nothing, not drift. */

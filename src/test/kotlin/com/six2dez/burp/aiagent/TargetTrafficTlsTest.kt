@@ -233,8 +233,8 @@ class TargetTrafficTlsTest {
     @Test
     fun theLegacyRegistrarStaysDeadSoItsExemptionHolds() {
         val lines =
-            sourceFiles().flatMap { file ->
-                codeLinesOf(file).filter { it.contains("registerToolsLegacy") }.map { relativePath(file) to it.trim() }
+            SourceRoots.kotlinFiles().flatMap { file ->
+                codeLinesOf(file).filter { it.contains("registerToolsLegacy") }.map { SourceRoots.packageRelativePath(file) to it.trim() }
             }
         assertEquals(
             listOf("mcp/tools/McpToolLegacy.kt"),
@@ -392,18 +392,11 @@ class TargetTrafficTlsTest {
         return "\"$escaped\""
     }
 
-    private fun sourceFiles(): List<File> {
-        val root = File(SOURCE_ROOT)
-        assertTrue(root.isDirectory, "Expected `$SOURCE_ROOT` under `${System.getProperty("user.dir")}`.")
-        return root.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
-    }
-
-    private fun relativePath(file: File): String = file.relativeTo(File(SOURCE_ROOT)).invariantSeparatorsPath
-
     private fun occurrencesPerFile(token: String): Map<String, Int> =
-        sourceFiles()
+        SourceRoots
+            .kotlinFiles()
             .associate { file ->
-                relativePath(file) to codeLinesOf(file).sumOf { line -> line.windowed(token.length).count { it == token } }
+                SourceRoots.packageRelativePath(file) to codeLinesOf(file).sumOf { line -> line.windowed(token.length).count { it == token } }
             }.filterValues { it > 0 }
             .toSortedMap()
 
@@ -415,7 +408,6 @@ class TargetTrafficTlsTest {
         }
 
     private companion object {
-        const val SOURCE_ROOT = "src/main/kotlin/com/six2dez/burp/aiagent"
         const val TLS_OPTION = "withUpstreamTLSVerification"
         const val HOST = "example.com"
         const val PROVIDER_URL = "http://127.0.0.1:1234/v1/chat/completions"

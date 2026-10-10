@@ -4,6 +4,7 @@ import burp.api.montoya.MontoyaApi
 import burp.api.montoya.persistence.Preferences
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.TestSettings
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.audit.Hashing
@@ -152,10 +153,10 @@ class AuditVerboseSettingTest {
 
     @Test
     fun startupAndSaveApplyVerboseBesideEnabled() {
-        val app = codeLines(File(MAIN_SOURCE_ROOT, "com/six2dez/burp/aiagent/App.kt"))
+        val app = codeLines(SourceRoots.file("com/six2dez/burp/aiagent/App.kt"))
         assertEquals(1, app.count { it.contains("auditLogger.verbose = settings.auditVerbose") }, "App applies verbose once.")
 
-        val io = codeLines(File(MAIN_SOURCE_ROOT, "com/six2dez/burp/aiagent/ui/SettingsPanelSettingsIO.kt"))
+        val io = codeLines(SourceRoots.file("com/six2dez/burp/aiagent/ui/SettingsPanelSettingsIO.kt"))
         val applied = io.indices.filter { io[it].contains("audit.verbose = updated.auditVerbose") }
         assertEquals(1, applied.size, "The Save body applies verbose exactly once.")
         assertTrue(
@@ -352,7 +353,6 @@ class AuditVerboseSettingTest {
         }
 
     private companion object {
-        const val MAIN_SOURCE_ROOT = "src/main/kotlin"
         const val FAILSAFE_SECONDS = 20L
         const val PROMPT_MARK = "prompt-body-SENTINEL"
         const val PROMPT = "$PROMPT_MARK → é"
