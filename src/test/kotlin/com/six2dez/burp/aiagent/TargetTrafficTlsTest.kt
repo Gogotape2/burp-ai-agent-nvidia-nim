@@ -58,7 +58,7 @@ import burp.api.montoya.core.ByteArray as MontoyaByteArray
  * |---|---|---|
  * | scanner/ActiveAiScanner.kt (every baseline, payload, IDOR neighbour and 403 variant) | target | never |
  * | scanner/AiScanCheck.kt (attack and time-based baseline) | target | never |
- * | mcp/tools/McpToolExecutorImpl.kt (`http1_request`, `http2_request`) | target | never |
+ * | mcp/tools/GenericRequestTools.kt (`http1_request`, `http2_request`) | target | never |
  * | backends/http/MontoyaHttpTransport.kt (`execute`) | AI provider | always |
  *
  * Target sends never require upstream verification, so self-signed and internal-CA targets can be
@@ -232,7 +232,7 @@ class TargetTrafficTlsTest {
         assertEquals(
             sortedMapOf(
                 "backends/http/MontoyaHttpTransport.kt" to 2,
-                "mcp/tools/McpToolExecutorImpl.kt" to 2,
+                "mcp/tools/GenericRequestTools.kt" to 2,
                 "scanner/ActiveAiScanner.kt" to 1,
                 "scanner/AiScanCheck.kt" to 2,
             ),

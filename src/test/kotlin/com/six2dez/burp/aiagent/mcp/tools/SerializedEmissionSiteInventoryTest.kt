@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.mcp.tools
 
 import com.six2dez.burp.aiagent.SourceRoots
+import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -21,10 +22,10 @@ import org.junit.jupiter.api.Test
  * read as a DATA CHANGE here — visible, deliberate, and reviewable — rather than as silence.
  *
  * WHAT MAKES A RULE-LEVEL FIX REACH EVERY SITE. None of the 7 emission sites redacts anything
- * itself. Since plan 29-06 every one of them sits inside a tool HANDLER BODY — a `toolHandler(`
- * lambda in a handler file, or the residual `dispatchGenericTool` that GenericToolProvider's handlers
- * delegate to — and `McpToolExecutor.executeToolResult` wraps every `handler.execute(...)` result at
- * its single `context.redactIfNeeded(handler.execute(` line. That is why changing a regex in
+ * itself. Since plan 29-08 every one of them sits inside a tool HANDLER BODY — a `toolHandler(`
+ * lambda in a handler file (plan 29-06 started the conversion; 29-08 deleted the executor's residual
+ * dispatch `when` the last 23 tools delegated to) — and `McpToolExecutor.executeToolResult`
+ * wraps every `handler.execute(...)` result at its single `context.redactIfNeeded(handler.execute(` line. That is why changing a regex in
  * `redact/Redaction.kt` reaches all 7 — and it is asserted below from source rather than argued in
  * prose.
  *
@@ -44,8 +45,8 @@ import org.junit.jupiter.api.Test
  * scoped to the NAMED FILES in [EMISSION_SITE_FILES]. `theMeasuredEmissionSiteCountIsPinned` does scan
  * every production root for the call shape, so a site added in ANOTHER file fails that one assertion —
  * but the shape bound above still holds over the whole tree, and the other scans still see only the
- * named files. The handler-body attribution is a LINE-REGION proxy (a site after a `toolHandler(` call,
- * or between `fun dispatchGenericTool(` and its closing brace), not a parse of Kotlin.
+ * named files. The handler-body attribution is a LINE-REGION proxy (a site after a `toolHandler(` call),
+ * not a parse of Kotlin.
  *
  * ── BOUND 2, on the REGISTRATION-PATH scan, which is a DIFFERENT AND WEAKER BOUND ──
  *
@@ -156,12 +157,7 @@ class SerializedEmissionSiteInventoryTest {
 
         // 2. Every emission site is inside a handler body, so it is what handler.execute returns.
         EMISSION_SITE_FILES.keys.forEach { path ->
-            val bodies =
-                if (path == MODERN_EXECUTOR) {
-                    listOf(memberFunctionRegion(path, RESIDUAL_DISPATCH))
-                } else {
-                    regionsAfter(path, HANDLER_FACTORY).map { (start, region) -> start..region.last().number }
-                }
+            val bodies = regionsAfter(path, HANDLER_FACTORY).map { (start, region) -> start..region.last().number }
             emissionSitesIn(path).forEach { site ->
                 assertTrue(
                     bodies.any { site.number in it },
@@ -172,18 +168,20 @@ class SerializedEmissionSiteInventoryTest {
             }
         }
 
-        // 3. The residual dispatch is reachable only from a handler body: GenericToolProvider's.
-        val dispatchCalls =
-            SourceRoots
-                .kotlinFiles()
-                .map(SourceRoots::relativePath)
-                .associateWith { path -> codeLines(path).count { it.text.contains(RESIDUAL_DISPATCH_CALL) } }
-                .filterValues { it > 0 }
-        assertEquals(
-            mapOf(GENERIC_PROVIDER to 1),
-            dispatchCalls,
-            "`$RESIDUAL_DISPATCH_CALL` must be called from exactly one place, GenericToolProvider's " +
-                "delegating handler, so every branch it runs is a handler.execute result.",
+        // 3. Plan 29-08 deleted the executor's residual dispatch `when`: the executor is a dispatcher
+        //    and names no tool. A tool-id literal coming back into it is a tool body beside the
+        //    registry — a second path this inventory's handler-body attribution does not cover.
+        val executorCode = codeLines(MODERN_EXECUTOR)
+        val toolIdsInExecutor =
+            McpToolCatalog
+                .all()
+                .map { it.id }
+                .filter { id -> executorCode.any { it.text.contains("\"$id\"") } }
+        assertTrue(
+            toolIdsInExecutor.isEmpty(),
+            "$MODERN_EXECUTOR names the tool id(s) $toolIdsInExecutor. Every tool body is a handler next " +
+                "to its descriptor (D-13); the executor dispatches through the registry and carries no " +
+                "tool-specific code.",
         )
     }
 
@@ -291,7 +289,7 @@ class SerializedEmissionSiteInventoryTest {
             "a comment-only line reached the emission inventory",
         )
         // And the region scans are proven to find what they look for.
-        assertTrue(memberFunctionRegion(MODERN_EXECUTOR, RESIDUAL_DISPATCH).count() > 1, "the residual dispatch region is empty")
+        assertTrue(regionsAfter(GENERIC_SCANNER, HANDLER_FACTORY).isNotEmpty(), "the scanner handler regions are empty")
         assertTrue(memberFunctionRegion(MODERN_EXECUTOR, "fun executeToolResult(").count() > 1, "the executeToolResult region is empty")
     }
 
@@ -359,28 +357,28 @@ class SerializedEmissionSiteInventoryTest {
 
         // ── the files that carry every measured emission site, with their measured counts ────
         const val MODERN_EXECUTOR = "$TOOLS_PACKAGE/McpToolExecutorImpl.kt"
-        const val GENERIC_PROVIDER = "$TOOLS_PACKAGE/GenericToolProvider.kt"
+        const val GENERIC_SCANNER = "$TOOLS_PACKAGE/GenericScannerTools.kt"
         const val GENERIC_HISTORY = "$TOOLS_PACKAGE/GenericHistoryTools.kt"
         const val GENERIC_SITE_MAP = "$TOOLS_PACKAGE/GenericSiteMapTools.kt"
 
         // ── the measured inventory ────────────────────────────────────────────────────────
         //
         // grep -rhE "encodeToString\(it\.(toSerializableForm|toSiteMapEntry)\(" \
-        //   src/main/kotlin src/full/kotlin --include=*.kt | wc -l  ->  7   (plan 29-06, task 2)
+        //   src/main/kotlin src/full/kotlin --include=*.kt | wc -l  ->  7   (plan 29-08, task 1)
         //
         // GenericHistoryTools.kt  4  proxy_http_history, proxy_http_history_regex, proxy_ws_history,
         //                            proxy_ws_history_regex — one per toolHandler body
         // GenericSiteMapTools.kt  2  site_map, site_map_regex — one per toolHandler body
-        // McpToolExecutorImpl.kt  1  scanner_issues, inside the residual dispatchGenericTool (plan 29-08
-        //                            moves it into a handler file; move its count with it)
+        // GenericScannerTools.kt  1  scanner_issues — its toolHandler body (plan 29-08 moved it out of
+        //                            the executor's residual dispatch, which is gone)
         //
         // Seven tool names, each dispatched once. Five carry a raw HTTP message; two carry a
         // WebSocket payload, which has no header block and therefore no header rule to miss.
         val EMISSION_SITE_FILES: Map<String, Int> =
             mapOf(
-                MODERN_EXECUTOR to 1,
                 GENERIC_HISTORY to 4,
                 GENERIC_SITE_MAP to 2,
+                GENERIC_SCANNER to 1,
             )
         const val EXPECTED_EMISSION_SITES = 7
         const val EXPECTED_RAW_HTTP_EMISSION_SITES = 5
@@ -421,16 +419,15 @@ class SerializedEmissionSiteInventoryTest {
 
         // ── handler bodies ──────────────────────────────────────────────────────────────────
         const val HANDLER_FACTORY = "toolHandler("
-        const val RESIDUAL_DISPATCH = "fun dispatchGenericTool("
-        const val RESIDUAL_DISPATCH_CALL = "McpToolExecutor.dispatchGenericTool("
 
-        /** Floors, not counts. Measured at plan 29-06 task 2: 836 / 71 / 281 / 156. */
+        /** Floors, not counts. Measured at plan 29-08 task 1: 338 / 71 / 281 / 156 / 375. */
         val MIN_EXPECTED_LINES =
             mapOf(
-                MODERN_EXECUTOR to 600,
+                MODERN_EXECUTOR to 250,
                 DELEGATING_REGISTRAR to 50,
                 GENERIC_HISTORY to 200,
                 GENERIC_SITE_MAP to 100,
+                GENERIC_SCANNER to 250,
             )
     }
 }

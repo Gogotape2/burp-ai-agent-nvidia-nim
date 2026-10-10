@@ -773,22 +773,26 @@ class ParameterCarrierRedactionTest {
         const val REDACTED_MARKER = "[REDACTED]"
 
         const val TOOLS_PACKAGE = "com/six2dez/burp/aiagent/mcp/tools"
-        const val MODERN_EXECUTOR = "$TOOLS_PACKAGE/McpToolExecutorImpl.kt"
+        const val REQUEST_TOOLS = "$TOOLS_PACKAGE/GenericRequestTools.kt"
         const val HELPERS_FILE = "$TOOLS_PACKAGE/McpToolHelpers.kt"
 
         /**
-         * The executor file that carries every measured parameter producer. Keyed by PATH and
+         * The handler file that carries every measured parameter producer (plan 29-08 moved the
+         * request tools there verbatim from the executor's residual dispatch). Keyed by PATH and
          * COUNT, never by line number, so the pin does not rot the first time a file above one of
          * these sites is reformatted (WINDOWS.md 11/13/14/15).
          */
-        val PRODUCER_FILES = listOf(MODERN_EXECUTOR)
+        val PRODUCER_FILES = listOf(REQUEST_TOOLS)
 
         /**
          * MEASURED, not assumed. Before plan 27-07:
          *   grep -c 'param.value()' McpToolExecutorImpl.kt  ->  3
          *   grep -c 'ParsedParam('  McpToolExecutorImpl.kt  ->  1
          * (The legacy registrar carried the same 3 and 1; plan 29-04 deleted it and dropped its half
-         * of this record.) Two tools in the executor read a parameter VALUE for rendering: request_parse
+         * of this record.) Re-measured by plan 29-08 after the move (the executor now carries none):
+         *   grep -c 'param.value()' GenericRequestTools.kt  ->  1   (find_reflected)
+         *   grep -c 'ParsedParam('  GenericRequestTools.kt  ->  0
+         * Two tools in that file read a parameter VALUE for rendering: request_parse
          * and params_extract. find_reflected is the third reader in the file and is NOT a producer —
          * it emits name, type and an occurrence count, never the value (T-27-07-07).
          */
@@ -801,7 +805,7 @@ class ParameterCarrierRedactionTest {
         /** Floors catch a walk that reaches nothing or a gutted file — not drift. */
         val MIN_EXPECTED_LINES =
             mapOf(
-                MODERN_EXECUTOR to 600,
+                REQUEST_TOOLS to 250,
                 HELPERS_FILE to 300,
             )
 

@@ -19,7 +19,9 @@ private const val BASELINE_FILE = "detekt-baseline.xml"
  * entries, two executor magic numbers, parseArgsObject, the swallowed MissingFieldException and the
  * deleted McpToolRegistrations object), then to 1000 in the commit that moved the utility, history,
  * site-map, config and editor tools into handler files (the executor's `500` and its annotate loop;
- * the moved loop carries a local suppression instead).
+ * the moved loop carries a local suppression instead), then to 994 in the commit that moved the
+ * request, scanner and collaborator tools out of the executor (its LargeClass, TooManyFunctions and
+ * four SpreadOperator entries; the moved spreads carry local suppressions instead).
  *
  * This is a CEILING, not a target. ADR-17 clause 1 says the baseline may lose entries and may never
  * gain them, so the only edit this constant is ever allowed to receive is a DOWNWARD one, made in the
@@ -27,7 +29,7 @@ private const val BASELINE_FILE = "detekt-baseline.xml"
  * somebody would otherwise have had to answer into a finding nobody will ever see again — which is
  * precisely the inversion ADR-17 clause 1 exists to forbid.
  */
-private const val MAX_BASELINE_ENTRIES = 1000
+private const val MAX_BASELINE_ENTRIES = 994
 
 /**
  * QUAL-07 / SC3 gate on ADR-17 clause 1 — "`detekt-baseline.xml` shrinks and is never appended to".

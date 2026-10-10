@@ -61,7 +61,6 @@
     <ID>LargeClass:AgentSupervisor.kt$AgentSupervisor</ID>
     <ID>LargeClass:ChatPanel.kt$ChatPanel</ID>
     <ID>LargeClass:MainTab.kt$MainTab</ID>
-    <ID>LargeClass:McpToolExecutorImpl.kt$McpToolExecutor</ID>
     <ID>LargeClass:PayloadGenerator.kt$PayloadGenerator</ID>
     <ID>LargeClass:ResponseAnalyzer.kt$ResponseAnalyzer</ID>
     <ID>LargeClass:UiActions.kt$UiActions</ID>
@@ -916,10 +915,6 @@
     <ID>ReturnCount:UiActions.kt$UiActions$private fun ensureActiveScannerEnabled( tab: MainTab, activeAiScanner: ActiveAiScanner?, ): Boolean</ID>
     <ID>ReturnCount:UiActions.kt$UiActions$private fun handleBountyPromptCompletion( api: MontoyaApi, tab: MainTab, definition: BountyPromptDefinition, responseText: String, targets: List&lt;HttpRequestResponse>, audit: AuditLogger?, )</ID>
     <ID>SpreadOperator:BurpAiBackend.kt$BurpAiConnection$(promptOptions, *messages.toTypedArray())</ID>
-    <ID>SpreadOperator:McpToolExecutorImpl.kt$McpToolExecutor$(*byteArrays.toTypedArray())</ID>
-    <ID>SpreadOperator:McpToolExecutorImpl.kt$McpToolExecutor$(*input.seedUrls.toTypedArray())</ID>
-    <ID>SpreadOperator:McpToolExecutorImpl.kt$McpToolExecutor$(*opts)</ID>
-    <ID>SpreadOperator:McpToolExecutorImpl.kt$McpToolExecutor$(input.customData.trim(), *opts)</ID>
     <ID>SwallowedException:ActiveAiScanner.kt$ActiveAiScanner$e: TimeoutException</ID>
     <ID>SwallowedException:AgentSettings.kt$AgentSettingsRepository$e: Exception</ID>
     <ID>SwallowedException:BurpAiBackend.kt$BurpAiConnection$e: java.util.concurrent.RejectedExecutionException</ID>
@@ -985,7 +980,6 @@
     <ID>TooManyFunctions:ExternalServersPanel.kt$ExternalServersPanel</ID>
     <ID>TooManyFunctions:MainTab.kt$MainTab</ID>
     <ID>TooManyFunctions:McpSupervisor.kt$McpSupervisor</ID>
-    <ID>TooManyFunctions:McpToolExecutorImpl.kt$McpToolExecutor</ID>
     <ID>TooManyFunctions:McpToolHelpers.kt$com.six2dez.burp.aiagent.mcp.tools.McpToolHelpers.kt</ID>
     <ID>TooManyFunctions:PassiveAiScanner.kt$PassiveAiScanner</ID>
     <ID>TooManyFunctions:PassiveAiScannerAnalysis.kt$com.six2dez.burp.aiagent.scanner.PassiveAiScannerAnalysis.kt</ID>

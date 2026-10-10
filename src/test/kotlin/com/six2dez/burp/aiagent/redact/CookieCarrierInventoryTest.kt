@@ -93,7 +93,7 @@ import java.io.File
  *
  * Separated from the four above rather than averaged into them, because it is a limit of the
  * BOOKKEEPING and not of the axis. A registry key is a (file, accessor) PAIR, not an individual call.
- * Where the calls behind one pair split — `McpToolExecutorImpl`'s three `parameters()` calls are two
+ * Where the calls behind one pair split — `GenericRequestTools`'s three `parameters()` calls are two
  * `sanitizeParameters` producers plus one non-carrying `find_reflected` reader — the pair sits in
  * [ROUTED_THROUGH] and its reason enumerates the split by line. That prose is NOT machine-checked.
  * What IS machine-checked is the COUNT: adding a fourth `parameters()` call to that file turns
@@ -373,7 +373,8 @@ class CookieCarrierInventoryTest {
         /** The string-literal argument of a `.headerValue("…")` call. */
         val HEADER_VALUE_ARGUMENT = Regex("""\.headerValue\("([^"]*)"\)""")
 
-        const val EXECUTOR_MODERN = "com/six2dez/burp/aiagent/mcp/tools/McpToolExecutorImpl.kt"
+        const val GENERIC_REQUEST_TOOLS = "com/six2dez/burp/aiagent/mcp/tools/GenericRequestTools.kt"
+        const val GENERIC_SCANNER_TOOLS = "com/six2dez/burp/aiagent/mcp/tools/GenericScannerTools.kt"
         const val GENERIC_HISTORY_TOOLS = "com/six2dez/burp/aiagent/mcp/tools/GenericHistoryTools.kt"
         const val GENERIC_UTILITY_TOOLS = "com/six2dez/burp/aiagent/mcp/tools/GenericUtilityTools.kt"
         const val SERIALIZATION = "com/six2dez/burp/aiagent/mcp/schema/Serialization.kt"
@@ -410,10 +411,17 @@ class CookieCarrierInventoryTest {
          * executor's dispatch into handler files, MOVED rather than changed. Three rawMessage sites
          * went to GenericHistoryTools.kt and the cookieJar site to GenericUtilityTools.kt; the executor
          * keeps headerList 2, parameterList 3 and rawMessage 2. Still 63 sites, now across 13 files.
+         *
+         * RE-MEASURED 2026-10-11 by plan 29-08 (D-13): the executor's residual dispatch was deleted and
+         * its last tool bodies MOVED verbatim into handler files. headerList 2 and parameterList 3 went
+         * to GenericRequestTools.kt (request_parse, response_parse, params_extract, find_reflected) and
+         * rawMessage 2 to GenericScannerTools.kt (collaborator_poll); the executor carries none. Still
+         * 63 sites, now across 14 files.
          */
         val MEASURED_CARRIER_SITES: Map<String, Map<String, Int>> =
             mapOf(
-                EXECUTOR_MODERN to mapOf(HEADER_LIST to 2, PARAMETER_LIST to 3, RAW_MESSAGE to 2),
+                GENERIC_REQUEST_TOOLS to mapOf(HEADER_LIST to 2, PARAMETER_LIST to 3),
+                GENERIC_SCANNER_TOOLS to mapOf(RAW_MESSAGE to 2),
                 GENERIC_HISTORY_TOOLS to mapOf(RAW_MESSAGE to 3),
                 GENERIC_UTILITY_TOOLS to mapOf(COOKIE_JAR to 1),
                 SERIALIZATION to mapOf(RAW_MESSAGE to 5),
@@ -446,14 +454,16 @@ class CookieCarrierInventoryTest {
          */
         val ROUTED_THROUGH: Map<CarrierSite, String> =
             mapOf(
-                CarrierSite(EXECUTOR_MODERN, HEADER_LIST) to
-                    "McpToolHelpers.sanitizeHeaders. Consumer read: :376 and :395 pass the list straight " +
-                    "into it as ParsedRequest.headers / ParsedResponse.headers.",
-                CarrierSite(EXECUTOR_MODERN, PARAMETER_LIST) to
-                    "McpToolHelpers.sanitizeParameters at :360 (params_extract) and :381 (request_parse). " +
-                    "THE THIRD CALL, :406, IS NON-CARRYING: consumer read at :406-411, find_reflected " +
+                CarrierSite(GENERIC_REQUEST_TOOLS, HEADER_LIST) to
+                    "McpToolHelpers.sanitizeHeaders. Consumer read: :356 and :388 pass the list straight " +
+                    "into it as ParsedRequest.headers / ParsedResponse.headers. Moved verbatim from the " +
+                    "executor's residual dispatch by plan 29-08.",
+                CarrierSite(GENERIC_REQUEST_TOOLS, PARAMETER_LIST) to
+                    "McpToolHelpers.sanitizeParameters at :314 (params_extract) and :361 (request_parse). " +
+                    "THE THIRD CALL, :412, IS NON-CARRYING: consumer read at :412-417, find_reflected " +
                     "uses the value only as a needle for countOccurrences and emits " +
-                    "`name=… type=… count=…`, never the value itself.",
+                    "`name=… type=… count=…`, never the value itself. Moved verbatim from the executor's " +
+                    "residual dispatch by plan 29-08.",
                 CarrierSite(INJECTION_EXTRACTOR, PARAMETER_LIST) to
                     "TWO CONSUMERS, BOTH READ, AND BOTH NOW CONTROLLED — BY DIFFERENT MECHANISMS, which is " +
                     "precisely the kind of thing this inventory exists to surface. MOVED HERE FROM " +
@@ -497,14 +507,14 @@ class CookieCarrierInventoryTest {
                     "a shipping residual by maintainer decision at 28-03's checkpoint), and there is " +
                     "no gate anywhere in this repository that would catch a THIRD detail producer — " +
                     "D-28-06 records building one as considered and NOT taken.",
-                CarrierSite(EXECUTOR_MODERN, RAW_MESSAGE) to
+                CarrierSite(GENERIC_SCANNER_TOOLS, RAW_MESSAGE) to
                     "Redaction.apply at the redactIfNeeded choke point. Consumer read: both sites " +
-                    "(collaborator_poll's http_request / http_response lines) sit inside the residual " +
-                    "dispatchGenericTool, which only GenericToolProvider's handlers call, and " +
-                    "executeToolResult wraps every handler.execute result in context.redactIfNeeded. " +
-                    "The logical-line cookie header rules fire there; SerializedEmissionSiteInventoryTest " +
-                    "pins the same choke point. (Until plan 29-06 these were two of five executor sites; " +
-                    "the other three moved to GenericHistoryTools.kt unchanged.)",
+                    "(collaborator_poll's http_request / http_response lines, :351-352) sit inside its " +
+                    "toolHandler body, and executeToolResult wraps every handler.execute result in " +
+                    "context.redactIfNeeded. The logical-line cookie header rules fire there; " +
+                    "SerializedEmissionSiteInventoryTest pins the same choke point. (Until plan 29-06 " +
+                    "these were two of five executor sites; the other three moved to GenericHistoryTools.kt " +
+                    "unchanged, and plan 29-08 moved these two out of the residual dispatch.)",
                 CarrierSite(GENERIC_HISTORY_TOOLS, RAW_MESSAGE) to
                     "Redaction.apply at the redactIfNeeded choke point. Consumer read: the three sites " +
                     "(proxy_http_history and proxy_http_history_regex's orderedProxyHistory sort key, " +
@@ -551,7 +561,7 @@ class CookieCarrierInventoryTest {
                     "27-08 task 1 narrowed the rule's comment to say so and pinned the behaviour.",
                 CarrierSite(AI_SCAN_CHECK, INSERTION_POINT_BASE_VALUE) to
                     "AiScanCheck.sanitizeCookiePointText (plan 28-05). THE PAIR COVERS TWO CALLS WITH " +
-                    "DIFFERENT DISPOSITIONS, enumerated by line the way McpToolExecutorImpl's split " +
+                    "DIFFERENT DISPOSITIONS, enumerated by line the way GenericRequestTools's split " +
                     "parameters() calls are — and, as the fifth bound in the class KDoc says, this " +
                     "attribution is PROSE; what is machine-checked is the COUNT of 2, so a third " +
                     "baseValue() call in this file turns theMeasuredPerFilePerAccessorCountsArePinned " +
