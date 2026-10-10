@@ -12,6 +12,7 @@ import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptCatalog
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.scanner.PayloadRisk
 import com.six2dez.burp.aiagent.scanner.ScanMode
+import com.six2dez.burp.aiagent.spi.PluginSettingsStore
 
 enum class SeverityLevel {
     LOW,
@@ -765,6 +766,41 @@ class AgentSettingsRepository(
             val updated = transform(load())
             save(updated)
             updated
+        }
+
+    /** RED scaffolding (29-07 Task 2): a store that persists nothing. Replaced in GREEN. */
+    fun pluginSettings(): PluginSettingsStore =
+        object : PluginSettingsStore {
+            override fun getString(key: String): String? = null
+
+            override fun setString(
+                key: String,
+                value: String,
+            ) = Unit
+
+            override fun getBoolean(key: String): Boolean? = null
+
+            override fun setBoolean(
+                key: String,
+                value: Boolean,
+            ) = Unit
+
+            override fun getInteger(key: String): Int? = null
+
+            override fun setInteger(
+                key: String,
+                value: Int,
+            ) = Unit
+
+            override fun encrypt(
+                plain: String,
+                keyName: String,
+            ): String = plain
+
+            override fun decrypt(
+                stored: String,
+                keyName: String,
+            ): String = stored
         }
 
     private fun migrateIfNeeded() {
