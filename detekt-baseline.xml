@@ -126,7 +126,6 @@
     <ID>LoopWithTooManyJumpStatements:Entropy.kt$Entropy$for</ID>
     <ID>LoopWithTooManyJumpStatements:InjectionPointExtractor.kt$InjectionPointExtractor$for</ID>
     <ID>LoopWithTooManyJumpStatements:McpToolContext.kt$McpToolContext$for</ID>
-    <ID>LoopWithTooManyJumpStatements:McpToolExecutorImpl.kt$McpToolExecutor$for</ID>
     <ID>LoopWithTooManyJumpStatements:PassiveAiScannerParsing.kt$for</ID>
     <ID>LoopWithTooManyJumpStatements:ResponseAnalyzer.kt$ResponseAnalyzer$for</ID>
     <ID>LoopWithTooManyJumpStatements:SecurityExcerpts.kt$SecurityExcerpts$for</ID>
@@ -491,7 +490,6 @@
     <ID>MagicNumber:McpSupervisor.kt$McpSupervisor$500</ID>
     <ID>MagicNumber:McpSupervisor.kt$McpSupervisor$800</ID>
     <ID>MagicNumber:McpTool.kt$1_000_000L</ID>
-    <ID>MagicNumber:McpToolExecutorImpl.kt$McpToolExecutor$500</ID>
     <ID>MagicNumber:McpToolHandlers.kt$120</ID>
     <ID>MagicNumber:McpToolHelpers.kt$4</ID>
     <ID>MagicNumber:MontoyaHttpTransport.kt$MontoyaHttpTransport$401</ID>

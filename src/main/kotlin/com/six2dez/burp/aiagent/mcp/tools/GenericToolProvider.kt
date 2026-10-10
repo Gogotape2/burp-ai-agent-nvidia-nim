@@ -11,14 +11,20 @@ import com.six2dez.burp.aiagent.spi.ToolProvider
  *
  * The catalog is "what the loaded providers supply", so once plan 29-11 moves this class and its
  * services file into `src/full`, the store build's tool list is the native tools by construction.
- * Each descriptor was moved verbatim from McpToolCatalog's list, in its old order.
  *
- * Residual delegation (until plan 29-08): every handler here delegates its body and schema to
- * `McpToolExecutor.dispatchGenericTool` / `genericInputSchema`, which hold the remaining generic
- * `when` branches.
+ * The utility, history, site-map, config and editor tools are real handlers next to their descriptors
+ * (GenericUtilityTools.kt, GenericHistoryTools.kt, GenericSiteMapTools.kt, GenericConfigTools.kt).
+ * Residual delegation (until plan 29-08): the request, scanner and collaborator handlers below still
+ * delegate their body and schema to `McpToolExecutor.dispatchGenericTool` / `genericInputSchema`, and
+ * their descriptors, moved verbatim from McpToolCatalog's list, stay here until then.
  */
 class GenericToolProvider : ToolProvider {
-    override fun handlers(): List<ToolHandler> = genericDescriptors.map(::delegatingHandler)
+    override fun handlers(): List<ToolHandler> =
+        genericUtilityHandlers +
+            genericHistoryHandlers +
+            genericSiteMapHandlers +
+            genericConfigHandlers +
+            delegatedDescriptors.map(::delegatingHandler)
 
     override fun aliases(): Map<String, String> = GENERIC_ALIASES
 }
@@ -41,193 +47,22 @@ private val GENERIC_ALIASES: Map<String, String> =
         "site_map_history" to "site_map",
     )
 
-/** The tools whose `count`/`limit`/`offset` arguments are defaulted before they run. */
-private val PAGED_TOOL_IDS: Set<String> =
-    setOf(
-        "proxy_http_history",
-        "proxy_http_history_regex",
-        "response_body_search",
-        "proxy_ws_history",
-        "proxy_ws_history_regex",
-        "site_map",
-        "site_map_regex",
-        "scanner_issues",
-    )
+/**
+ * The delegating tools whose `count`/`limit`/`offset` arguments are defaulted before they run. The
+ * converted paged tools declare `pagedArgs = true` on their own handler.
+ */
+private val PAGED_TOOL_IDS: Set<String> = setOf("scanner_issues")
 
 private fun delegatingHandler(descriptor: McpToolDescriptor): ToolHandler =
     toolHandler(
         descriptor = descriptor,
         pagedArgs = descriptor.id in PAGED_TOOL_IDS,
-        schema = { context -> McpToolExecutor.genericInputSchema(descriptor.id, context) },
+        schema = { McpToolExecutor.genericInputSchema(descriptor.id) },
     ) { args, context -> McpToolExecutor.dispatchGenericTool(descriptor.id, args, context) }
 
-private val genericDescriptors: List<McpToolDescriptor> =
+/** Request, scanner and collaborator descriptors, still dispatched by `McpToolExecutor.dispatchGenericTool`. */
+private val delegatedDescriptors: List<McpToolDescriptor> =
     listOf(
-        McpToolDescriptor(
-            id = "url_encode",
-            title = "URL encode",
-            description = "URL encodes the input string.",
-            category = "Utilities",
-            defaultEnabled = true,
-            secTier = SecTier.AUTO,
-        ),
-        McpToolDescriptor(
-            id = "url_decode",
-            title = "URL decode",
-            description = "URL decodes the input string.",
-            category = "Utilities",
-            defaultEnabled = true,
-            secTier = SecTier.AUTO,
-        ),
-        McpToolDescriptor(
-            id = "base64_encode",
-            title = "Base64 encode",
-            description = "Base64 encodes the input string.",
-            category = "Utilities",
-            defaultEnabled = true,
-            secTier = SecTier.AUTO,
-        ),
-        McpToolDescriptor(
-            id = "base64_decode",
-            title = "Base64 decode",
-            description = "Base64 decodes the input string.",
-            category = "Utilities",
-            defaultEnabled = true,
-            secTier = SecTier.AUTO,
-        ),
-        McpToolDescriptor(
-            id = "random_string",
-            title = "Generate random string",
-            description = "Generates a random string of specified length and character set.",
-            category = "Utilities",
-            defaultEnabled = true,
-            secTier = SecTier.AUTO,
-        ),
-        McpToolDescriptor(
-            id = "hash_compute",
-            title = "Compute hash",
-            description = "Computes a hash for input text (MD5/SHA1/SHA256/SHA512).",
-            category = "Utilities",
-            defaultEnabled = true,
-            secTier = SecTier.AUTO,
-        ),
-        McpToolDescriptor(
-            id = "jwt_decode",
-            title = "Decode JWT",
-            description = "Decodes JWT header/payload without verifying the signature.",
-            category = "Utilities",
-            defaultEnabled = true,
-            secTier = SecTier.AUTO,
-        ),
-        McpToolDescriptor(
-            id = "decode_as",
-            title = "Decode content",
-            description = "Decodes base64 content using compression codecs (gzip/deflate/brotli).",
-            category = "Utilities",
-            defaultEnabled = true,
-            secTier = SecTier.AUTO,
-        ),
-        McpToolDescriptor(
-            id = "cookie_jar_get",
-            title = "Cookie jar",
-            description = "Returns cookies from Burp's cookie jar (values redacted unless privacy is OFF).",
-            category = "Utilities",
-            defaultEnabled = true,
-            // CONFIRM, tiered for its worst case (PrivacyMode.OFF with includeValues): the tier must not depend on privacy mode — a mode-dependent trust boundary is the same defect D-01 rejects for unsafeOnly.
-            secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "proxy_http_history",
-            title = "Proxy HTTP history",
-            description = "Displays items within the proxy HTTP history.",
-            category = "History",
-            defaultEnabled = true,
-            secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "proxy_http_history_regex",
-            title = "Proxy HTTP history (regex)",
-            description = "Displays proxy HTTP history items matching a regex.",
-            category = "History",
-            defaultEnabled = true,
-            secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "proxy_history_annotate",
-            title = "Annotate proxy history",
-            description = "Adds notes/highlights to proxy history items matching a regex.",
-            category = "History",
-            defaultEnabled = false,
-            unsafeOnly = true,
-            secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "response_body_search",
-            title = "Search response bodies",
-            description = "Searches response bodies in proxy history using a regex.",
-            category = "History",
-            defaultEnabled = true,
-            secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "proxy_ws_history",
-            title = "Proxy WebSocket history",
-            description = "Displays items within the proxy WebSocket history.",
-            category = "History",
-            defaultEnabled = true,
-            secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "proxy_ws_history_regex",
-            title = "Proxy WebSocket history (regex)",
-            description = "Displays WebSocket history items matching a regex.",
-            category = "History",
-            defaultEnabled = true,
-            secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "site_map",
-            title = "Site map",
-            description = "Displays items within the Burp site map.",
-            category = "Site Map",
-            defaultEnabled = true,
-            secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "site_map_regex",
-            title = "Site map (regex)",
-            description = "Displays site map items matching a regex.",
-            category = "Site Map",
-            defaultEnabled = true,
-            secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "scope_check",
-            title = "Scope check",
-            description = "Checks whether a URL is in scope.",
-            category = "Scope",
-            defaultEnabled = true,
-            secTier = SecTier.AUTO,
-        ),
-        McpToolDescriptor(
-            id = "scope_include",
-            title = "Include in scope",
-            description = "Includes a URL in scope.",
-            category = "Scope",
-            defaultEnabled = false,
-            unsafeOnly = true,
-            secTier = SecTier.CONFIRM_EACH,
-        ),
-        McpToolDescriptor(
-            id = "scope_exclude",
-            title = "Exclude from scope",
-            description = "Excludes a URL from scope.",
-            category = "Scope",
-            defaultEnabled = false,
-            unsafeOnly = true,
-            // CONFIRM, not CONFIRM_EACH: excluding narrows the blast radius where scope_include widens it. The asymmetry is the point.
-            secTier = SecTier.CONFIRM,
-        ),
         McpToolDescriptor(
             id = "scanner_issues",
             title = "Scanner issues",
@@ -355,77 +190,6 @@ private val genericDescriptors: List<McpToolDescriptor> =
             defaultEnabled = false,
             unsafeOnly = true,
             secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "task_engine_state",
-            title = "Set task execution engine state",
-            description = "Sets Burp's task execution engine to paused or running.",
-            category = "Burp Control",
-            defaultEnabled = false,
-            unsafeOnly = true,
-            secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "proxy_intercept",
-            title = "Set proxy intercept state",
-            description = "Enables or disables Proxy intercept.",
-            category = "Burp Control",
-            defaultEnabled = false,
-            unsafeOnly = true,
-            secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "editor_get",
-            title = "Get active editor contents",
-            description = "Outputs the contents of the active message editor.",
-            category = "Editor",
-            defaultEnabled = false,
-            secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "editor_set",
-            title = "Set active editor contents",
-            description = "Sets the content of the active message editor.",
-            category = "Editor",
-            defaultEnabled = false,
-            unsafeOnly = true,
-            secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "project_options_get",
-            title = "Output project options",
-            description = "Outputs project-level configuration as JSON.",
-            category = "Config",
-            defaultEnabled = false,
-            // CONFIRM despite being read-only — the data is not attacker-controlled, but it is the user's own credential material (ADR-15, Pitfall 1).
-            secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "user_options_get",
-            title = "Output user options",
-            description = "Outputs user-level configuration as JSON.",
-            category = "Config",
-            defaultEnabled = false,
-            // CONFIRM despite being read-only — the data is not attacker-controlled, but it is the user's own credential material (ADR-15, Pitfall 1).
-            secTier = SecTier.CONFIRM,
-        ),
-        McpToolDescriptor(
-            id = "project_options_set",
-            title = "Set project options",
-            description = "Sets project-level configuration from JSON.",
-            category = "Config",
-            defaultEnabled = false,
-            unsafeOnly = true,
-            secTier = SecTier.CONFIRM_EACH,
-        ),
-        McpToolDescriptor(
-            id = "user_options_set",
-            title = "Set user options",
-            description = "Sets user-level configuration from JSON.",
-            category = "Config",
-            defaultEnabled = false,
-            unsafeOnly = true,
-            secTier = SecTier.CONFIRM_EACH,
         ),
         McpToolDescriptor(
             id = "collaborator_generate",

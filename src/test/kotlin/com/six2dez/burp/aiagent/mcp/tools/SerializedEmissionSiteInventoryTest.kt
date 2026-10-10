@@ -360,19 +360,27 @@ class SerializedEmissionSiteInventoryTest {
         // ── the files that carry every measured emission site, with their measured counts ────
         const val MODERN_EXECUTOR = "$TOOLS_PACKAGE/McpToolExecutorImpl.kt"
         const val GENERIC_PROVIDER = "$TOOLS_PACKAGE/GenericToolProvider.kt"
+        const val GENERIC_HISTORY = "$TOOLS_PACKAGE/GenericHistoryTools.kt"
+        const val GENERIC_SITE_MAP = "$TOOLS_PACKAGE/GenericSiteMapTools.kt"
 
         // ── the measured inventory ────────────────────────────────────────────────────────
         //
         // grep -rhE "encodeToString\(it\.(toSerializableForm|toSiteMapEntry)\(" \
-        //   src/main/kotlin src/full/kotlin --include=*.kt | wc -l  ->  7   (plan 29-06, task 1)
+        //   src/main/kotlin src/full/kotlin --include=*.kt | wc -l  ->  7   (plan 29-06, task 2)
         //
-        // McpToolExecutorImpl.kt  7, all inside dispatchGenericTool
+        // GenericHistoryTools.kt  4  proxy_http_history, proxy_http_history_regex, proxy_ws_history,
+        //                            proxy_ws_history_regex — one per toolHandler body
+        // GenericSiteMapTools.kt  2  site_map, site_map_regex — one per toolHandler body
+        // McpToolExecutorImpl.kt  1  scanner_issues, inside the residual dispatchGenericTool (plan 29-08
+        //                            moves it into a handler file; move its count with it)
         //
         // Seven tool names, each dispatched once. Five carry a raw HTTP message; two carry a
         // WebSocket payload, which has no header block and therefore no header rule to miss.
         val EMISSION_SITE_FILES: Map<String, Int> =
             mapOf(
-                MODERN_EXECUTOR to 7,
+                MODERN_EXECUTOR to 1,
+                GENERIC_HISTORY to 4,
+                GENERIC_SITE_MAP to 2,
             )
         const val EXPECTED_EMISSION_SITES = 7
         const val EXPECTED_RAW_HTTP_EMISSION_SITES = 5
@@ -416,11 +424,13 @@ class SerializedEmissionSiteInventoryTest {
         const val RESIDUAL_DISPATCH = "fun dispatchGenericTool("
         const val RESIDUAL_DISPATCH_CALL = "McpToolExecutor.dispatchGenericTool("
 
-        /** Floors, not counts. Measured at plan 29-06 task 1: 1215 / 70. */
+        /** Floors, not counts. Measured at plan 29-06 task 2: 836 / 71 / 281 / 156. */
         val MIN_EXPECTED_LINES =
             mapOf(
-                MODERN_EXECUTOR to 1000,
+                MODERN_EXECUTOR to 600,
                 DELEGATING_REGISTRAR to 50,
+                GENERIC_HISTORY to 200,
+                GENERIC_SITE_MAP to 100,
             )
     }
 }

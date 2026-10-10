@@ -2,8 +2,6 @@
 
 package com.six2dez.burp.aiagent.mcp.tools
 
-import burp.api.montoya.burpsuite.TaskExecutionEngine.TaskExecutionEngineState.PAUSED
-import burp.api.montoya.burpsuite.TaskExecutionEngine.TaskExecutionEngineState.RUNNING
 import burp.api.montoya.core.BurpSuiteEdition
 import burp.api.montoya.core.Range
 import burp.api.montoya.http.HttpMode
@@ -16,14 +14,11 @@ import burp.api.montoya.scanner.AuditConfiguration
 import burp.api.montoya.scanner.BuiltInAuditConfiguration
 import burp.api.montoya.scanner.ReportFormat
 import burp.api.montoya.scanner.audit.Audit
-import burp.api.montoya.utilities.CompressionType
 import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.mcp.McpToolContext
 import com.six2dez.burp.aiagent.mcp.ToolCallOrigin
 import com.six2dez.burp.aiagent.mcp.schema.asInputSchema
 import com.six2dez.burp.aiagent.mcp.schema.toSerializableForm
-import com.six2dez.burp.aiagent.mcp.schema.toSiteMapEntry
-import com.six2dez.burp.aiagent.redact.Redaction
 import com.six2dez.burp.aiagent.spi.ToolHandler
 import io.modelcontextprotocol.kotlin.sdk.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.TextContent
@@ -33,8 +28,6 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
-import java.security.MessageDigest
-import java.util.regex.Pattern
 import javax.swing.SwingUtilities
 
 object McpToolExecutor {
@@ -430,123 +423,6 @@ object McpToolExecutor {
                 api.comparer().sendToComparer(*byteArrays.toTypedArray())
                 "Sent ${input.items.size} item(s) to Comparer"
             }
-            "url_encode" -> {
-                val input = decodeToolArgs<UrlEncode>(args)
-                api.utilities().urlUtils().encode(input.content)
-            }
-            "url_decode" -> {
-                val input = decodeToolArgs<UrlDecode>(args)
-                api.utilities().urlUtils().decode(input.content)
-            }
-            "base64_encode" -> {
-                val input = decodeToolArgs<Base64Encode>(args)
-                api.utilities().base64Utils().encodeToString(input.content)
-            }
-            "base64_decode" -> {
-                val input = decodeToolArgs<Base64Decode>(args)
-                api
-                    .utilities()
-                    .base64Utils()
-                    .decode(input.content)
-                    .toString()
-            }
-            "random_string" -> {
-                val input = decodeToolArgs<GenerateRandomString>(args)
-                api.utilities().randomUtils().randomString(input.length, input.characterSet)
-            }
-            "hash_compute" -> {
-                val input = decodeToolArgs<HashCompute>(args)
-                val algo = normalizeHashAlgorithm(input.algorithm)
-                val digest = MessageDigest.getInstance(algo)
-                val bytes = digest.digest(input.content.toByteArray(Charsets.UTF_8))
-                bytes.joinToString("") { "%02x".format(it) }
-            }
-            "jwt_decode" -> {
-                val input = decodeToolArgs<JwtDecode>(args)
-                decodeJwt(input.token)
-            }
-            "decode_as" -> {
-                val input = decodeToolArgs<DecodeAs>(args)
-                val decoded = api.utilities().base64Utils().decode(input.base64)
-                val codec = input.encoding.trim().uppercase()
-                if (codec == "IDENTITY" || codec == "RAW") {
-                    decoded.toString()
-                } else {
-                    val type = CompressionType.valueOf(codec)
-                    api
-                        .utilities()
-                        .compressionUtils()
-                        .decompress(decoded, type)
-                        .toString()
-                }
-            }
-            "cookie_jar_get" -> {
-                val input = decodeToolArgs<CookieJarGet>(args)
-                val cookies = api.http().cookieJar().cookies()
-                val domainFilter =
-                    input.domain
-                        ?.trim()
-                        .orEmpty()
-                        .removePrefix(".")
-                        .lowercase()
-                        .ifBlank { null }
-                val results =
-                    cookies
-                        .asSequence()
-                        .filter { cookie ->
-                            if (domainFilter == null) return@filter true
-                            val cookieDomain = cookie.domain().removePrefix(".").lowercase()
-                            if (input.includeSubdomains) {
-                                cookieDomain == domainFilter || cookieDomain.endsWith(".$domainFilter")
-                            } else {
-                                cookieDomain == domainFilter
-                            }
-                        }.filter { cookie ->
-                            if (!input.scopeOnly) return@filter true
-                            val cookieDomain = cookie.domain().removePrefix(".")
-                            val httpUrl = "http://$cookieDomain/"
-                            val httpsUrl = "https://$cookieDomain/"
-                            api.scope().isInScope(httpUrl) || api.scope().isInScope(httpsUrl)
-                        }.map { cookie ->
-                            val rawDomain = cookie.domain()
-                            val safeDomain =
-                                if (context.privacyMode == com.six2dez.burp.aiagent.redact.PrivacyMode.STRICT) {
-                                    Redaction.anonymizeHost(rawDomain.removePrefix("."), context.hostSalt)
-                                } else {
-                                    rawDomain
-                                }
-                            val value =
-                                if (input.includeValues &&
-                                    context.privacyMode == com.six2dez.burp.aiagent.redact.PrivacyMode.OFF
-                                ) {
-                                    cookie.value()
-                                } else {
-                                    "[REDACTED]"
-                                }
-                            CookieEntry(
-                                name = cookie.name(),
-                                value = value,
-                                domain = safeDomain,
-                                path = cookie.path(),
-                                expiresAt = cookie.expiration().map { it.toString() }.orElse(null),
-                            )
-                        }.toList()
-                toolJson.encodeToString(results)
-            }
-            "project_options_get" -> api.burpSuite().exportProjectOptionsAsJson()
-            "user_options_get" -> api.burpSuite().exportUserOptionsAsJson()
-            "project_options_set" -> {
-                val input = decodeToolArgs<SetProjectOptions>(args)
-                api.logging().logToOutput("Setting project-level configuration via MCP.")
-                api.burpSuite().importProjectOptionsFromJson(input.json)
-                "Project configuration has been applied"
-            }
-            "user_options_set" -> {
-                val input = decodeToolArgs<SetUserOptions>(args)
-                api.logging().logToOutput("Setting user-level configuration via MCP.")
-                api.burpSuite().importUserOptionsFromJson(input.json)
-                "User configuration has been applied"
-            }
             "collaborator_generate" -> {
                 val input = decodeToolArgs<CollaboratorGenerate>(args)
                 val client = api.collaborator().createClient()
@@ -727,223 +603,6 @@ object McpToolExecutor {
                     }
                 api.scanner().generateReport(issues, formatEnum, pathObj)
                 "Report generated: ${input.path}"
-            }
-            "proxy_http_history" -> {
-                val input = decodeToolArgs<GetProxyHttpHistory>(args)
-                ensureAllowedProxyHistoryCount(input.count, context.proxyHistoryMaxItemsPerRequest)
-                val includeRaw = context.allowUnpreprocessedProxyHistory && input.includeUnpreprocessedResponse
-                val items = api.proxy().history()
-                val preprocess =
-                    context.responsePreprocessorSettings().copy(
-                        preprocessProxyHistory = !includeRaw,
-                    )
-                val seq =
-                    orderedProxyHistory(items, context) { it.request()?.toString().orEmpty() }
-                        .let { s ->
-                            if (input.listenerPort !=
-                                null
-                            ) {
-                                s.filter { it.listenerPort() == input.listenerPort }
-                            } else {
-                                s
-                            }
-                        }
-                // 07-03 D-03: filter by Burp scope when mcpScopeOnly is on.
-                val scoped = McpScopeFilter.filterInScope(seq, { it.request()?.url() }, context)
-                context.limitedJoin(
-                    scoped
-                        .drop(input.offset)
-                        .take(input.count)
-                        .map { toolJson.encodeToString(it.toSerializableForm(preprocess)) },
-                )
-            }
-            "proxy_http_history_regex" -> {
-                val input = decodeToolArgs<GetProxyHttpHistoryRegex>(args)
-                ensureAllowedProxyHistoryCount(input.count, context.proxyHistoryMaxItemsPerRequest)
-                val includeRaw = context.allowUnpreprocessedProxyHistory && input.includeUnpreprocessedResponse
-                val compiledRegex = Pattern.compile(input.regex)
-                val items = api.proxy().history { it.contains(compiledRegex) }
-                val preprocess =
-                    context.responsePreprocessorSettings().copy(
-                        preprocessProxyHistory = !includeRaw,
-                    )
-                val seq = orderedProxyHistory(items, context) { it.request()?.toString().orEmpty() }
-                // 07-03 D-03: filter by Burp scope when mcpScopeOnly is on.
-                val scoped = McpScopeFilter.filterInScope(seq, { it.request()?.url() }, context)
-                context.limitedJoin(
-                    scoped
-                        .drop(input.offset)
-                        .take(input.count)
-                        .map { toolJson.encodeToString(it.toSerializableForm(preprocess)) },
-                )
-            }
-            "proxy_history_annotate" -> {
-                val input = decodeToolArgs<ProxyHistoryAnnotate>(args)
-                val compiledRegex = Pattern.compile(input.regex)
-                val items = api.proxy().history { it.contains(compiledRegex) }
-                val highlightColor = parseHighlightColor(input.highlight)
-                val limitValue = input.limit.coerceAtLeast(1).coerceAtMost(500)
-                // 07-03 D-03: per-call scopeOnly retained as a backwards-compatible
-                // override; OR'd with the global ctx.scopeOnly so either gate filters.
-                val effectiveScopeOnly = input.scopeOnly || context.scopeOnly
-                val annotated = mutableListOf<String>()
-                for (item in items) {
-                    val url = item.request()?.url() ?: continue
-                    if (effectiveScopeOnly && !api.scope().isInScope(url)) continue
-                    if (input.note.isNotBlank()) {
-                        item.annotations().setNotes(input.note)
-                    }
-                    if (highlightColor != null) {
-                        item.annotations().setHighlightColor(highlightColor)
-                    }
-                    annotated.add(maybeAnonymizeUrl(url, context))
-                    if (annotated.size >= limitValue) break
-                }
-                if (annotated.isEmpty()) {
-                    "No matching proxy history items"
-                } else {
-                    buildString {
-                        appendLine("Annotated ${annotated.size} item(s):")
-                        annotated.forEach { appendLine("url=$it") }
-                    }.trim()
-                }
-            }
-            "response_body_search" -> {
-                val input = decodeToolArgs<ResponseBodySearch>(args)
-                val compiledRegex = Pattern.compile(input.regex)
-                // 07-03 D-03: per-call scopeOnly retained as override; OR'd with global.
-                val effectiveScopeOnly = input.scopeOnly || context.scopeOnly
-                val matches = mutableListOf<String>()
-                api.proxy().history().forEach { item ->
-                    val url = item.request()?.url() ?: return@forEach
-                    if (effectiveScopeOnly && !api.scope().isInScope(url)) return@forEach
-                    val response = item.response()?.toString().orEmpty()
-                    if (response.isBlank()) return@forEach
-                    val body = response.substringAfter("\r\n\r\n", "")
-                    val boundedBody = boundForRegexScan(body)
-                    val matcher = compiledRegex.matcher(boundedBody)
-                    var count = 0
-                    while (matcher.find()) count++
-                    if (count > 0) {
-                        val safeUrl = maybeAnonymizeUrl(url, context)
-                        matches.add("url=$safeUrl matches=$count response_bytes=${body.toByteArray(Charsets.UTF_8).size}")
-                    }
-                }
-                val sorted = if (context.determinismMode) matches.sorted() else matches
-                val slice = sorted.drop(input.offset.coerceAtLeast(0)).take(input.count.coerceAtLeast(1))
-                if (slice.isEmpty()) "No matches found" else slice.joinToString(separator = "\n")
-            }
-            "proxy_ws_history" -> {
-                val input = decodeToolArgs<GetProxyWebsocketHistory>(args)
-                val items = api.proxy().webSocketHistory()
-                val seq =
-                    if (context.determinismMode) {
-                        items.sortedBy { it.payload()?.toString().orEmpty() }.asSequence()
-                    } else {
-                        items.asSequence()
-                    }
-                // 07-03 D-03: filter WebSocket frames by the upgrade-request URL when
-                // mcpScopeOnly is on. ProxyWebSocketMessage.upgradeRequest() returns
-                // a non-null HttpRequest (Montoya 2026.2) so .url() is always derivable.
-                val scoped = McpScopeFilter.filterInScope(seq, { it.upgradeRequest()?.url() }, context)
-                context.limitedJoin(
-                    scoped
-                        .drop(input.offset)
-                        .take(input.count)
-                        .map { toolJson.encodeToString(it.toSerializableForm()) },
-                )
-            }
-            "proxy_ws_history_regex" -> {
-                val input = decodeToolArgs<GetProxyWebsocketHistoryRegex>(args)
-                val compiledRegex = Pattern.compile(input.regex)
-                val items = api.proxy().webSocketHistory { it.contains(compiledRegex) }
-                val seq =
-                    if (context.determinismMode) {
-                        items.sortedBy { it.payload()?.toString().orEmpty() }.asSequence()
-                    } else {
-                        items.asSequence()
-                    }
-                // 07-03 D-03: same upgrade-URL scope filter as proxy_ws_history.
-                val scoped = McpScopeFilter.filterInScope(seq, { it.upgradeRequest()?.url() }, context)
-                context.limitedJoin(
-                    scoped
-                        .drop(input.offset)
-                        .take(input.count)
-                        .map { toolJson.encodeToString(it.toSerializableForm()) },
-                )
-            }
-            "site_map" -> {
-                val input = decodeToolArgs<GetSiteMap>(args)
-                val items = api.siteMap().requestResponses()
-                val seq =
-                    if (context.determinismMode) {
-                        items.sortedBy { it.request()?.url().orEmpty() }.asSequence()
-                    } else {
-                        items.asSequence()
-                    }
-                // 07-03 D-03: filter site-map entries by scope when mcpScopeOnly is on.
-                val scoped = McpScopeFilter.filterInScope(seq, { it.request()?.url() }, context)
-                context.limitedJoin(
-                    scoped
-                        .drop(input.offset)
-                        .take(input.count)
-                        .map { toolJson.encodeToString(it.toSiteMapEntry()) },
-                )
-            }
-            "site_map_regex" -> {
-                val input = decodeToolArgs<GetSiteMapRegex>(args)
-                val compiledRegex = Pattern.compile(input.regex)
-                val filter =
-                    burp.api.montoya.sitemap.SiteMapFilter { node ->
-                        compiledRegex.matcher(node.url()).find()
-                    }
-                val items = api.siteMap().requestResponses(filter)
-                val seq =
-                    if (context.determinismMode) {
-                        items.sortedBy { it.request()?.url().orEmpty() }.asSequence()
-                    } else {
-                        items.asSequence()
-                    }
-                // 07-03 D-03: scope filter applied AFTER the user-supplied SiteMapFilter.
-                val scoped = McpScopeFilter.filterInScope(seq, { it.request()?.url() }, context)
-                context.limitedJoin(
-                    scoped
-                        .drop(input.offset)
-                        .take(input.count)
-                        .map { toolJson.encodeToString(it.toSiteMapEntry()) },
-                )
-            }
-            "scope_check" -> {
-                val input = decodeToolArgs<ScopeCheck>(args)
-                "in_scope=${api.scope().isInScope(input.url)}"
-            }
-            "scope_include" -> {
-                val input = decodeToolArgs<ScopeUpdate>(args)
-                api.scope().includeInScope(input.url)
-                "Scope include applied"
-            }
-            "scope_exclude" -> {
-                val input = decodeToolArgs<ScopeUpdate>(args)
-                api.scope().excludeFromScope(input.url)
-                "Scope exclude applied"
-            }
-            "task_engine_state" -> {
-                val input = decodeToolArgs<SetTaskExecutionEngineState>(args)
-                api.burpSuite().taskExecutionEngine().state = if (input.running) RUNNING else PAUSED
-                "Task execution engine is now ${if (input.running) "running" else "paused"}"
-            }
-            "proxy_intercept" -> {
-                val input = decodeToolArgs<SetProxyInterceptState>(args)
-                if (input.intercepting) api.proxy().enableIntercept() else api.proxy().disableIntercept()
-                "Intercept has been ${if (input.intercepting) "enabled" else "disabled"}"
-            }
-            "editor_get" -> getActiveEditor(api)?.text ?: "<No active editor>"
-            "editor_set" -> {
-                val input = decodeToolArgs<SetActiveEditorContents>(args)
-                val editor = getActiveEditor(api) ?: return "<No active editor>"
-                if (!editor.isEditable) return "<Current editor is not editable>"
-                editor.text = input.text
-                "Editor text has been set"
             }
             else -> "Unknown tool: $name"
         }
@@ -1127,16 +786,8 @@ object McpToolExecutor {
         "CyclomaticComplexMethod",
         // residual generic dispatch; plan 29-08 converts the remaining branches to handlers and deletes this function
     )
-    internal fun genericInputSchema(
-        toolName: String,
-        context: McpToolContext?,
-    ): Tool.Input {
-        val allowUnpreprocessed = context?.allowUnpreprocessedProxyHistory ?: true
-        return when (toolName) {
-            "editor_get",
-            "project_options_get",
-            "user_options_get",
-            -> Tool.Input()
+    internal fun genericInputSchema(toolName: String): Tool.Input =
+        when (toolName) {
             "http1_request" -> SendHttp1Request::class.asInputSchema()
             "http2_request" -> SendHttp2Request::class.asInputSchema()
             "repeater_tab" -> CreateRepeaterTab::class.asInputSchema()
@@ -1150,17 +801,6 @@ object McpToolExecutor {
             "response_parse" -> ResponseParse::class.asInputSchema()
             "find_reflected" -> FindReflected::class.asInputSchema()
             "comparer_send" -> ComparerSend::class.asInputSchema()
-            "url_encode" -> UrlEncode::class.asInputSchema()
-            "url_decode" -> UrlDecode::class.asInputSchema()
-            "base64_encode" -> Base64Encode::class.asInputSchema()
-            "base64_decode" -> Base64Decode::class.asInputSchema()
-            "random_string" -> GenerateRandomString::class.asInputSchema()
-            "hash_compute" -> HashCompute::class.asInputSchema()
-            "jwt_decode" -> JwtDecode::class.asInputSchema()
-            "decode_as" -> DecodeAs::class.asInputSchema()
-            "cookie_jar_get" -> CookieJarGet::class.asInputSchema()
-            "project_options_set" -> SetProjectOptions::class.asInputSchema()
-            "user_options_set" -> SetUserOptions::class.asInputSchema()
             "collaborator_generate" -> CollaboratorGenerate::class.asInputSchema()
             "collaborator_poll" -> CollaboratorPoll::class.asInputSchema()
             "scanner_issues" -> GetScannerIssues::class.asInputSchema()
@@ -1171,35 +811,8 @@ object McpToolExecutor {
             "scan_task_status" -> GetScanTaskStatus::class.asInputSchema()
             "scan_task_delete" -> DeleteScanTask::class.asInputSchema()
             "scan_report" -> GenerateScannerReport::class.asInputSchema()
-            "proxy_http_history" -> {
-                if (allowUnpreprocessed) {
-                    GetProxyHttpHistory::class.asInputSchema()
-                } else {
-                    GetProxyHttpHistoryRestricted::class.asInputSchema()
-                }
-            }
-            "proxy_http_history_regex" -> {
-                if (allowUnpreprocessed) {
-                    GetProxyHttpHistoryRegex::class.asInputSchema()
-                } else {
-                    GetProxyHttpHistoryRegexRestricted::class.asInputSchema()
-                }
-            }
-            "proxy_history_annotate" -> ProxyHistoryAnnotate::class.asInputSchema()
-            "response_body_search" -> ResponseBodySearch::class.asInputSchema()
-            "proxy_ws_history" -> GetProxyWebsocketHistory::class.asInputSchema()
-            "proxy_ws_history_regex" -> GetProxyWebsocketHistoryRegex::class.asInputSchema()
-            "site_map" -> GetSiteMap::class.asInputSchema()
-            "site_map_regex" -> GetSiteMapRegex::class.asInputSchema()
-            "scope_check" -> ScopeCheck::class.asInputSchema()
-            "scope_include" -> ScopeUpdate::class.asInputSchema()
-            "scope_exclude" -> ScopeUpdate::class.asInputSchema()
-            "task_engine_state" -> SetTaskExecutionEngineState::class.asInputSchema()
-            "proxy_intercept" -> SetProxyInterceptState::class.asInputSchema()
-            "editor_set" -> SetActiveEditorContents::class.asInputSchema()
             else -> Tool.Input()
         }
-    }
 
     private fun schemaString(handler: ToolHandler?): String {
         val input = handler?.inputSchema(null) ?: Tool.Input()

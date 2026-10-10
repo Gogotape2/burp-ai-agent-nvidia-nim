@@ -374,6 +374,8 @@ class CookieCarrierInventoryTest {
         val HEADER_VALUE_ARGUMENT = Regex("""\.headerValue\("([^"]*)"\)""")
 
         const val EXECUTOR_MODERN = "com/six2dez/burp/aiagent/mcp/tools/McpToolExecutorImpl.kt"
+        const val GENERIC_HISTORY_TOOLS = "com/six2dez/burp/aiagent/mcp/tools/GenericHistoryTools.kt"
+        const val GENERIC_UTILITY_TOOLS = "com/six2dez/burp/aiagent/mcp/tools/GenericUtilityTools.kt"
         const val SERIALIZATION = "com/six2dez/burp/aiagent/mcp/schema/Serialization.kt"
         const val CONTEXT_COLLECTOR = "com/six2dez/burp/aiagent/context/ContextCollector.kt"
         const val BOUNTY_TAG_RESOLVER = "com/six2dez/burp/aiagent/prompts/bountyprompt/BountyPromptTagResolver.kt"
@@ -403,10 +405,17 @@ class CookieCarrierInventoryTest {
          * cookieJar 1). Its four entries below were removed and nothing else changed: 63 sites across
          * 11 files. Every other file's counts, and the whole-tree scan over both production roots, are
          * as they were, so a new unlisted site in either root still turns this class red.
+         *
+         * RE-MEASURED 2026-10-11 by plan 29-06 (D-13): the history and utility tools moved out of the
+         * executor's dispatch into handler files, MOVED rather than changed. Three rawMessage sites
+         * went to GenericHistoryTools.kt and the cookieJar site to GenericUtilityTools.kt; the executor
+         * keeps headerList 2, parameterList 3 and rawMessage 2. Still 63 sites, now across 13 files.
          */
         val MEASURED_CARRIER_SITES: Map<String, Map<String, Int>> =
             mapOf(
-                EXECUTOR_MODERN to mapOf(HEADER_LIST to 2, PARAMETER_LIST to 3, RAW_MESSAGE to 5, COOKIE_JAR to 1),
+                EXECUTOR_MODERN to mapOf(HEADER_LIST to 2, PARAMETER_LIST to 3, RAW_MESSAGE to 2),
+                GENERIC_HISTORY_TOOLS to mapOf(RAW_MESSAGE to 3),
+                GENERIC_UTILITY_TOOLS to mapOf(COOKIE_JAR to 1),
                 SERIALIZATION to mapOf(RAW_MESSAGE to 5),
                 CONTEXT_COLLECTOR to mapOf(RAW_MESSAGE to 2),
                 BOUNTY_TAG_RESOLVER to mapOf(PARAMETER_LIST to 1, RAW_MESSAGE to 2),
@@ -489,10 +498,19 @@ class CookieCarrierInventoryTest {
                     "no gate anywhere in this repository that would catch a THIRD detail producer — " +
                     "D-28-06 records building one as considered and NOT taken.",
                 CarrierSite(EXECUTOR_MODERN, RAW_MESSAGE) to
-                    "Redaction.apply at the redactIfNeeded choke point. Consumer read: all five sites " +
-                    "(:592, :593, :732, :761, :811) sit inside the dispatch `when` whose result is " +
-                    "wrapped at McpToolExecutorImpl.kt:1045. The logical-line cookie header rules fire " +
-                    "there; SerializedEmissionSiteInventoryTest pins the same choke point.",
+                    "Redaction.apply at the redactIfNeeded choke point. Consumer read: both sites " +
+                    "(collaborator_poll's http_request / http_response lines) sit inside the residual " +
+                    "dispatchGenericTool, which only GenericToolProvider's handlers call, and " +
+                    "executeToolResult wraps every handler.execute result in context.redactIfNeeded. " +
+                    "The logical-line cookie header rules fire there; SerializedEmissionSiteInventoryTest " +
+                    "pins the same choke point. (Until plan 29-06 these were two of five executor sites; " +
+                    "the other three moved to GenericHistoryTools.kt unchanged.)",
+                CarrierSite(GENERIC_HISTORY_TOOLS, RAW_MESSAGE) to
+                    "Redaction.apply at the redactIfNeeded choke point. Consumer read: the three sites " +
+                    "(proxy_http_history and proxy_http_history_regex's orderedProxyHistory sort key, " +
+                    "response_body_search's response text) sit inside toolHandler bodies, and " +
+                    "executeToolResult wraps every handler.execute result in context.redactIfNeeded. " +
+                    "Moved here verbatim from the executor's dispatch by plan 29-06.",
                 CarrierSite(SERIALIZATION, RAW_MESSAGE) to
                     "Redaction.apply at the redactIfNeeded choke point. Consumer read: :44, :45, :50, :59 " +
                     "and :82 build HttpRequestResponse / SiteMapEntry carriers, which only the two " +
@@ -565,7 +583,9 @@ class CookieCarrierInventoryTest {
          */
         val CLASSIFIED_NON_CARRYING: Map<CarrierSite, String> =
             mapOf(
-                CarrierSite(EXECUTOR_MODERN, COOKIE_JAR) to
+                CarrierSite(GENERIC_UTILITY_TOOLS, COOKIE_JAR) to
+                    "MOVED VERBATIM from McpToolExecutorImpl by plan 29-06 (cookie_jar_get's handler); " +
+                    "the line numbers below are the executor's before the move. " +
                     "MODE-GATED AT THE FIELD. Consumer read: :476 reads the jar, and the map at :502-523 " +
                     "emits cookie.value() ONLY when `includeValues && privacyMode == OFF`, writing " +
                     "[REDACTED] otherwise; the domain is additionally anonymised under STRICT. Under " +
@@ -859,6 +879,11 @@ class CookieCarrierInventoryTest {
                 "remaining wrapper: McpToolExecutorImpl's context.redactIfNeeded(output) choke " +
                 "point, which every registered tool reaches through " +
                 "McpToolHandlers.registerToolHandler (SerializedEmissionSiteInventoryTest pins " +
-                "it). Every disposition above, and AR-27-08's OPEN status, stand as recorded."
+                "it). Every disposition above, and AR-27-08's OPEN status, stand as recorded." +
+                " RELOCATED AGAIN 2026-10-11 (phase 29, plan 29-06) — THIS NOTE WITHDRAWS NOTHING AND " +
+                "ADDS NO CONTROL. The executor's dispatch `when` became a tool registry: the wrapper is " +
+                "now the single `context.redactIfNeeded(handler.execute(...))` line in " +
+                "McpToolExecutor.executeToolResult, which every MCP and chat tool call reaches, and " +
+                "SerializedEmissionSiteInventoryTest pins it. The read-time pass is unchanged in behaviour."
     }
 }
