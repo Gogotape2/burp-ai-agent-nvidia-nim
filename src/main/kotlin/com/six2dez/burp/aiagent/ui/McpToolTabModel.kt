@@ -10,8 +10,8 @@ import com.six2dez.burp.aiagent.ui.design.BadgeStyle
  * [generic] contains tools where [McpToolDescriptor.nativeTool] is false, sorted by title.
  */
 data class ToolGrouping(
-    val native: List<McpToolDescriptor>,
-    val generic: List<McpToolDescriptor>,
+    val core: List<McpToolDescriptor>,
+    val provided: List<McpToolDescriptor>,
 )
 
 /**
@@ -30,11 +30,16 @@ object McpToolTabModel {
      *
      * UI-03: the two groups are rendered as separate sections in the MCP tools tab.
      */
-    fun groupTools(tools: List<McpToolDescriptor>): ToolGrouping {
+    // RED scaffolding (plan 29-08 task 2): the new signature over the old descriptor-flag body; GREEN keys it on coreIds.
+    @Suppress("UnusedParameter")
+    fun groupTools(
+        tools: List<McpToolDescriptor>,
+        coreIds: Set<String>,
+    ): ToolGrouping {
         val (native, generic) = tools.partition { it.nativeTool }
         return ToolGrouping(
-            native = native.sortedBy { it.title },
-            generic = generic.sortedBy { it.title },
+            core = native.sortedBy { it.title },
+            provided = generic.sortedBy { it.title },
         )
     }
 
@@ -47,7 +52,12 @@ object McpToolTabModel {
      * This is the sole source of truth for badge assignment; the Swing layer in Plan 02
      * calls this and passes the result to `toolBadge()`.
      */
-    fun badgeStyle(tool: McpToolDescriptor): BadgeStyle = if (tool.nativeTool) BadgeStyle.NATIVE else BadgeStyle.FULL
+    // RED scaffolding (plan 29-08 task 2): GREEN keys the badge on coreIds.
+    @Suppress("UnusedParameter")
+    fun badgeStyle(
+        tool: McpToolDescriptor,
+        coreIds: Set<String>,
+    ): BadgeStyle = if (tool.nativeTool) BadgeStyle.NATIVE else BadgeStyle.FULL
 
     /**
      * Returns true when [tool] should be visible for the given [query].

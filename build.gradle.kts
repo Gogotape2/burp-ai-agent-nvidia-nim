@@ -374,6 +374,17 @@ fun Test.declareStructuralInputs() {
         .file("BappManifest.bmf")
         .withPropertyName("bappManifest")
         .withPathSensitivity(PathSensitivity.RELATIVE)
+    // Phase 29 / BUILD-04: FlavorBranchGuardTest reads this build script and every workflow from disk.
+    // Same 22-09 stale-cache defect: a comment-only edit to either changes no compiled output, so an
+    // undeclared file would let the guard be served from cache in the commit that re-adds a switch.
+    inputs
+        .file("build.gradle.kts")
+        .withPropertyName("buildScriptStructuralInput")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs
+        .dir(".github/workflows")
+        .withPropertyName("workflowsStructuralInputs")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
 // -PexcludeHeavyTests=true (the fast PR gate) drops the heavy suites from BOTH test tasks; they still
