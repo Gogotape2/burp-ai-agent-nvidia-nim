@@ -3,6 +3,7 @@ package com.six2dez.burp.aiagent.scanner
 import burp.api.montoya.http.message.params.HttpParameterType
 import burp.api.montoya.http.message.params.ParsedHttpParameter
 import burp.api.montoya.http.message.requests.HttpRequest
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -66,21 +67,21 @@ import java.util.concurrent.atomic.AtomicReference
 class CookieRouteDispositionTest {
     @Test
     fun exactlyOneCookieTypePredicateExistsInMainSource() {
-        val files = mainSourceFiles()
+        val files = SourceRoots.kotlinFiles()
         assertTrue(
             files.size >= MIN_EXPECTED_MAIN_FILES,
-            "the source walk reached ${files.size} .kt files under $MAIN_SOURCE_ROOT, below the " +
+            "the source walk reached ${files.size} .kt files under ${SourceRoots.PRODUCTION}, below the " +
                 "floor of $MIN_EXPECTED_MAIN_FILES. A walk that reaches nothing would report a " +
                 "clean tree for the same reason a correct tree does; fix the walk before reading " +
                 "the count below as evidence.",
         )
 
-        val hits = files.flatMap { file -> cookieTypeComparisonsIn(file).map { relativePath(file) to it } }
+        val hits = files.flatMap { file -> cookieTypeComparisonsIn(file).map { SourceRoots.relativePath(file) to it } }
 
         assertEquals(
             1,
             hits.size,
-            "expected exactly ONE cookie-parameter-type comparison in $MAIN_SOURCE_ROOT — the one " +
+            "expected exactly ONE cookie-parameter-type comparison in ${SourceRoots.PRODUCTION} — the one " +
                 "inside $OWNER's isCookieParameterType. Found ${hits.size}: " +
                 hits.joinToString("; ") { "${it.first} -> ${it.second.trim()}" } +
                 ". A SECOND cookie-type predicate is how this control gets bypassed without anyone " +
@@ -133,21 +134,21 @@ class CookieRouteDispositionTest {
      */
     @Test
     fun exactlyOneInsertionPointCookieTypePredicateExistsInMainSource() {
-        val files = mainSourceFiles()
+        val files = SourceRoots.kotlinFiles()
         assertTrue(
             files.size >= MIN_EXPECTED_MAIN_FILES,
-            "the source walk reached ${files.size} .kt files under $MAIN_SOURCE_ROOT, below the " +
+            "the source walk reached ${files.size} .kt files under ${SourceRoots.PRODUCTION}, below the " +
                 "floor of $MIN_EXPECTED_MAIN_FILES. A walk that reaches nothing would report a " +
                 "clean tree for the same reason a correct tree does; fix the walk before reading " +
                 "the count below as evidence.",
         )
 
-        val hits = files.flatMap { file -> insertionPointCookieComparisonsIn(file).map { relativePath(file) to it } }
+        val hits = files.flatMap { file -> insertionPointCookieComparisonsIn(file).map { SourceRoots.relativePath(file) to it } }
 
         assertEquals(
             1,
             hits.size,
-            "expected exactly ONE insertion-point cookie-type predicate in $MAIN_SOURCE_ROOT — the " +
+            "expected exactly ONE insertion-point cookie-type predicate in ${SourceRoots.PRODUCTION} — the " +
                 "one inside $INSERTION_POINT_OWNER's isCookieInsertionPoint. Found ${hits.size}: " +
                 hits.joinToString("; ") { "${it.first} -> ${it.second.trim()}" } +
                 ". A SECOND insertion-point cookie predicate is how the route-2 control gets " +
@@ -330,7 +331,7 @@ class CookieRouteDispositionTest {
      * marker-vocabulary assertion stops covering the thing it names.
      */
     private fun adaptiveEngineValueMarker(): String {
-        val source = File(mainSourceRoot(), ADAPTIVE_ENGINE_PATH)
+        val source = SourceRoots.file(ADAPTIVE_ENGINE_PATH)
         assertTrue(source.isFile, "could not read $ADAPTIVE_ENGINE_PATH to derive the engine's value marker.")
         val match =
             ADAPTIVE_VALUE_MARKER_PATTERN.find(source.readText())
@@ -378,33 +379,7 @@ class CookieRouteDispositionTest {
                 trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")
             }.filter { line -> patterns.any { it.containsMatchIn(line) } }
 
-    private fun mainSourceFiles(): List<File> = mainSourceRoot().walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
-
-    // WR-05: this previously searched for the forward-slash literal "src/main/kotlin" joined with
-    // the PLATFORM separator, so on Windows the needle never occurred, substringAfter returned the
-    // whole absolute path, and the owner assertion failed with a confusing message. Cross-platform
-    // support is a stated project constraint, so that was a real defect rather than a style nit.
-    // Relativise against the resolved root and render with invariant separators instead — the same
-    // shape CookieCarrierInventoryTest.kt:238 and SerializedEmissionSiteInventoryTest.kt:362 use.
-    private fun relativePath(file: File): String = file.relativeTo(mainSourceRoot()).invariantSeparatorsPath
-
-    private fun mainSourceRoot(): File {
-        var candidate: File? = File(System.getProperty("user.dir")).absoluteFile
-        while (candidate != null) {
-            val root = File(candidate, MAIN_SOURCE_ROOT)
-            if (root.isDirectory) return root
-            candidate = candidate.parentFile
-        }
-        throw AssertionError(
-            "could not resolve $MAIN_SOURCE_ROOT from user.dir=${System.getProperty("user.dir")}. " +
-                "Resolve the path (for example from a system property set in build.gradle.kts) rather " +
-                "than weakening this test into a skip.",
-        )
-    }
-
     private companion object {
-        const val MAIN_SOURCE_ROOT = "src/main/kotlin"
-
         // Measured at 172 .kt files when this test was written. The floor is deliberately well below
         // that: it is here to catch a walk that reaches nothing, not to track the file count.
         const val MIN_EXPECTED_MAIN_FILES = 150
@@ -488,8 +463,8 @@ class CookieRouteDispositionTest {
          *
          * These fixtures necessarily CONTAIN the literal `AuditInsertionPointType`, which makes this
          * file the second under `src/test/kotlin/` to do so. That is expected and not a regression:
-         * the scan walks `src/main/kotlin` only, so a fixture here can never be counted by the
-         * tripwire it protects.
+         * the scan walks the production roots only (`src/main/kotlin` and `src/full/kotlin`, through
+         * SourceRoots), so a fixture here can never be counted by the tripwire it protects.
          */
         val INSERTION_POINT_SPELLING_FIXTURES =
             listOf(

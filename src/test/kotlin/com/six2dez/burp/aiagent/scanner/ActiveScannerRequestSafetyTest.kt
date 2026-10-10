@@ -11,6 +11,7 @@ import burp.api.montoya.http.message.requests.HttpRequest
 import burp.api.montoya.http.message.responses.HttpResponse
 import burp.api.montoya.internal.MontoyaObjectFactory
 import burp.api.montoya.internal.ObjectFactoryLocator
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.TestSettings
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
@@ -209,26 +210,26 @@ class ActiveScannerRequestSafetyTest {
         assertNotNull(ScanPolicy.idorReplayBlockReason(null, PayloadRisk.SAFE))
 
         val definitions =
-            sourceFiles().flatMap { file ->
-                codeLinesOf(file).filter { it.contains(SAFE_SET_LITERAL) }.map { relativePath(file) }
+            SourceRoots.kotlinFiles().flatMap { file ->
+                codeLinesOf(file).filter { it.contains(SAFE_SET_LITERAL) }.map { SourceRoots.packageRelativePath(file) }
             }
         assertEquals(listOf("scanner/ActiveScanModels.kt"), definitions, "the safe-method set is defined exactly once")
     }
 
     @Test
     fun theGatesReadTheSameRiskSourceAsPayloadFiltering() {
-        val scanner = codeLinesOf(File(SOURCE_ROOT, "scanner/ActiveAiScanner.kt"))
+        val scanner = codeLinesOf(SourceRoots.packageFile("scanner/ActiveAiScanner.kt"))
         assertEquals(0, scanner.count { it.contains("activeAiMaxRiskLevel") }, "ActiveAiScanner reads its own maxRiskLevel field only")
         assertEquals(
             1,
-            codeLinesOf(File(SOURCE_ROOT, "ui/SettingsPanelSettingsIO.kt")).count {
+            codeLinesOf(SourceRoots.packageFile("ui/SettingsPanelSettingsIO.kt")).count {
                 it.contains("activeAiScanner.maxRiskLevel = updated.activeAiMaxRiskLevel")
             },
             "every Save writes the field the gates read",
         )
         assertEquals(
             1,
-            codeLinesOf(File(SOURCE_ROOT, "App.kt")).count { it.contains("activeAiScanner.maxRiskLevel = settings.activeAiMaxRiskLevel") },
+            codeLinesOf(SourceRoots.packageFile("App.kt")).count { it.contains("activeAiScanner.maxRiskLevel = settings.activeAiMaxRiskLevel") },
             "startup writes the field the gates read",
         )
         val declaration = scanner.indexOfFirst { it.contains("var maxRiskLevel") }
@@ -606,14 +607,6 @@ class ActiveScannerRequestSafetyTest {
             },
         )
 
-    private fun sourceFiles(): List<File> {
-        val root = File(SOURCE_ROOT)
-        assertTrue(root.isDirectory, "Expected `$SOURCE_ROOT` under `${System.getProperty("user.dir")}`.")
-        return root.walkTopDown().filter { it.isFile && it.extension == "kt" }.toList()
-    }
-
-    private fun relativePath(file: File): String = file.relativeTo(File(SOURCE_ROOT)).invariantSeparatorsPath
-
     /** Non-comment lines: a line-comment marker, a continuation asterisk or a block opener first. */
     private fun codeLinesOf(file: File): List<String> =
         file.readText(Charsets.UTF_8).lines().filterNot { line ->
@@ -623,7 +616,6 @@ class ActiveScannerRequestSafetyTest {
 
     private companion object {
         val DEFAULT = Any()
-        const val SOURCE_ROOT = "src/main/kotlin/com/six2dez/burp/aiagent"
         const val SAFE_SET_LITERAL = "setOf(\"GET\", \"HEAD\", \"OPTIONS\")"
         const val RESPONSE_BODY = "ok 42"
         const val FORM_TYPE = "application/x-www-form-urlencoded"

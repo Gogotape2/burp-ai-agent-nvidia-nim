@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.redact
 
+import com.six2dez.burp.aiagent.SourceRoots
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -21,7 +22,8 @@ import java.io.File
  * therefore a leak documented as a feature — it teaches the next audit that the leak is expected.
  * Plan 27-05 prohibited exactly that artifact, and this phase committed two of them anyway. A fourth
  * prose claim would be the fourth iteration of the same failure. This file is the claim made
- * MECHANICAL: it scans `src/test/kotlin` on every CI run and fails on the next such pin — written
+ * MECHANICAL: it scans `src/test/kotlin` and `src/fullTest/kotlin` (phase 29: the full flavor's
+ * tests, so a pin moved there is still swept) on every CI run and fails on the next such pin — written
  * with a plain or a backtick-quoted name, under any modifier prefix, with or without a same-line
  * annotation. NOT written with an opening parenthesis somewhere other than its declaration line;
  * that shape is blind axis 9 below, and this sentence is scoped rather than deleted because a
@@ -139,7 +141,7 @@ class RedactingPolicySurvivalSweepTest {
 
     @Test
     fun noGreenTestAssertsASensitiveValueSurvivesARedactingPolicy() {
-        val hits = testSourceFiles().flatMap { detect(relativePath(it), fileWalk(it)) }
+        val hits = SourceRoots.testKotlinFiles().flatMap { detect(SourceRoots.relativePath(it), fileWalk(it)) }
         val identifiers = hits.map { it.identifier }.toSet()
 
         assertEquals(
@@ -160,7 +162,7 @@ class RedactingPolicySurvivalSweepTest {
 
     @Test
     fun theSweepFileItselfYieldsNoHits() {
-        val self = sourceFile(SELF_PATH)
+        val self = SourceRoots.testFile(SELF_PATH)
         val hits = detect(SELF_PATH, fileWalk(self))
 
         assertTrue(
@@ -174,7 +176,7 @@ class RedactingPolicySurvivalSweepTest {
 
     @Test
     fun theRawStringSkipIsWhyTheSelfScanIsClean() {
-        val self = sourceFile(SELF_PATH)
+        val self = SourceRoots.testFile(SELF_PATH)
         val unskipped = detect(SELF_PATH, self.readLines())
 
         assertTrue(
@@ -453,7 +455,7 @@ class RedactingPolicySurvivalSweepTest {
 
     @Test
     fun theStatedBlindAxisCountMatchesTheEnumeration() {
-        val source = sourceFile(SELF_PATH).readLines()
+        val source = SourceRoots.testFile(SELF_PATH).readLines()
         val kdocOpensAt = source.indexOfFirst { it.trimStart().startsWith("/**") }
         val classAt = source.indexOfFirst { it.startsWith("class $SELF_CLASS") }
 
@@ -498,7 +500,7 @@ class RedactingPolicySurvivalSweepTest {
      */
     @Test
     fun theStatedTestMethodCountMatchesThisFilesOwnDeclarations() {
-        val declared = fileWalk(sourceFile(SELF_PATH)).count { TEST_ANNOTATION.containsMatchIn(it) }
+        val declared = fileWalk(SourceRoots.testFile(SELF_PATH)).count { TEST_ANNOTATION.containsMatchIn(it) }
 
         assertEquals(
             STATED_TEST_METHODS,
@@ -528,7 +530,7 @@ class RedactingPolicySurvivalSweepTest {
      */
     @Test
     fun theStatedUnskippedSelfHitCountMatchesThisFile() {
-        val unskipped = detect(SELF_PATH, sourceFile(SELF_PATH).readLines())
+        val unskipped = detect(SELF_PATH, SourceRoots.testFile(SELF_PATH).readLines())
 
         assertEquals(
             STATED_UNSKIPPED_SELF_HITS,
@@ -550,15 +552,15 @@ class RedactingPolicySurvivalSweepTest {
         // A repository-state test that goes green when it cannot find the repository is worse than
         // the grep it replaces. The root resolver throws rather than skips; this asserts the walk it
         // returns actually reached the tree.
-        val files = testSourceFiles()
+        val files = SourceRoots.testKotlinFiles()
 
         assertTrue(
             files.size >= MIN_EXPECTED_TEST_FILES,
-            "the walk found only ${files.size} .kt files under $TEST_SOURCE_ROOT — the scan is not " +
+            "the walk found only ${files.size} .kt files under ${SourceRoots.TESTS} — the scan is not " +
                 "reaching the repository, so its other assertions prove nothing",
         )
         assertTrue(
-            files.any { relativePath(it) == SELF_PATH },
+            files.any { SourceRoots.relativePath(it) == SELF_PATH },
             "the walk did not reach THIS file. The self-scan is only meaningful because this file is " +
                 "walked like every other; there is no self-exclusion and there must never be one.",
         )
@@ -577,7 +579,7 @@ class RedactingPolicySurvivalSweepTest {
      * This is the one narrowing that makes the self-scan clean, and it is declared in the class KDoc
      * as blind axis 11 rather than sold as a feature.
      */
-    private fun fileWalk(file: File): List<String> = dropRawStringInteriors(relativePath(file), file.readLines())
+    private fun fileWalk(file: File): List<String> = dropRawStringInteriors(SourceRoots.relativePath(file), file.readLines())
 
     private fun dropRawStringInteriors(
         sourceId: String,
@@ -883,32 +885,6 @@ class RedactingPolicySurvivalSweepTest {
         return trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")
     }
 
-    private fun testSourceFiles(): List<File> =
-        testSourceRoot()
-            .walkTopDown()
-            .filter { it.isFile && it.extension == "kt" }
-            .toList()
-
-    private fun sourceFile(relative: String): File = File(testSourceRoot(), relative)
-
-    private fun relativePath(file: File): String = file.relativeTo(testSourceRoot()).invariantSeparatorsPath
-
-    /** Resolved by walking up from the Gradle test working directory. FAILS rather than skips. */
-    private fun testSourceRoot(): File {
-        var candidate: File? = File(System.getProperty("user.dir")).absoluteFile
-        while (candidate != null) {
-            val root = File(candidate, TEST_SOURCE_ROOT)
-            if (root.isDirectory) return root
-            candidate = candidate.parentFile
-        }
-        throw AssertionError(
-            "could not resolve $TEST_SOURCE_ROOT from user.dir=${System.getProperty("user.dir")}. " +
-                "Resolve the path (for example from a system property set in build.gradle.kts) rather " +
-                "than weakening this test into a skip: a repository-state test that goes green when " +
-                "it cannot find the repository is worse than the grep it replaced.",
-        )
-    }
-
     private data class Hit(
         val identifier: String,
         val argument: String,
@@ -918,7 +894,6 @@ class RedactingPolicySurvivalSweepTest {
     }
 
     private companion object {
-        const val TEST_SOURCE_ROOT = "src/test/kotlin"
         const val SELF_PATH = "com/six2dez/burp/aiagent/redact/RedactingPolicySurvivalSweepTest.kt"
         const val SELF_CLASS = "RedactingPolicySurvivalSweepTest"
 

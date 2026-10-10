@@ -363,6 +363,13 @@ fun Test.declareStructuralInputs() {
         .dir("src/full/kotlin")
         .withPropertyName("fullSourceTreeStructuralInputs")
         .withPathSensitivity(PathSensitivity.RELATIVE)
+    // Phase 29 / 29-02: RedactingPolicySurvivalSweepTest runs in `test` and sweeps BOTH test roots
+    // (SourceRoots.TESTS). `test` does not compile src/fullTest, so without this declaration a survival
+    // pin added there leaves the `test` cache key unchanged and the sweep is served from cache.
+    inputs
+        .dir("src/fullTest/kotlin")
+        .withPropertyName("fullTestSourceTreeStructuralInputs")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
     inputs
         .file("BappManifest.bmf")
         .withPropertyName("bappManifest")

@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.redact
 
+import com.six2dez.burp.aiagent.SourceRoots
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -22,8 +23,8 @@ import java.io.File
  * This file keys one axis up: on the SOURCE of the bytes. A cookie byte can only enter this extension
  * through a Montoya call that returns it. So enumerate those calls, and require every site that makes
  * one to be either ROUTED through a named control or CLASSIFIED non-carrying with a reason read from
- * that site's own CONSUMER. Adding a call site anywhere in `src/main/kotlin` fails a test until
- * somebody classifies it.
+ * that site's own CONSUMER. Adding a call site anywhere in either production root (`src/main/kotlin`
+ * or `src/full/kotlin`, walked through SourceRoots) fails a test until somebody classifies it.
  *
  * ── THE BOUND, STATED FIRST AND NOT AS A FOOTNOTE ──
  *
@@ -170,7 +171,8 @@ class CookieCarrierInventoryTest {
         // `headerValue("Content-Type")` cannot, so a new cookie-named argument must fail here even
         // when the per-file count is unchanged.
         val measured =
-            mainSourceFiles()
+            SourceRoots
+                .kotlinFiles()
                 .flatMap { file -> codeLines(file).flatMap { HEADER_VALUE_ARGUMENT.findAll(it).map { m -> m.groupValues[1] } } }
                 .groupingBy { it }
                 .eachCount()
@@ -195,10 +197,10 @@ class CookieCarrierInventoryTest {
     fun theCarrierScanIsNonVacuous() {
         // A repository-state test that goes green when it cannot find the repository is worse than
         // the grep it replaced. Both halves below FAIL rather than skip.
-        val files = mainSourceFiles()
+        val files = SourceRoots.kotlinFiles()
         assertTrue(
             files.size >= MIN_EXPECTED_MAIN_FILES,
-            "the walk found only ${files.size} .kt files under $MAIN_SOURCE_ROOT — the scan is not " +
+            "the walk found only ${files.size} .kt files under ${SourceRoots.PRODUCTION} — the scan is not " +
                 "reaching the repository, so every other assertion here proves nothing",
         )
 
@@ -217,9 +219,9 @@ class CookieCarrierInventoryTest {
 
         assertEquals(
             MEASURED_CARRIER_SITES.size,
-            MEASURED_CARRIER_SITES.keys.count { path -> sourceFile(path).isFile },
+            MEASURED_CARRIER_SITES.keys.count { path -> SourceRoots.locate(path).size == 1 },
             "a pinned carrier file does not exist on disk, so its zero counts would read as agreement: " +
-                "${MEASURED_CARRIER_SITES.keys.filterNot { sourceFile(it).isFile }}",
+                "${MEASURED_CARRIER_SITES.keys.filterNot { SourceRoots.locate(it).size == 1 }}",
         )
     }
 
@@ -227,11 +229,11 @@ class CookieCarrierInventoryTest {
 
     private fun scanCarrierSites(): Map<CarrierSite, Int> {
         val out = mutableMapOf<CarrierSite, Int>()
-        mainSourceFiles().forEach { file ->
+        SourceRoots.kotlinFiles().forEach { file ->
             val lines = codeLines(file)
             COOKIE_BYTE_ACCESSORS.forEach { (accessor, spec) ->
                 val count = lines.sumOf { spec.pattern.findAll(it).count() }
-                if (count > 0) out[CarrierSite(relativePath(file), accessor)] = count
+                if (count > 0) out[CarrierSite(SourceRoots.relativePath(file), accessor)] = count
             }
         }
         return out
@@ -264,31 +266,6 @@ class CookieCarrierInventoryTest {
      */
     private fun isBlockCommentContinuation(trimmed: String): Boolean = trimmed == "*" || trimmed.startsWith("* ") || trimmed.startsWith("*\t") || trimmed.startsWith("*/")
 
-    private fun mainSourceFiles(): List<File> =
-        mainSourceRoot()
-            .walkTopDown()
-            .filter { it.isFile && it.extension == "kt" }
-            .toList()
-
-    private fun sourceFile(relativePath: String): File = File(mainSourceRoot(), relativePath)
-
-    private fun relativePath(file: File): String = file.relativeTo(mainSourceRoot()).invariantSeparatorsPath
-
-    // Resolved from the Gradle test working directory, then by walking up. If it cannot be found the
-    // test FAILS — it is never weakened into a skip.
-    private fun mainSourceRoot(): File {
-        var candidate: File? = File(System.getProperty("user.dir")).absoluteFile
-        while (candidate != null) {
-            val root = File(candidate, MAIN_SOURCE_ROOT)
-            if (root.isDirectory) return root
-            candidate = candidate.parentFile
-        }
-        throw AssertionError(
-            "could not resolve $MAIN_SOURCE_ROOT from user.dir=${System.getProperty("user.dir")}. " +
-                "Resolve the path rather than weakening this test into a skip.",
-        )
-    }
-
     /** One measured call site class: a file plus the accessor it calls. */
     private data class CarrierSite(
         val path: String,
@@ -305,8 +282,6 @@ class CookieCarrierInventoryTest {
     )
 
     private companion object {
-        const val MAIN_SOURCE_ROOT = "src/main/kotlin"
-
         // Measured at 172 .kt files when CookieHeaderRuleOwnershipTest was written; re-measured above
         // that here. The floor catches a walk that reaches nothing, not the file count.
         const val MIN_EXPECTED_MAIN_FILES = 150

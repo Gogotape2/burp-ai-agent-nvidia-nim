@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.redact
 
+import com.six2dez.burp.aiagent.SourceRoots
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -7,7 +8,6 @@ import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
-import java.io.File
 
 /**
  * (PRIV-05) Phase 27 plan 27-10. THE BOUND FIRST, BEFORE ANY ASSERTION — read this before quoting
@@ -158,7 +158,8 @@ class CookieHeaderNameWidthTest {
     @Test
     fun theCoveredSetIsReadFromRedactionSourceNotRetyped() {
         val declarations =
-            File(mainSourceRoot(), REDACTION_SOURCE)
+            SourceRoots
+                .file(REDACTION_SOURCE)
                 .readLines()
                 .filter { COOKIE_NAME_PART_DECLARATION.containsMatchIn(it) }
 
@@ -229,25 +230,7 @@ class CookieHeaderNameWidthTest {
         return Redaction.apply(blob, RedactionPolicy.fromMode(mode), stableHostSalt = WIDTH_HOST_SALT)
     }
 
-    // Resolved from the Gradle test working directory, then by walking up. If it cannot be found the
-    // test FAILS — it is never weakened into a skip. Copied from CookieHeaderRuleOwnershipTest, which
-    // is this repository's model for a source-state test.
-    private fun mainSourceRoot(): File {
-        var candidate: File? = File(System.getProperty("user.dir")).absoluteFile
-        while (candidate != null) {
-            val root = File(candidate, MAIN_SOURCE_ROOT)
-            if (root.isDirectory) return root
-            candidate = candidate.parentFile
-        }
-        throw AssertionError(
-            "could not resolve $MAIN_SOURCE_ROOT from user.dir=${System.getProperty("user.dir")}. " +
-                "Resolve the path (for example from a system property set in build.gradle.kts) rather " +
-                "than weakening this test into a skip.",
-        )
-    }
-
     private companion object {
-        const val MAIN_SOURCE_ROOT = "src/main/kotlin"
         const val REDACTION_SOURCE = "com/six2dez/burp/aiagent/redact/Redaction.kt"
         const val WIDTH_HOST_SALT = "phase-27-plan-10-width-salt"
 
