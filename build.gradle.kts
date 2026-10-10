@@ -177,24 +177,6 @@ tasks.jar {
     enabled = false
 }
 
-tasks.shadowJar {
-    if (storeBuild) {
-        archiveBaseName.set("Custom-AI-Agent")
-    } else {
-        archiveBaseName.set("Custom-AI-Agent-full")
-    }
-    archiveClassifier.set("")
-    mergeServiceFiles()
-    isZip64 = true
-
-    // Shadow JAR should include all runtime dependencies
-    configurations = listOf(project.configurations.runtimeClasspath.get())
-}
-
-tasks.build {
-    dependsOn(tasks.shadowJar)
-}
-
 // Phase 29 / BUILD-02 (D-04): one explicit Shadow task per flavor. A registered ShadowJar task does
 // NOT inherit the excludes the Shadow plugin applies to `shadowJar` alone, and a signed dependency's
 // .SF/.DSA/.RSA left in a fat JAR makes Burp reject it ("Invalid signature file digest"), so both tasks
@@ -228,19 +210,29 @@ val fullJar by tasks.registering(ShadowJar::class) {
     isZip64 = true
 }
 
-tasks.test {
-    useJUnitPlatform()
-    jvmArgs("-ea", "-Djava.awt.headless=true") // Enable JVM assertions so EDT assert() fires in CI (REL-01 SC1 gate)
-    // The headless flag above serves the Phase 22 SC4 harness (ChatPanelTestHarness), which
-    // constructs a REAL ChatPanel and drives its REAL Send button. ubuntu-latest is headless anyway;
-    // forcing the flag makes a developer Mac behave identically instead of silently taking the
-    // windowed path and hiding a CI-only failure.
-    // The generated BuildFlags.STORE_BUILD offers no other seam a test can compare against, so
-    // McpBuildFlagsVersionTest used to assert a literal false — which made `-PstoreBuild=true`, the
-    // BApp Store artifact build path, fail its own test suite. Passing the already-resolved
-    // `storeBuild` Boolean (configuration-cache-safe, exactly as tasks.shadowJar consumes it) lets
-    // the test assert that the generated constant tracks the Gradle property under either build.
-    systemProperty("storeBuild.expected", storeBuild.toString())
+// Phase 29 / BUILD-02: a bare `./gradlew shadowJar` used to build the full flavor silently, so a
+// default BuildCommand would have published the non-compliant JAR. It now refuses to run and names
+// the two flavor tasks instead. The action references no `project` state (configuration cache), and
+// the task is never cached or up-to-date, so no earlier output can be restored in place of the error.
+tasks.shadowJar {
+    outputs.cacheIf { false }
+    outputs.upToDateWhen { false }
+    doFirst {
+        throw GradleException(
+            "shadowJar is retired. Use ./gradlew bappJar (BApp Store build) or ./gradlew fullJar (GitHub full build).",
+        )
+    }
+}
+
+tasks.build {
+    dependsOn(bappJar, fullJar)
+}
+
+// Files the tests read from disk at runtime, declared as inputs of BOTH test suites (`test` and
+// `fullTest`). Gradle cannot infer a file a test opens by path, so without these declarations an edit
+// that changes only source text or a document leaves the cache key unchanged and the guard reading it
+// is served from cache, in exactly the commit it exists to catch.
+fun Test.declareStructuralInputs() {
     // SEC-06 / SC1: DecisionsAdrTest reads these two files from disk at runtime rather than from the
     // compiled classpath, so Gradle cannot infer them. Without declaring them, a change to EITHER is
     // invisible to the up-to-date check and the build cache — and a commit that edits only DECISIONS.md,
@@ -357,17 +349,34 @@ tasks.test {
     // This is the first `inputs.dir` in this build and it deliberately supersedes per-file entries for
     // every Phase 24 structural assertion: REL-06-D here, REL-07-D and REL-07-F on CliBackend.kt, and
     // REL-07-G on App.kt / ActiveAiScanner.kt / AgentSupervisor.kt. Accepted cost: `tasks.test` re-runs
-    // on any main-source edit. The defect it prevents is the measured 22-09 one recorded at :170-176 —
+    // on any main-source edit. The defect it prevents is the measured 22-09 one recorded with the DECISIONS.md declaration above —
     // mutating source text without changing bytecode yields an identical cache key, so the guard is
     // served from cache in exactly the commit that breaks it.
     inputs
         .dir("src/main/kotlin")
         .withPropertyName("mainSourceTreeStructuralInputs")
         .withPathSensitivity(PathSensitivity.RELATIVE)
-    val excludeHeavyTests =
-        (project.findProperty("excludeHeavyTests") as? String)
-            ?.trim()
-            ?.equals("true", ignoreCase = true) == true
+    // Phase 29: the structural guards that walk the source tree must keep guarding code that moved into
+    // src/full, and BappManifestTest reads BappManifest.bmf from disk. Same 22-09 stale-cache defect as
+    // every declaration above: a text-only edit to either produces identical compiled output.
+    inputs
+        .dir("src/full/kotlin")
+        .withPropertyName("fullSourceTreeStructuralInputs")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+    inputs
+        .file("BappManifest.bmf")
+        .withPropertyName("bappManifest")
+        .withPathSensitivity(PathSensitivity.RELATIVE)
+}
+
+// -PexcludeHeavyTests=true (the fast PR gate) drops the heavy suites from BOTH test tasks; they still
+// run in nightlyRegressionTest / nightlyRegressionFullTest.
+val excludeHeavyTests =
+    (project.findProperty("excludeHeavyTests") as? String)
+        ?.trim()
+        ?.equals("true", ignoreCase = true) == true
+
+fun Test.excludeHeavyTestsIfRequested() {
     if (excludeHeavyTests) {
         filter {
             excludeTestsMatching("*IntegrationTest")
@@ -377,6 +386,23 @@ tasks.test {
             excludeTestsMatching("*SupervisionTest") // WR-03: 30s coerced-timeout floor — excluded from fast PR gate
         }
     }
+}
+
+tasks.test {
+    useJUnitPlatform()
+    jvmArgs("-ea", "-Djava.awt.headless=true") // Enable JVM assertions so EDT assert() fires in CI (REL-01 SC1 gate)
+    // The headless flag above serves the Phase 22 SC4 harness (ChatPanelTestHarness), which
+    // constructs a REAL ChatPanel and drives its REAL Send button. ubuntu-latest is headless anyway;
+    // forcing the flag makes a developer Mac behave identically instead of silently taking the
+    // windowed path and hiding a CI-only failure.
+    // The generated BuildFlags.STORE_BUILD offers no other seam a test can compare against, so
+    // McpBuildFlagsVersionTest used to assert a literal false — which made `-PstoreBuild=true`, the
+    // BApp Store artifact build path, fail its own test suite. Passing the already-resolved
+    // `storeBuild` Boolean (configuration-cache-safe, exactly as generateBuildFlags consumes it) lets
+    // the test assert that the generated constant tracks the Gradle property under either build.
+    systemProperty("storeBuild.expected", storeBuild.toString())
+    declareStructuralInputs()
+    excludeHeavyTestsIfRequested()
 }
 
 // REL-05 / SC1 / S-10: `tasks.test` above enables `-ea`, so a green McpToolExecutorEdtGuardTest there
@@ -419,6 +445,8 @@ val fullTest =
         classpath = fullTestSourceSet.runtimeClasspath
         jvmArgs("-ea", "-Djava.awt.headless=true")
         systemProperty("storeBuild.expected", storeBuild.toString())
+        declareStructuralInputs()
+        excludeHeavyTestsIfRequested()
     }
 
 tasks.register<Test>("nightlyRegressionTest") {
@@ -431,6 +459,24 @@ tasks.register<Test>("nightlyRegressionTest") {
         includeTestsMatching("*BackpressureTest")
         includeTestsMatching("*RestartPolicyTest")
         includeTestsMatching("*SupervisionTest") // WR-03: still runs in nightly regression
+    }
+}
+
+// Phase 29 (Pitfall 14): the heavy suites that live in src/fullTest get their own nightly pass on the
+// fullTest classpath. The two classpaths are never merged into one task.
+tasks.register<Test>("nightlyRegressionFullTest") {
+    description = "Runs the full-flavor integration, concurrency, and resilience suites intended for nightly validation."
+    group = "verification"
+    useJUnitPlatform()
+    testClassesDirs = fullTestSourceSet.output.classesDirs
+    classpath = fullTestSourceSet.runtimeClasspath
+    jvmArgs("-ea", "-Djava.awt.headless=true")
+    filter {
+        includeTestsMatching("*IntegrationTest")
+        includeTestsMatching("*ConcurrencyTest")
+        includeTestsMatching("*BackpressureTest")
+        includeTestsMatching("*RestartPolicyTest")
+        includeTestsMatching("*SupervisionTest")
     }
 }
 
@@ -458,6 +504,9 @@ detekt {
     baseline = file("detekt-baseline.xml") // committed baseline; generate with: ./gradlew detektBaseline
     parallel = true
     config.setFrom(files("detekt.yml")) // project-specific overrides
+    // Phase 29 (Pitfall 8): detekt's default source is src/main + src/test only, so code in the full
+    // flavor would go unchecked. Both flavors' sources and tests are analyzed against one baseline.
+    source.setFrom(files("src/main/kotlin", "src/test/kotlin", "src/full/kotlin", "src/fullTest/kotlin"))
 }
 
 // Only `test` is finalized by the coverage report. The report reads the execution data of `test` and
@@ -469,10 +518,26 @@ tasks.test {
     finalizedBy(tasks.named("jacocoTestReport"))
 }
 
+// Phase 29 (Pitfall 5, D-16): the floors measure BOTH flavors. Code that moves from src/main into
+// src/full keeps being counted only if the report and the verification read main + full classes and the
+// execution data of both `test` and `fullTest`. JaCoCo's defaults are main classes and `test` data alone,
+// under which a moved package would vanish from the report and its PACKAGE / SOURCEFILE rule would pass
+// vacuously. The defaults are cleared and set explicitly so no input is counted twice.
+fun JacocoReportBase.measureBothFlavors() {
+    executionData.setFrom()
+    executionData(tasks.test.get(), fullTest.get())
+    classDirectories.setFrom()
+    sourceDirectories.setFrom()
+    sourceSets(sourceSets.main.get(), fullSourceSet)
+}
+
 tasks.named<JacocoReport>("jacocoTestReport") {
     // Kept on purpose: Gradle's JaCoCo plugin does not make the report depend on `test`, so without
     // this line the two floor tasks run on their own (as CI does) would verify stale or absent data.
-    dependsOn(tasks.named("test"))
+    // It depends on `fullTest` too, which is why `./gradlew test` runs both suites: the report that
+    // finalizes `test` needs the full suite's execution data.
+    dependsOn(tasks.named("test"), fullTest)
+    measureBothFlavors()
     reports {
         xml.required.set(true)
         html.required.set(true)
@@ -544,6 +609,7 @@ tasks.named<JacocoCoverageVerification>("jacocoTestCoverageVerification") {
     // relying on that ordering would leave this task reading whatever exec data happened to be on disk.
     // Depend on the report explicitly so the verification cannot run against a stale or absent one.
     dependsOn(tasks.named<JacocoReport>("jacocoTestReport"))
+    measureBothFlavors()
     violationRules {
         rule {
             // floor 13 - project-wide line >= 57.0%
@@ -656,12 +722,15 @@ val jacocoMcpTreeCoverageVerification =
     }
 
 tasks.named("check") {
+    dependsOn(fullTest)
     dependsOn(tasks.named("jacocoTestCoverageVerification"))
     dependsOn(jacocoMcpTreeCoverageVerification)
 }
 
 tasks.named<org.cyclonedx.gradle.CycloneDxTask>("cyclonedxBom") {
-    includeConfigs.set(listOf("runtimeClasspath"))
+    // The release workflow ships the full JAR, so the SBOM describes the full runtime classpath (a
+    // superset of the store one). Phase 30 revisits this with the dual-JAR release.
+    includeConfigs.set(listOf("fullRuntimeClasspath"))
     outputFormat.set("json")
     outputName.set("bom")
     destination.set(
