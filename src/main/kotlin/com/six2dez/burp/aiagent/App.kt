@@ -26,6 +26,9 @@ import com.six2dez.burp.aiagent.scanner.AiPassiveScanCheck
 import com.six2dez.burp.aiagent.scanner.AiScanCheck
 import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
 import com.six2dez.burp.aiagent.scanner.applyOptimizationSettings
+import com.six2dez.burp.aiagent.spi.FlavorProfile
+import com.six2dez.burp.aiagent.spi.Plugins
+import com.six2dez.burp.aiagent.spi.StoreFlavorProfile
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.MainTab
 import com.six2dez.burp.aiagent.ui.UiActions
@@ -81,7 +84,15 @@ object App {
 
     fun initialize(montoyaApi: MontoyaApi) {
         api = montoyaApi
-        api.extension().setName("Custom AI Agent")
+        registerExtensionIdentity(
+            api,
+            resolveFlavorProfile { providers ->
+                api.logging().logToError(
+                    "More than one FlavorProfile provider found (${providers.joinToString(", ")}); " +
+                        "using the BApp Store default.",
+                )
+            },
+        )
 
         BackendDiagnostics.output = { api.logging().logToOutput(it) }
         BackendDiagnostics.error = { api.logging().logToError(it) }
@@ -185,7 +196,7 @@ object App {
 
         val ui = MainTab(api, settingsRepo, backendRegistry, supervisor, auditLogger, mcpSupervisor, passiveAiScanner, activeAiScanner, aiRequestLogger)
         mainTab = ui
-        api.userInterface().registerSuiteTab("Custom AI Agent", ui.root)
+        api.userInterface().registerSuiteTab(EXTENSION_NAME, ui.root)
 
         // Context menu: requests/responses (all editions)
         api.userInterface().registerContextMenuItemsProvider(
@@ -343,6 +354,34 @@ object App {
             api.logging().logToError("$component shutdown failed: ${e.message}")
         }
     }
+}
+
+/**
+ * Phase 29 / BUILD-03 (D-04 amended) — the Burp extension name, identical in both flavors.
+ *
+ * Burp keys an extension's preferences node by this name, so one name means one node: the full build
+ * keeps reading the settings and encrypted secrets an earlier install wrote. Byte-exact on purpose
+ * (15 characters, no surrounding whitespace), pinned by ExtensionNameTest and FullExtensionNameTest.
+ */
+const val EXTENSION_NAME = "Custom AI Agent"
+
+/**
+ * Phase 29 — the running flavor's [FlavorProfile]: the full build's provider when its services file is
+ * on the classpath, otherwise the core [StoreFlavorProfile]. More than one provider falls back to the
+ * store default after [onConflict] receives the provider class names.
+ */
+internal fun resolveFlavorProfile(onConflict: (List<String>) -> Unit = {}): FlavorProfile = Plugins.single(FlavorProfile::class.java, onConflict) ?: StoreFlavorProfile()
+
+/**
+ * Phase 29 — the ONLY place the extension names itself to Burp. The name is [EXTENSION_NAME] in every
+ * flavor; [profile] only labels the load banner so the Output tab says which build is running.
+ */
+internal fun registerExtensionIdentity(
+    api: MontoyaApi,
+    profile: FlavorProfile,
+) {
+    api.extension().setName(EXTENSION_NAME)
+    api.logging().logToOutput("$EXTENSION_NAME ${BuildFlags.VERSION} (${profile.label})")
 }
 
 /**

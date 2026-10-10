@@ -1,3 +1,4 @@
+import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
@@ -120,7 +121,48 @@ val generateBuildFlags by tasks.registering(GenerateBuildFlagsTask::class) {
 sourceSets.main {
     // Pass the task's own outputDir through the TaskProvider — Gradle infers the dependency
     // for any task consuming this source directory (including runKtlintCheckOverMainSourceSet).
+    // Main ONLY: the `full` source set sees BuildFlags through main's output, so adding the
+    // generated directory there too would compile a second BuildFlags class into the full JAR.
     kotlin.srcDir(generateBuildFlags.flatMap { it.outputDir })
+}
+
+// Phase 29 / BUILD-01 (D-01, D-16): two flavors from two source sets. `src/main` is the core that
+// both JARs carry and the ONLY input of the BApp Store JAR; `src/full` holds what ships in the GitHub
+// build alone. `src/test` keeps its default classpath (main only), which is the compile-time proof that
+// core code and store tests never reference a full-only class. `src/fullTest` sees all three outputs so
+// full tests reuse TestSettings and the test rigs. Store and full classpaths are never merged in one
+// Test task: store tests must never run with `full` on the classpath.
+val fullSourceSet =
+    sourceSets.create("full") {
+        compileClasspath += sourceSets.main.get().output
+        runtimeClasspath += sourceSets.main.get().output
+    }
+val fullTestSourceSet =
+    sourceSets.create("fullTest") {
+        compileClasspath += sourceSets.main.get().output + fullSourceSet.output + sourceSets.test.get().output
+        runtimeClasspath += sourceSets.main.get().output + fullSourceSet.output + sourceSets.test.get().output
+    }
+configurations["fullImplementation"].extendsFrom(configurations.implementation.get())
+// Montoya stays compileOnly in the full flavor too: Burp provides it at runtime.
+configurations["fullCompileOnly"].extendsFrom(configurations.compileOnly.get())
+configurations["fullRuntimeOnly"].extendsFrom(configurations.runtimeOnly.get())
+configurations["fullTestImplementation"].extendsFrom(
+    configurations["fullImplementation"],
+    configurations.testImplementation.get(),
+)
+configurations["fullTestRuntimeOnly"].extendsFrom(
+    configurations["fullRuntimeOnly"],
+    configurations.testRuntimeOnly.get(),
+)
+
+kotlin {
+    // Association lets src/full see main's `internal` API (much of mcp/tools is internal) and lets
+    // src/fullTest reuse the internal test helpers in src/test.
+    val compilations = target.compilations
+    compilations.getByName("full").associateWith(compilations.getByName("main"))
+    compilations.getByName("fullTest").associateWith(compilations.getByName("main"))
+    compilations.getByName("fullTest").associateWith(compilations.getByName("full"))
+    compilations.getByName("fullTest").associateWith(compilations.getByName("test"))
 }
 
 tasks.withType<KotlinCompile> {
@@ -151,6 +193,39 @@ tasks.shadowJar {
 
 tasks.build {
     dependsOn(tasks.shadowJar)
+}
+
+// Phase 29 / BUILD-02 (D-04): one explicit Shadow task per flavor. A registered ShadowJar task does
+// NOT inherit the excludes the Shadow plugin applies to `shadowJar` alone, and a signed dependency's
+// .SF/.DSA/.RSA left in a fat JAR makes Burp reject it ("Invalid signature file digest"), so both tasks
+// repeat them.
+val shadowDefaultExcludes =
+    arrayOf("META-INF/INDEX.LIST", "META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "module-info.class")
+
+val bappJar by tasks.registering(ShadowJar::class) {
+    group = "build"
+    description = "Builds the BApp Store JAR from src/main only."
+    // The EntryPoint contract in BappManifest.bmf. This is the ONLY place the store file name appears in
+    // the build script (pinned by BappManifestTest): no other task may write a file under this name.
+    archiveFileName.set("custom-ai-agent-bapp.jar")
+    from(sourceSets.main.get().output)
+    configurations = listOf(project.configurations.runtimeClasspath.get())
+    mergeServiceFiles()
+    exclude(*shadowDefaultExcludes)
+    isZip64 = true
+}
+
+val fullJar by tasks.registering(ShadowJar::class) {
+    group = "build"
+    description = "Builds the GitHub full JAR from src/main + src/full."
+    archiveBaseName.set("Custom-AI-Agent-full")
+    archiveClassifier.set("")
+    from(sourceSets.main.get().output, fullSourceSet.output)
+    configurations = listOf(project.configurations["fullRuntimeClasspath"])
+    // Merges the core and full META-INF/services files for the same SPI into one.
+    mergeServiceFiles()
+    exclude(*shadowDefaultExcludes)
+    isZip64 = true
 }
 
 tasks.test {
@@ -332,6 +407,19 @@ tasks.register<Test>("edtGuardWithoutAssertionsTest") {
         includeTestsMatching("*McpToolExecutorEdtGuardTest")
     }
 }
+
+// Phase 29 / D-16: the full flavor's own suite. It runs on the fullTest classpath (main + full + test
+// outputs) and never shares a Test task with `test`, whose classpath must stay store-only.
+val fullTest =
+    tasks.register<Test>("fullTest") {
+        description = "Runs the full-flavor test suite (src/fullTest) against main + full."
+        group = "verification"
+        useJUnitPlatform()
+        testClassesDirs = fullTestSourceSet.output.classesDirs
+        classpath = fullTestSourceSet.runtimeClasspath
+        jvmArgs("-ea", "-Djava.awt.headless=true")
+        systemProperty("storeBuild.expected", storeBuild.toString())
+    }
 
 tasks.register<Test>("nightlyRegressionTest") {
     description = "Runs integration, concurrency, and resilience suites intended for nightly validation."
