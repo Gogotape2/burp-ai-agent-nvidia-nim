@@ -8,33 +8,38 @@ import com.six2dez.burp.aiagent.mcp.McpToolContext
 import com.six2dez.burp.aiagent.mcp.ToolCallOrigin
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Answers
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 
+/**
+ * Phase 29 / D-13 — the catalog and the dispatch are the same registry, so every catalog entry must
+ * resolve to exactly one handler carrying that very descriptor, and every handler must publish an
+ * input schema. Before the registry this compared the catalog against a separate registration list.
+ */
 class McpToolParityTest {
     @Test
-    fun registeredToolIds_matchCatalog() {
-        val catalogIds = McpToolCatalog.all().map { it.id }.toSet()
-        val registered = McpToolRegistrations.allIds()
-        assertEquals(catalogIds, registered)
+    fun everyCatalogDescriptorHasExactlyOneHandler() {
+        val descriptors = McpToolCatalog.all()
+        val ids = descriptors.map { it.id }
+        assertEquals(ids.size, ids.toSet().size, "the catalog lists a tool id twice: $ids")
+        descriptors.forEach { descriptor ->
+            val handler = McpToolCatalog.registry.handler(descriptor.id)
+            assertNotNull(handler, "no handler is registered for ${descriptor.id}")
+            assertEquals(descriptor, handler!!.descriptor, "the handler for ${descriptor.id} carries a different descriptor")
+        }
     }
 
     @Test
-    fun inputSchema_mapping_coversCatalogTools() {
-        val noArgTools =
-            setOf(
-                "status",
-                "editor_get",
-                "project_options_get",
-                "user_options_get",
-                "ai_backends_list",
-            )
+    fun everyHandlerPublishesAnInputSchemaUnlessItIsDeclaredNoArg() {
         McpToolCatalog.all().forEach { descriptor ->
-            val schema = McpToolExecutor.inputSchema(descriptor.id)
-            if (!noArgTools.contains(descriptor.id)) {
+            val handler = McpToolCatalog.registry.handler(descriptor.id)
+            assertNotNull(handler, "no handler is registered for ${descriptor.id}")
+            val schema = handler!!.inputSchema(null)
+            if (descriptor.id !in NO_ARG_TOOLS) {
                 assertTrue(schema.properties.isNotEmpty(), "Missing schema mapping for ${descriptor.id}")
             }
         }
@@ -67,5 +72,16 @@ class McpToolParityTest {
 
         assertEquals("Unknown tool: missing_tool", text)
         assertTrue(result.isError == true)
+    }
+
+    private companion object {
+        val NO_ARG_TOOLS =
+            setOf(
+                "status",
+                "editor_get",
+                "project_options_get",
+                "user_options_get",
+                "ai_backends_list",
+            )
     }
 }

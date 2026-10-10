@@ -1,6 +1,10 @@
 package com.six2dez.burp.aiagent.mcp
 
 import com.six2dez.burp.aiagent.BuildFlags
+import com.six2dez.burp.aiagent.mcp.tools.NativeToolProvider
+import com.six2dez.burp.aiagent.mcp.tools.ToolRegistry
+import com.six2dez.burp.aiagent.spi.Plugins
+import com.six2dez.burp.aiagent.spi.ToolProvider
 
 /**
  * SEC-06 trust tier for a catalog tool: how much human authorisation one model-emitted invocation
@@ -47,6 +51,11 @@ data class McpToolDescriptor(
 )
 
 object McpToolCatalog {
+    // RED scaffolding: the registry exists but the catalog still reads its own list.
+    internal val registry: ToolRegistry by lazy { ToolRegistry(listOf(NativeToolProvider()) + Plugins.load(ToolProvider::class.java)) }
+
+    fun coreToolIds(): Set<String> = registry.coreToolIds()
+
     private val tools =
         listOf(
             McpToolDescriptor(
