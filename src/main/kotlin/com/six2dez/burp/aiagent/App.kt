@@ -24,8 +24,10 @@ import com.six2dez.burp.aiagent.scanner.AiPassiveScanCheck
 import com.six2dez.burp.aiagent.scanner.AiScanCheck
 import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
 import com.six2dez.burp.aiagent.scanner.applyOptimizationSettings
+import com.six2dez.burp.aiagent.spi.AiAccessPolicy
 import com.six2dez.burp.aiagent.spi.FlavorProfile
 import com.six2dez.burp.aiagent.spi.Plugins
+import com.six2dez.burp.aiagent.spi.StoreAiAccessPolicy
 import com.six2dez.burp.aiagent.spi.StoreFlavorProfile
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.MainTab
@@ -332,6 +334,15 @@ const val EXTENSION_NAME = "Custom AI Agent"
  * store default after [onConflict] receives the provider class names.
  */
 internal fun resolveFlavorProfile(onConflict: (List<String>) -> Unit = {}): FlavorProfile = Plugins.single(FlavorProfile::class.java, onConflict) ?: StoreFlavorProfile()
+
+/**
+ * Phase 29 / BUILD-04 — the running flavor's [AiAccessPolicy]: the full build's provider when its
+ * services file is on the classpath, otherwise the strict core [StoreAiAccessPolicy]. More than one
+ * provider also resolves to [StoreAiAccessPolicy] after [onConflict] receives the provider class names,
+ * so a packaging error can only make the build stricter.
+ */
+internal fun resolveAiAccessPolicy(onConflict: (List<String>) -> Unit = {}): AiAccessPolicy =
+    Plugins.single(AiAccessPolicy::class.java, onConflict) ?: StoreAiAccessPolicy()
 
 /**
  * Phase 29 — the ONLY place the extension names itself to Burp. The name is [EXTENSION_NAME] in every
