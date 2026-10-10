@@ -98,7 +98,7 @@ internal object SourceRoots {
         }
 
         fun kotlinFiles(roots: List<String>): List<File> =
-            roots.take(1).flatMap { name ->
+            roots.flatMap { name ->
                 val dir = root(name)
                 val files = dir.walkTopDown().filter { it.isFile && it.extension == KOTLIN_EXTENSION }.toList()
                 if (files.isEmpty()) {
@@ -122,7 +122,7 @@ internal object SourceRoots {
             relativePath: String,
         ): File {
             val present = locate(roots, relativePath)
-            if (present.isNotEmpty()) return present.first()
+            if (present.size == 1) return present.single()
             val message =
                 if (present.isEmpty()) {
                     "`$relativePath` exists in none of the source roots $roots. Looked at: " +
