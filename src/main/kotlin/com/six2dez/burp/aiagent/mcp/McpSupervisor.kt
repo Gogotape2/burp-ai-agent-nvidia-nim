@@ -7,8 +7,10 @@ import com.six2dez.burp.aiagent.config.McpSettings
 import com.six2dez.burp.aiagent.mcp.tools.CollaboratorRegistry
 import com.six2dez.burp.aiagent.mcp.tools.ResponsePreprocessorSettings
 import com.six2dez.burp.aiagent.mcp.tools.ScannerTaskRegistry
+import com.six2dez.burp.aiagent.mcp.tools.ToolRegistry
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
+import com.six2dez.burp.aiagent.spi.PluginSettingsStore
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import java.net.BindException
 import java.net.HttpURLConnection
@@ -46,7 +48,9 @@ class McpSupervisor(
     private val maxTakeoverAttempts: Int = DEFAULT_MAX_TAKEOVER_ATTEMPTS,
     private val restartDelayMs: Long = DEFAULT_RESTART_DELAY_MS,
     private val takeoverRetryDelayMs: Long = DEFAULT_TAKEOVER_RETRY_DELAY_MS,
+    private val toolRegistry: () -> ToolRegistry = { McpToolCatalog.registry },
 ) {
+    private val pluginSettingsRef = AtomicReference<PluginSettingsStore?>(null)
     private val stateRef = AtomicReference<McpServerState>(McpServerState.Stopped)
     private val settingsRef = AtomicReference<McpSettings?>(null)
     private val privacyRef = AtomicReference(PrivacyMode.STRICT)
@@ -71,6 +75,10 @@ class McpSupervisor(
     fun setAiRequestLogger(logger: AiRequestLogger) {
         serverManager.setAiRequestLogger(logger)
         stdioBridge.setAiRequestLogger(logger)
+    }
+
+    fun setPluginSettings(store: PluginSettingsStore) {
+        pluginSettingsRef.set(store)
     }
 
     fun setAiToolDependencies(

@@ -29,6 +29,7 @@ import io.modelcontextprotocol.kotlin.sdk.Tool
 class ToolRegistry(
     providers: List<ToolProvider>,
 ) {
+    private val orderedProviders: List<ToolProvider>
     private val handlersById: Map<String, ToolHandler>
     private val aliasTable: Map<String, String>
     private val coreIds: Set<String>
@@ -37,6 +38,7 @@ class ToolRegistry(
     init {
         val (core, plugins) = providers.partition { it is NativeToolProvider }
         val ordered = core + plugins.sortedBy { it.javaClass.name }
+        orderedProviders = ordered
         val owners = LinkedHashMap<String, ToolProvider>()
         val handlers = LinkedHashMap<String, ToolHandler>()
         ordered.forEach { provider -> provider.handlers().forEach { register(it, provider, owners, handlers) } }
@@ -50,6 +52,9 @@ class ToolRegistry(
     fun descriptors(): List<McpToolDescriptor> = orderedDescriptors
 
     fun handler(id: String): ToolHandler? = handlersById[id]
+
+    /** Every provider, in registry order: the native tools first, then the others by class name. */
+    fun providers(): List<ToolProvider> = orderedProviders
 
     /** Trimmed, lower-cased alias lookup; anything that is not an alias comes back verbatim. */
     fun canonicalId(raw: String): String = aliasTable[raw.trim().lowercase()] ?: raw

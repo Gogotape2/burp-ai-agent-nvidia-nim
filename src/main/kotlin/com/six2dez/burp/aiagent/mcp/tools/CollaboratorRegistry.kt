@@ -72,6 +72,8 @@ object CollaboratorRegistry {
         ttlMs.set(milliseconds.coerceAtLeast(1L))
     }
 
+    internal fun ttlMillisForTests(): Long = ttlMs.get()
+
     private fun cleanupExpired() {
         val now = System.currentTimeMillis()
         var removed = 0
