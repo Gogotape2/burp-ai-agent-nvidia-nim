@@ -7,13 +7,15 @@ import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-/** Real catalog IDs, not invented names, so every row below exercises the shipped tier table. */
-private const val AUTO_TOOL = "scope_check"
-private const val CONFIRM_TOOL = "proxy_http_history"
-private const val CONFIRM_EACH_TOOL = "http1_request"
-
-/** One of the ten aliases McpToolExecutor.canonicalToolId collapses onto [CONFIRM_TOOL]. */
-private const val CONFIRM_TOOL_ALIAS = "history"
+/**
+ * Real catalog IDs, not invented names, so every row below exercises the shipped tier table.
+ *
+ * Phase 29 (D-16): native tools (NativeTools.kt), so the store build, which ships only those, runs
+ * every row. The alias rows need the generic provider's alias table and run in FullToolApprovalGateTest.
+ */
+private const val AUTO_TOOL = "status"
+private const val CONFIRM_TOOL = "issue_create"
+private const val CONFIRM_EACH_TOOL = "ai_analyze"
 
 /**
  * Mirrors `ChatPanel.MAX_AUTO_TOOL_ITERATIONS`. Every expectation below is DERIVED from
@@ -310,15 +312,14 @@ class ToolApprovalGateTest {
 
         ToolApprovalGate.resolve(CONFIRM_TOOL, memoryA, ToolDecision.APPROVE_SESSION)
 
-        val aliased = ToolApprovalGate.evaluate(CONFIRM_TOOL_ALIAS, memoryA)
-
+        // Phase 29 (D-16): the alias clause needs the generic provider's alias table (native tools
+        // declare no aliases) and runs verbatim in FullToolApprovalGateTest. The grant still covers the
+        // canonical id itself.
         val run =
             assertInstanceOf(
                 ToolApprovalOutcome.Run::class.java,
-                aliased,
-                "The alias '$CONFIRM_TOOL_ALIAS' canonicalises to '$CONFIRM_TOOL', so the session grant " +
-                    "must cover it. A gate keyed on the raw model string would re-prompt for a tool the " +
-                    "user already approved, and approve a tool it thinks is different (T-22-12).",
+                ToolApprovalGate.evaluate(CONFIRM_TOOL, memoryA),
+                "The session grant must cover the next call to '$CONFIRM_TOOL'.",
             )
         assertEquals(ToolDecision.SESSION_APPROVED, run.decision)
 
@@ -338,12 +339,8 @@ class ToolApprovalGateTest {
 
         assertEquals(1, memory.recordRequest(CONFIRM_TOOL), "The first request is the 1st, not the 0th.")
         assertEquals(2, memory.recordRequest(CONFIRM_TOOL))
-        assertEquals(
-            3,
-            memory.recordRequest(CONFIRM_TOOL_ALIAS),
-            "An alias must increment its canonical tool's counter. Two counters for one tool would let " +
-                "the card read '1st' on the fourth request — the anti-habituation signal inverted.",
-        )
+        // Phase 29 (D-16): the alias-increments-its-canonical-counter clause needs the generic provider's
+        // alias table and runs verbatim in FullToolApprovalGateTest.
         assertEquals(1, memory.recordRequest(CONFIRM_EACH_TOOL), "A different tool counts separately.")
     }
 

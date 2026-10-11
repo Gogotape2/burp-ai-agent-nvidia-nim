@@ -1,6 +1,22 @@
 # detekt.yml — project-specific overrides on top of detekt defaults
 # This file is picked up by the detekt {} block in build.gradle.kts via config.setFrom(files("detekt.yml")).
 # All other rules use detekt's built-in defaults (buildUponDefaultConfig = true).
+#
+# Phase 29 (D-16): src/fullTest holds the full flavor's tests, but detekt's built-in test waivers match
+# only the default test roots (`**/test/**` and the Android/KMP ones). Every rule detekt 1.23.8 exempts
+# for tests by default is listed below with its default `excludes` repeated (an override REPLACES the
+# list) plus '**/fullTest/**', so a test keeps the same waivers whichever suite it lives in. No rule is
+# relaxed for production code.
+
+comments:
+  KDocReferencesNonPublicProperty:
+    excludes: ['**/test/**', '**/androidTest/**', '**/commonTest/**', '**/jvmTest/**', '**/androidUnitTest/**', '**/androidInstrumentedTest/**', '**/jsTest/**', '**/iosTest/**', '**/fullTest/**']
+  UndocumentedPublicClass:
+    excludes: ['**/test/**', '**/androidTest/**', '**/commonTest/**', '**/jvmTest/**', '**/androidUnitTest/**', '**/androidInstrumentedTest/**', '**/jsTest/**', '**/iosTest/**', '**/fullTest/**']
+  UndocumentedPublicFunction:
+    excludes: ['**/test/**', '**/androidTest/**', '**/commonTest/**', '**/jvmTest/**', '**/androidUnitTest/**', '**/androidInstrumentedTest/**', '**/jsTest/**', '**/iosTest/**', '**/fullTest/**']
+  UndocumentedPublicProperty:
+    excludes: ['**/test/**', '**/androidTest/**', '**/commonTest/**', '**/jvmTest/**', '**/androidUnitTest/**', '**/androidInstrumentedTest/**', '**/jsTest/**', '**/iosTest/**', '**/fullTest/**']
 
 complexity:
   LongMethod:
@@ -8,11 +24,37 @@ complexity:
   LongParameterList:
     functionThreshold: 10      # AgentSettings and backend constructors have many fields
     constructorThreshold: 10   # Use new property names (threshold is deprecated in 1.23.8)
+  StringLiteralDuplication:
+    excludes: ['**/test/**', '**/androidTest/**', '**/commonTest/**', '**/jvmTest/**', '**/androidUnitTest/**', '**/androidInstrumentedTest/**', '**/jsTest/**', '**/iosTest/**', '**/fullTest/**']
+  TooManyFunctions:
+    excludes: ['**/test/**', '**/androidTest/**', '**/commonTest/**', '**/jvmTest/**', '**/androidUnitTest/**', '**/androidInstrumentedTest/**', '**/jsTest/**', '**/iosTest/**', '**/fullTest/**']
+
+exceptions:
+  InstanceOfCheckForException:
+    excludes: ['**/test/**', '**/androidTest/**', '**/commonTest/**', '**/jvmTest/**', '**/androidUnitTest/**', '**/androidInstrumentedTest/**', '**/jsTest/**', '**/iosTest/**', '**/fullTest/**']
+  ThrowingExceptionsWithoutMessageOrCause:
+    excludes: ['**/test/**', '**/androidTest/**', '**/commonTest/**', '**/jvmTest/**', '**/androidUnitTest/**', '**/androidInstrumentedTest/**', '**/jsTest/**', '**/iosTest/**', '**/fullTest/**']
+  TooGenericExceptionCaught:
+    excludes: ['**/test/**', '**/androidTest/**', '**/commonTest/**', '**/jvmTest/**', '**/androidUnitTest/**', '**/androidInstrumentedTest/**', '**/jsTest/**', '**/iosTest/**', '**/fullTest/**']
+
+naming:
+  FunctionNaming:
+    excludes: ['**/test/**', '**/fullTest/**']
+
+performance:
+  ForEachOnRange:
+    excludes: ['**/test/**', '**/androidTest/**', '**/commonTest/**', '**/jvmTest/**', '**/androidUnitTest/**', '**/androidInstrumentedTest/**', '**/jsTest/**', '**/iosTest/**', '**/fullTest/**']
+  SpreadOperator:
+    excludes: ['**/test/**', '**/androidTest/**', '**/commonTest/**', '**/jvmTest/**', '**/androidUnitTest/**', '**/androidInstrumentedTest/**', '**/jsTest/**', '**/iosTest/**', '**/fullTest/**']
+
+potential-bugs:
+  LateinitUsage:
+    excludes: ['**/test/**', '**/androidTest/**', '**/commonTest/**', '**/jvmTest/**', '**/androidUnitTest/**', '**/androidInstrumentedTest/**', '**/jsTest/**', '**/iosTest/**', '**/fullTest/**']
+  UnsafeCallOnNullableType:
+    excludes: ['**/test/**', '**/androidTest/**', '**/commonTest/**', '**/jvmTest/**', '**/androidUnitTest/**', '**/androidInstrumentedTest/**', '**/jsTest/**', '**/iosTest/**', '**/fullTest/**']
 
 style:
   MaxLineLength:
     maxLineLength: 250         # Matches .editorconfig max_line_length; long string literals in ScannerIssueSupport/MarkdownRenderer are intentional
-
-naming:
-  FunctionNaming:
-    excludes: [ '**/test/**' ]
+  MagicNumber:
+    excludes: ['**/test/**', '**/androidTest/**', '**/commonTest/**', '**/jvmTest/**', '**/androidUnitTest/**', '**/androidInstrumentedTest/**', '**/jsTest/**', '**/iosTest/**', '**/*.kts', '**/fullTest/**']

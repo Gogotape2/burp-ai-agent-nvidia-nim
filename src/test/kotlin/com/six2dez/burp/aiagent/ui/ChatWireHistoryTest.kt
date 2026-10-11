@@ -140,7 +140,7 @@ class ChatWireHistoryTest {
      */
     @Test
     fun toolResultTurnsAreKeptAsSentAndOmittedOnceThePrivacyModeTightens() {
-        val toolCallReply = toolCall("scope_check", """{"url":"https://target.example/"}""")
+        val toolCallReply = toolCall("status", """{}""")
         val f =
             fixture(
                 Outcome.Reply(toolCallReply),
@@ -153,7 +153,7 @@ class ChatWireHistoryTest {
         ChatPanelTestHarness.sendUserMessage(f.h, "next question")
         ChatPanelTestHarness.drainEdt()
 
-        assertTrue(f.sent[1].text.contains("Tool result for scope_check:"), "sent[1] is the follow-up: ${f.sent[1].text}")
+        assertTrue(f.sent[1].text.contains("Tool result for status:"), "sent[1] is the follow-up: ${f.sent[1].text}")
         assertEquals(
             listOf(
                 ChatMessage("user", f.sent[0].text),
@@ -189,7 +189,7 @@ class ChatWireHistoryTest {
     @Test
     fun userOriginatedToolCommandsNeverMarkTheCatalogAsDelivered() {
         val f = fixture(Outcome.Reply("Reply one."))
-        val command = """/tool scope_check {"url":"https://target.example/"}"""
+        val command = """/tool status {}"""
         ChatPanelTestHarness.sendUserMessage(f.h, "/tools")
         ChatPanelTestHarness.sendUserMessage(f.h, command)
         ChatPanelTestHarness.awaitToolSettled(label = ChatPanelTestHarness.slashToolLabel(), count = 1)

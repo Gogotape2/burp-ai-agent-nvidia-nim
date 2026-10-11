@@ -1,6 +1,8 @@
 package com.six2dez.burp.aiagent.ui
 
-import burp.api.montoya.proxy.ProxyHttpRequestResponse
+import burp.api.montoya.internal.MontoyaObjectFactory
+import burp.api.montoya.internal.ObjectFactoryLocator
+import burp.api.montoya.scanner.audit.issues.AuditIssue
 import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.audit.Hashing
@@ -16,11 +18,13 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertTimeoutPreemptively
+import org.mockito.Answers
 import org.mockito.Mockito
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.atLeast
+import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
@@ -48,14 +52,20 @@ import javax.swing.SwingUtilities
  * `maybeExecuteToolCall` — it is executed.
  *
  * **This file is now the SC4 acceptance gate, landed in plan 22-07.** The gate assertion is
- * [confirmToolDoesNotReachBurpBeforeADecision]: a model-emitted `proxy_http_history` call — `CONFIRM`
- * in 22-02's locked tier table — must not reach `api.proxy().history()` before a click, and must raise
+ * [confirmToolDoesNotReachBurpBeforeADecision]: a model-emitted `issue_create` call — `CONFIRM`
+ * in 22-02's locked tier table — must not reach `api.siteMap().issues()` before a click, and must raise
  * an approval card instead. Both halves are red against the pre-gate commit and green after, which is
  * what makes the gate non-vacuous under the Phase 20 SC4 / Phase 21 rule: *a test that passes both
  * before and after the change has not tested the defect.*
  *
+ * **Phase 29 (D-16): the sample tools are native ones** (NativeTools.kt), so the store build, which
+ * ships only those, runs this whole gate. They replaced `proxy_http_history` (CONFIRM), `scope_check`
+ * (AUTO) and `http1_request` (CONFIRM_EACH) tier for tier. The CONFIRM probe is `siteMap().issues()`,
+ * the one Montoya call `issue_create` makes outside a `runCatching` (its proxy-history lookup swallows
+ * every throwable), so a double that throws or refuses there is seen by the run status.
+ *
  * **22-01's baseline assertion is NOT inverted and NOT deleted.** It survives as
- * [autoToolStillRunsWithNoCard]: `scope_check` is `SecTier.AUTO`, so it still runs silently by design
+ * [autoToolStillRunsWithNoCard]: `status` is `SecTier.AUTO`, so it still runs silently by design
  * after the gate ships. Inverting that line to `never()` would assert the opposite of the shipped
  * behaviour and go red forever. It passes both before and after **on purpose** — it is the `AUTO`
  * companion, never the gate.
@@ -70,7 +80,7 @@ class ChatPanelToolGateTest {
 
     @Test
     fun confirmToolDoesNotReachBurpBeforeADecision() {
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
 
         ChatPanelTestHarness.sendUserMessage(h, "summarise the proxy history")
         ChatPanelTestHarness.drainEdt()
@@ -82,7 +92,7 @@ class ChatPanelToolGateTest {
         // way round, a harness that never reached Burp at all would pass the never() check and fail
         // only on the card, which is trivially red pre-gate (no card type is wired in there at all)
         // and says nothing whatever about the defect.
-        verify(h.api.proxy(), never()).history()
+        verify(h.api.siteMap(), never()).issues()
         // REL-05 — THE HALF THE never() STOPPED WATCHING THE MOMENT THE DISPATCH BECAME ASYNCHRONOUS.
         // A bare never() now passes VACUOUSLY, and passes faster: the failure it exists to catch is a
         // worker that was dispatched and has not reached Burp yet, which is exactly the state in which
@@ -110,7 +120,7 @@ class ChatPanelToolGateTest {
     fun autoToolStillRunsWithNoCard() {
         // The exact fenced payload research measured reaching Burp. ToolCallParser.extractFirst
         // resolves the "tool" and "args" keys directly (ToolCallParser.kt:80-108).
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("scope_check", """{"url":"http://evil.example/"}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("status", """{}"""))
 
         ChatPanelTestHarness.sendUserMessage(h, "check scope please")
         val traceId = ChatPanelTestHarness.chainTraceId(h)
@@ -120,9 +130,10 @@ class ChatPanelToolGateTest {
         // inside later tests (measured: 7 of 8 outlived this test and satisfied the next two tests' awaits).
         ChatPanelTestHarness.awaitToolSettled(label = traceId, count = ChatPanel.MAX_AUTO_TOOL_ITERATIONS)
 
-        // D-02: scope_check is SecTier.AUTO, so the gate returns Run and the call still reaches Burp.
+        // D-02: status is SecTier.AUTO, so the gate returns Run and the call still reaches Burp.
         // Unchanged behaviour is the CORRECT result here, not a sign the gate is inert. Do not invert.
-        verify(h.api.scope(), Mockito.atLeastOnce()).isInScope("http://evil.example/")
+        // `version().name()` is read by the status tool body alone (buildToolContext reads edition()).
+        verify(h.api.burpSuite().version(), Mockito.atLeastOnce()).name()
         assertNull(
             ChatPanelTestHarness.findApprovalCard(h.panel.root),
             "An AUTO tool is read-only and bounded-output; there is nothing for a human to weigh (D-02).",
@@ -133,7 +144,7 @@ class ChatPanelToolGateTest {
 
     @Test
     fun approveOnceExecutesTheCall() {
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
         ChatPanelTestHarness.sendUserMessage(h, "summarise the proxy history")
         ChatPanelTestHarness.drainEdt()
         val card = requireNotNull(ChatPanelTestHarness.findApprovalCard(h.panel.root)) { NO_CARD }
@@ -143,7 +154,7 @@ class ChatPanelToolGateTest {
         // REL-05: replaces the post-click drain, which cannot see a daemon worker (see @BeforeEach).
         ChatPanelTestHarness.awaitToolSettled(label = traceId, count = 1)
 
-        verify(h.api.proxy(), times(1)).history()
+        verify(h.api.siteMap(), times(1)).issues()
         assertEquals(
             0,
             decisionButtons(card).size,
@@ -164,13 +175,13 @@ class ChatPanelToolGateTest {
      */
     @Test
     fun anApprovedToolThatThrowsStillDischargesTheParkedContinuation() {
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
         // Must be an Error, not an Exception. `McpTool.runTool` catches SerializationException and
         // Exception and turns both into an error RESULT, which executeApprovedToolCall reports as a
         // run with status "error" and then CHAINS — the branch that is not the defect. Only a Throwable
         // runTool does not catch escapes McpToolExecutor.executeTool into the runCatching in
         // executeApprovedToolCall, which is the reportFailedToolCall / NOT_CHAINED branch under test.
-        whenever(h.api.proxy().history()).thenThrow(InjectedToolFailure("proxy history exploded"))
+        whenever(h.api.siteMap().issues()).thenThrow(InjectedToolFailure("site map issues exploded"))
 
         ChatPanelTestHarness.sendUserMessage(h, "summarise the proxy history")
         ChatPanelTestHarness.drainEdt()
@@ -189,7 +200,7 @@ class ChatPanelToolGateTest {
         // discharged on the failure branch"; it says nothing at all unless the approved tool really ran
         // and really threw. A harness that raised no card, or a click that did nothing, would leave
         // `discharges` empty too — and would fail here instead, naming the actual breakage.
-        verify(h.api.proxy(), times(1)).history()
+        verify(h.api.siteMap(), times(1)).issues()
         // Exactly the one turn the user's own message started. A second would mean the tool did NOT
         // throw and executeApprovedToolCall chained a followup carrying onCompleted with it, in which
         // case this test is exercising the success path and proves nothing about T-22-31.
@@ -199,7 +210,7 @@ class ChatPanelToolGateTest {
         //
         // Selected by THIS chain's trace id, not by position or by tool name. `AuditLogger`'s emitter is
         // a global singleton, and an earlier test's panel is still alive with queued `invokeLater` work
-        // that this test's drain runs — measured: the `scope_check` AUTO chain lands three more
+        // that this test's drain runs — measured: the `status` AUTO chain lands three more
         // `mcp_tool_decision` events in here. The trace id is the one field that is this chain's alone.
         val decision =
             auditEvents.single { it.first == "mcp_tool_decision" && it.second["traceId"] == traceId }.second
@@ -221,7 +232,7 @@ class ChatPanelToolGateTest {
 
     @Test
     fun approveForSessionSuppressesTheNextCard() {
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
         ChatPanelTestHarness.sendUserMessage(h, "summarise the proxy history")
         ChatPanelTestHarness.drainEdt()
         val card = requireNotNull(ChatPanelTestHarness.findApprovalCard(h.panel.root)) { NO_CARD }
@@ -239,7 +250,7 @@ class ChatPanelToolGateTest {
         // repeat of the same tool runs straight through. `atLeast(2)` rather than a literal: the chain
         // keeps going until the monotone budget stops it, so the exact count is the budget's business,
         // not this test's. What matters is that a SECOND call ran without a second decision.
-        verify(h.api.proxy(), atLeast(2)).history()
+        verify(h.api.siteMap(), atLeast(2)).issues()
         assertTrue(
             decisionButtons(h.panel.root).isEmpty(),
             "A session grant must suppress the CARD, not just the prompt: no decision button may remain.",
@@ -248,7 +259,7 @@ class ChatPanelToolGateTest {
 
     @Test
     fun denyReturnsAResultThatLetsTheConversationContinue() {
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
         ChatPanelTestHarness.sendUserMessage(h, "summarise the proxy history")
         ChatPanelTestHarness.drainEdt()
         val card = requireNotNull(ChatPanelTestHarness.findApprovalCard(h.panel.root)) { NO_CARD }
@@ -259,7 +270,7 @@ class ChatPanelToolGateTest {
         click(card, "Deny")
         ChatPanelTestHarness.drainEdt()
 
-        verify(h.api.proxy(), never()).history()
+        verify(h.api.siteMap(), never()).issues()
         // REL-05: what a denial must produce is not merely "Burp not reached yet" but "no worker was
         // ever started". ToolApprovalOutcome.Denied routes to denyToolCall and never to
         // executeApprovedToolCall, so an entry here would mean the gate leaked.
@@ -284,7 +295,7 @@ class ChatPanelToolGateTest {
 
     @Test
     fun denyForSessionResolvesLaterCallsWithNoCard() {
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
         ChatPanelTestHarness.sendUserMessage(h, "summarise the proxy history")
         ChatPanelTestHarness.drainEdt()
         val card = requireNotNull(ChatPanelTestHarness.findApprovalCard(h.panel.root)) { NO_CARD }
@@ -306,14 +317,14 @@ class ChatPanelToolGateTest {
             ChatPanelTestHarness.dispatchedLabels().contains(traceId),
             "SEC-06: a session-denied chain must start no tool worker at all.",
         )
-        verify(h.api.proxy(), never()).history()
+        verify(h.api.siteMap(), never()).issues()
     }
 
     @Test
     fun confirmEachOffersOnlyTwoActions() {
-        // http1_request is SecTier.CONFIRM_EACH: one click must never hand the model unlimited
-        // traffic-generating capability for a whole chat (T-22-18).
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("http1_request", """{"content":"GET / HTTP/1.1"}"""))
+        // ai_analyze is SecTier.CONFIRM_EACH: one click must never hand the model unlimited
+        // capability for a whole chat (T-22-18).
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("ai_analyze", AI_ANALYZE_ARGS))
         ChatPanelTestHarness.sendUserMessage(h, "send that request")
         ChatPanelTestHarness.drainEdt()
         val card = requireNotNull(ChatPanelTestHarness.findApprovalCard(h.panel.root)) { NO_CARD }
@@ -341,9 +352,9 @@ class ChatPanelToolGateTest {
      */
     @Test
     fun anActionTheGateRefusesLeavesTheCardUsable() {
-        // http1_request is CONFIRM_EACH, which has no session memory in either direction — so
+        // ai_analyze is CONFIRM_EACH, which has no session memory in either direction — so
         // APPROVE_SESSION is exactly the caller bug resolve()'s second `require` rejects.
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("http1_request", """{"content":"GET / HTTP/1.1"}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("ai_analyze", AI_ANALYZE_ARGS))
         ChatPanelTestHarness.sendUserMessage(h, "send that request")
         ChatPanelTestHarness.drainEdt()
         val card = requireNotNull(liveApprovalCard(h.panel.root)) { NO_CARD }
@@ -407,9 +418,9 @@ class ChatPanelToolGateTest {
     fun slashCommandPathIsNotDoublePrompted() {
         // Deliberately a CONFIRM tool rather than an AUTO one: an AUTO tool raises no card either way,
         // so it could not tell a gated slash path from an ungated one.
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
 
-        ChatPanelTestHarness.sendUserMessage(h, """/tool proxy_http_history {"count":5}""")
+        ChatPanelTestHarness.sendUserMessage(h, """/tool issue_create $ISSUE_CREATE_ARGS""")
         // The `/tool` branch dispatches to a daemon worker (REL-05), and the window this closes is
         // narrow and specific: between the worker returning and its marshalled EDT tail running. A bare
         // EDT drain cannot see that window at all — it drains the EDT queue and knows nothing about a
@@ -417,7 +428,7 @@ class ChatPanelToolGateTest {
         // happened yet, and fail intermittently rather than honestly.
         ChatPanelTestHarness.awaitToolSettled(label = ChatPanelTestHarness.slashToolLabel(), count = 1)
 
-        verify(h.api.proxy(), times(1)).history()
+        verify(h.api.siteMap(), times(1)).issues()
         assertNull(
             ChatPanelTestHarness.findApprovalCard(h.panel.root),
             "SC5 / T-22-32: the user typed this call themselves; it must not be gated.",
@@ -434,7 +445,7 @@ class ChatPanelToolGateTest {
             "This test's NAME says eight. If the budget ever changes, rename the test — do not relax it.",
         )
         val expectedTurns = expectedTurnsForAFullyDeniedChain()
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
 
         // assertTimeoutPreemptively runs its block on a SEPARATE thread, so the trace id crosses back
         // through an AtomicReference rather than a captured local.
@@ -465,7 +476,7 @@ class ChatPanelToolGateTest {
         verifySendChatCount(h, expectedTurns)
 
         // (c) Not one of the denied calls reached Burp.
-        verify(h.api.proxy(), never()).history()
+        verify(h.api.siteMap(), never()).issues()
         // REL-05: and not one of them started a worker either — the half of (c) that an asynchronous
         // dispatch would otherwise satisfy for free.
         assertFalse(
@@ -498,13 +509,13 @@ class ChatPanelToolGateTest {
     fun cancellingARunningToolRefundsNoChainIterationAndSendsNoFurtherTurn() {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
-        whenever(h.api.proxy().history()).thenAnswer {
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
+        whenever(h.api.siteMap().issues()).thenAnswer {
             entered.countDown()
             check(release.await(SUPERSEDE_FAILSAFE_SECONDS, TimeUnit.SECONDS)) {
                 "The test never released the blocked tool — the cancel window was never opened."
             }
-            emptyList<ProxyHttpRequestResponse>()
+            emptyList<AuditIssue>()
         }
 
         assertTimeoutPreemptively(Duration.ofSeconds(30)) {
@@ -528,7 +539,7 @@ class ChatPanelToolGateTest {
         ChatPanelTestHarness.drainEdt(times = LONG_DRAIN)
         verifySendChatCount(h, 1)
         // And the chain really did stop: one call reached Burp, not a second under the live grant.
-        verify(h.api.proxy(), times(1)).history()
+        verify(h.api.siteMap(), times(1)).issues()
     }
 
     /**
@@ -557,13 +568,13 @@ class ChatPanelToolGateTest {
     fun aToolSupersededByASlashCommandRefundsNoChainIterationEither() {
         val entered = CountDownLatch(1)
         val release = CountDownLatch(1)
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
-        whenever(h.api.proxy().history()).thenAnswer {
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
+        whenever(h.api.siteMap().issues()).thenAnswer {
             entered.countDown()
             check(release.await(SUPERSEDE_FAILSAFE_SECONDS, TimeUnit.SECONDS)) {
                 "The test never released the blocked tool — the supersede window was never opened."
             }
-            emptyList<ProxyHttpRequestResponse>()
+            emptyList<AuditIssue>()
         }
 
         assertTimeoutPreemptively(Duration.ofSeconds(30)) {
@@ -590,14 +601,14 @@ class ChatPanelToolGateTest {
         ChatPanelTestHarness.drainEdt(times = LONG_DRAIN)
         verifySendChatCount(h, 1)
         // The chain stopped at the superseded step rather than continuing under the live grant.
-        verify(h.api.proxy(), times(1)).history()
+        verify(h.api.siteMap(), times(1)).issues()
     }
 
     // ── The pending-decision lifecycle (D-08's five teardown paths) ──────────────────────
 
     @Test
     fun newMessageInTheSessionImplicitlyDeniesThePendingCard() {
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
         ChatPanelTestHarness.sendUserMessage(h, "summarise the proxy history")
         ChatPanelTestHarness.drainEdt()
         val card = requireNotNull(ChatPanelTestHarness.findApprovalCard(h.panel.root)) { NO_CARD }
@@ -614,7 +625,7 @@ class ChatPanelToolGateTest {
             decisionButtons(card).size,
             "A new message retires the pending card: its buttons become an outcome row (T-22-10).",
         )
-        verify(h.api.proxy(), never()).history()
+        verify(h.api.siteMap(), never()).issues()
         // REL-05: an implicit denial must start no worker either, for the same reason an explicit one
         // must not — it is the same SEC-06 boundary, reached without a click.
         assertFalse(
@@ -630,7 +641,7 @@ class ChatPanelToolGateTest {
 
     @Test
     fun clearChatResolvesThePendingCardAndClearsApprovalMemory() {
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
         ChatPanelTestHarness.sendUserMessage(h, "summarise the proxy history")
         ChatPanelTestHarness.drainEdt()
         val granted = requireNotNull(ChatPanelTestHarness.findApprovalCard(h.panel.root)) { NO_CARD }
@@ -676,7 +687,7 @@ class ChatPanelToolGateTest {
 
     @Test
     fun shutdownResolvesAllPendingDecisionsWithoutSendingATurn() {
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
         ChatPanelTestHarness.sendUserMessage(h, "summarise the proxy history")
         ChatPanelTestHarness.drainEdt()
         SwingUtilities.invokeAndWait { h.panel.createNewSession() }
@@ -721,7 +732,7 @@ class ChatPanelToolGateTest {
 
     @Test
     fun everyDecisionEmitsTheSc3Metadata() {
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
         ChatPanelTestHarness.sendUserMessage(h, "summarise the proxy history")
         ChatPanelTestHarness.drainEdt()
         // Captured before the first click and used as the SELECTOR below. This used to filter on the
@@ -753,7 +764,7 @@ class ChatPanelToolGateTest {
         decisions.forEach { payload ->
             // The four fields SC3 names. secTier rides on every event, which is the field that makes
             // "which calls ran with no decision at all?" answerable from a historical log.
-            assertEquals("proxy_http_history", payload["toolName"], "The record names the CANONICAL tool that ran.")
+            assertEquals("issue_create", payload["toolName"], "The record names the CANONICAL tool that ran.")
             assertEquals("confirm", payload["secTier"], "The resolved tier is part of every decision record.")
             assertNotNull(payload["step"], "SC3 requires the chain step on every decision.")
         }
@@ -809,7 +820,7 @@ class ChatPanelToolGateTest {
 
     @Test
     fun sessionRowMarksAPendingDecisionAndClearsItOnResolution() {
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
         assertFalse(
             sessionRowLabels(h).contains(PENDING_MARKER),
             "A session with nothing outstanding must not claim to be awaiting anything.",
@@ -842,8 +853,16 @@ class ChatPanelToolGateTest {
 
     private val auditEvents = CopyOnWriteArrayList<Pair<String, Map<*, *>>>()
 
+    private var savedFactory: MontoyaObjectFactory? = null
+
     @BeforeEach
     fun captureAuditEvents() {
+        // Phase 29 (D-16): the CONFIRM sample `issue_create` builds its issue through Montoya's static
+        // `AuditIssue.auditIssue`, which dereferences ObjectFactoryLocator.FACTORY — null outside Burp.
+        // A mock factory lets the approved call complete normally, as `proxy_http_history` did, rather
+        // than as an error result. Saved and restored, the same pattern as AiScanCheckScanHttpTest.
+        savedFactory = ObjectFactoryLocator.FACTORY
+        ObjectFactoryLocator.FACTORY = mock<MontoyaObjectFactory>(defaultAnswer = Answers.RETURNS_MOCKS)
         auditEvents.clear()
         AuditLogger.registerGlobalEmitter { type, payload ->
             if (payload is Map<*, *>) auditEvents += type to payload
@@ -860,12 +879,26 @@ class ChatPanelToolGateTest {
         // — and holding — events emitted by every test class that runs after it.
         AuditLogger.registerGlobalEmitter(null)
         ChatPanelTestHarness.releaseSettledObserver()
+        ObjectFactoryLocator.FACTORY = savedFactory
     }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────────────────
 
 private const val NO_CARD = "No ToolApprovalCard in the transcript — the SEC-06 gate did not raise a decision."
+
+/**
+ * Arguments for the native CONFIRM sample, `issue_create` — the fewest that run it to completion.
+ *
+ * With no `httpRequest` the body looks the base URL up in proxy history (inside a `runCatching`), reads
+ * `siteMap().issues()` for an equivalent issue — the probe every test here stubs and verifies — then
+ * builds the issue through the factory double and adds it to the site map.
+ */
+private const val ISSUE_CREATE_ARGS =
+    """{"name":"probe","detail":"d","baseUrl":"https://target.example/","severity":"LOW","confidence":"FIRM"}"""
+
+/** Arguments for the native CONFIRM_EACH sample, `ai_analyze`. Never executed here: every card is denied. */
+private const val AI_ANALYZE_ARGS = """{"text":"analyse this"}"""
 
 /** The success-branch closing line the denial variant must never reuse (ChatPanel.executeApprovedToolCall). */
 private const val SUCCESS_CLOSING_LINE = "Provide the final response using the tool result"
