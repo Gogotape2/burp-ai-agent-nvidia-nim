@@ -863,10 +863,8 @@
     <ID>ReturnCount:McpTool.kt$@PublishedApi internal fun runTool( context: McpToolContext, name: String, argsJson: String? = null, execute: () -> String, ): CallToolResult</ID>
     <ID>ReturnCount:McpToolContext.kt$McpToolContext$fun isUnsafeToolAllowed(name: String): Boolean</ID>
     <ID>ReturnCount:McpToolExecutorImpl.kt$McpToolExecutor$fun executeToolResult( name: String, argsJson: String?, context: McpToolContext, ): CallToolResult</ID>
-    <ID>ReturnCount:McpToolHelpers.kt$internal fun executeIssueCreate( input: CreateAuditIssue, api: MontoyaApi, context: McpToolContext, ): String</ID>
     <ID>ReturnCount:McpToolHelpers.kt$internal fun maybeAnonymizeUrl( rawUrl: String, context: McpToolContext, ): String</ID>
     <ID>ReturnCount:McpToolHelpers.kt$internal fun normalizeHttpRequest(content: String): String</ID>
-    <ID>ReturnCount:McpToolHelpers.kt$internal fun withAiIssuePrefix(rawName: String): String</ID>
     <ID>ReturnCount:NvidiaNimBackendFactory.kt$NvidiaNimBackendFactory.Companion$private fun buildChatCompletionsUrl(baseUrl: String): String</ID>
     <ID>ReturnCount:NvidiaNimBackendFactory.kt$NvidiaNimBackendFactory.Companion$private fun nimHealthCheck( settings: AgentSettings, transport: MontoyaHttpTransport?, ): HealthCheckResult</ID>
     <ID>ReturnCount:OllamaBackend.kt$OllamaBackend$private fun detectContextWindow( baseUrl: String, model: String, headers: Map&lt;String, String>, fallback: Int?, transport: MontoyaHttpTransport? = null, ): Int?</ID>

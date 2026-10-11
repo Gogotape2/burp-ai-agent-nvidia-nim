@@ -802,11 +802,15 @@ class ParameterCarrierRedactionTest {
 
         val PARAMETER_PRODUCER_TOOL_NAMES = setOf("request_parse", "params_extract")
 
-        /** Floors catch a walk that reaches nothing or a gutted file — not drift. */
+        /**
+         * Floors catch a walk that reaches nothing or a gutted file — not drift. HELPERS_FILE was 300
+         * until plan 29-09 moved the core issue_create support (executeIssueCreate and its three
+         * helpers, ~117 code lines) verbatim into IssueCreateSupport.kt; measured 266 code lines after.
+         */
         val MIN_EXPECTED_LINES =
             mapOf(
                 REQUEST_TOOLS to 250,
-                HELPERS_FILE to 300,
+                HELPERS_FILE to 250,
             )
 
         const val SANITIZER_CALL = "sanitizeParameters("

@@ -1,20 +1,5 @@
 package com.six2dez.burp.aiagent.mcp.tools
 
-data class ResponsePreprocessorSettings(
-    val preprocessProxyHistory: Boolean = true,
-    val preprocessMaxResponseSizeKb: Int = 20,
-    val preprocessFilterBinaryContent: Boolean = true,
-    val preprocessAllowedContentTypes: Set<String> =
-        setOf(
-            "text/",
-            "application/json",
-            "application/xml",
-            "application/javascript",
-            "application/x-www-form-urlencoded",
-            "multipart/form-data",
-        ),
-)
-
 /**
  * Preprocesses HTTP response data to reduce context window usage.
  * Filters out binary content and truncates large responses.
