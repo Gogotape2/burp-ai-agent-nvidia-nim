@@ -41,7 +41,11 @@ import java.util.concurrent.TimeUnit
  *
  * Lives in src/fullTest from the start: the generic provider moves to src/full in plan 29-11, and
  * fullTest compiles against main + full, so this test never has to move.
+ *
+ * The suppressions: detekt's default test excludes match only directories named `test`, not src/fullTest, so the
+ * rules they waive for tests are waived here explicitly; literal TTL values are what the tests assert.
  */
+@Suppress("TooManyFunctions", "MagicNumber")
 class GenericToolProviderLifecycleTest {
     @AfterEach
     fun resetRegistries() {
@@ -59,8 +63,8 @@ class GenericToolProviderLifecycleTest {
 
         GenericToolProvider().onMcpSettingsApplied(mcpSettings(), store) {}
 
-        assertEquals(minutes(DEFAULT_SCAN_TTL), ScannerTaskRegistry.ttlMillisForTests())
-        assertEquals(minutes(DEFAULT_COLLABORATOR_TTL), CollaboratorRegistry.ttlMillisForTests())
+        assertEquals(minutes(DEFAULT_SCAN_TTL), ScannerTaskRegistry.ttlMillisForTests)
+        assertEquals(minutes(DEFAULT_COLLABORATOR_TTL), CollaboratorRegistry.ttlMillisForTests)
     }
 
     @Test
@@ -71,8 +75,8 @@ class GenericToolProviderLifecycleTest {
 
         GenericToolProvider().onMcpSettingsApplied(mcpSettings(), store) {}
 
-        assertEquals(minutes(90), ScannerTaskRegistry.ttlMillisForTests())
-        assertEquals(minutes(45), CollaboratorRegistry.ttlMillisForTests())
+        assertEquals(minutes(90), ScannerTaskRegistry.ttlMillisForTests)
+        assertEquals(minutes(45), CollaboratorRegistry.ttlMillisForTests)
     }
 
     @Test
@@ -83,15 +87,15 @@ class GenericToolProviderLifecycleTest {
 
         GenericToolProvider().onMcpSettingsApplied(mcpSettings(), store) {}
 
-        assertEquals(minutes(5), ScannerTaskRegistry.ttlMillisForTests())
-        assertEquals(minutes(1440), CollaboratorRegistry.ttlMillisForTests())
+        assertEquals(minutes(5), ScannerTaskRegistry.ttlMillisForTests)
+        assertEquals(minutes(1440), CollaboratorRegistry.ttlMillisForTests)
 
         prefs.integers[SCAN_TTL_KEY] = 1441
         prefs.integers[COLLABORATOR_TTL_KEY] = 4
         GenericToolProvider().onMcpSettingsApplied(mcpSettings(), store) {}
 
-        assertEquals(minutes(1440), ScannerTaskRegistry.ttlMillisForTests())
-        assertEquals(minutes(5), CollaboratorRegistry.ttlMillisForTests())
+        assertEquals(minutes(1440), ScannerTaskRegistry.ttlMillisForTests)
+        assertEquals(minutes(5), CollaboratorRegistry.ttlMillisForTests)
     }
 
     @Test
@@ -147,7 +151,7 @@ class GenericToolProviderLifecycleTest {
             events,
             "every provider gets the settings hook, in registry order, before any gets the stop hook",
         )
-        assertEquals(minutes(90), ScannerTaskRegistry.ttlMillisForTests(), "the supervisor reaches the generic provider")
+        assertEquals(minutes(90), ScannerTaskRegistry.ttlMillisForTests, "the supervisor reaches the generic provider")
         assertNull(ScannerTaskRegistry.get(taskId), "the supervisor's stop reaches the generic provider")
         verify(api.logging()).logToOutput("[P2] settings applied")
         supervisor.shutdown()
@@ -207,8 +211,7 @@ class GenericToolProviderLifecycleTest {
             serverManager = StoppedServerManager(),
             stdioBridge = McpStdioBridge(api),
             scheduler = Executors.newSingleThreadScheduledExecutor(),
-            toolRegistry = { registry },
-        )
+        ).also { it.toolRegistry = { registry } }
 
     private fun mcpSettings(): McpSettings = TestSettings.baselineSettings().mcpSettings.copy(enabled = false)
 
@@ -250,9 +253,9 @@ class GenericToolProviderLifecycleTest {
             settings: McpSettings,
             pluginSettings: PluginSettingsStore,
             log: (String) -> Unit,
-        ): Unit = throw IllegalStateException("boom-applied")
+        ): Unit = error("boom-applied")
 
-        override fun onMcpServerStopped(): Unit = throw IllegalStateException("boom-stopped")
+        override fun onMcpServerStopped(): Unit = error("boom-stopped")
     }
 
     private class StoppedServerManager : McpServerManager {

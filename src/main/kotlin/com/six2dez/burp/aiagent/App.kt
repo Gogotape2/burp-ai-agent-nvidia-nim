@@ -96,6 +96,7 @@ object App {
         supervisor.aiRequestLogger = aiRequestLogger
         mcpSupervisor = McpSupervisor(api)
         mcpSupervisor.setAiRequestLogger(aiRequestLogger)
+        mcpSupervisor.setPluginSettings(settingsRepo.pluginSettings())
         contextCollector = ContextCollector(api)
         passiveAiScanner = PassiveAiScanner(api, supervisor, auditLogger) { settingsRepo.load() }
         passiveAiScanner.aiRequestLogger = aiRequestLogger

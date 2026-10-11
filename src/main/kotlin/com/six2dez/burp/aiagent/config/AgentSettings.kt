@@ -983,8 +983,6 @@ class AgentSettingsRepository(
         private const val KEY_MCP_TLS_AUTO = "mcp.tls.auto"
         private const val KEY_MCP_TLS_KEYSTORE = "mcp.tls.keystore.path"
         private const val KEY_MCP_TLS_PASSWORD = "mcp.tls.keystore.password"
-        private const val KEY_MCP_SCAN_TASK_TTL_MINUTES = "mcp.scan.task.ttl.minutes"
-        private const val KEY_MCP_COLLABORATOR_TTL_MINUTES = "mcp.collaborator.ttl.minutes"
         private const val KEY_MCP_MAX_CONCURRENT = "mcp.max.concurrent"
         private const val KEY_MCP_MAX_BODY_BYTES = "mcp.max.body.bytes"
         private const val KEY_MCP_PROXY_HISTORY_MAX_ITEMS = "mcp.proxy.history.max.items"
@@ -1265,8 +1263,6 @@ Response Language: English.
                 tlsAutoGenerate = true,
                 tlsKeystorePath = defaultPath.absolutePath,
                 tlsKeystorePassword = McpSettings.generatePassword(),
-                scanTaskTtlMinutes = 120,
-                collaboratorClientTtlMinutes = 60,
                 maxConcurrentRequests = 4,
                 maxBodyBytes = 2 * 1024 * 1024,
                 proxyHistoryMaxItemsPerRequest = Defaults.MCP_PROXY_HISTORY_MAX_ITEMS_PER_REQUEST,
@@ -1398,10 +1394,6 @@ Response Language: English.
             tlsAutoGenerate = tlsAuto,
             tlsKeystorePath = resolvedKeystorePath,
             tlsKeystorePassword = tlsPassword,
-            scanTaskTtlMinutes = (prefs.getInteger(KEY_MCP_SCAN_TASK_TTL_MINUTES) ?: 120).coerceIn(5, 24 * 60),
-            collaboratorClientTtlMinutes =
-                (prefs.getInteger(KEY_MCP_COLLABORATOR_TTL_MINUTES) ?: 60)
-                    .coerceIn(5, 24 * 60),
             maxConcurrentRequests = (prefs.getInteger(KEY_MCP_MAX_CONCURRENT) ?: 4).coerceIn(1, 64),
             // 07-02 D-02: lowered floor from 256 KB → 32 KB so users with 1278-token-class
             // models can configure tight MCP body caps. Existing stored values below 32 KB
@@ -1442,11 +1434,6 @@ Response Language: English.
         prefs.setBoolean(KEY_MCP_TLS_AUTO, settings.tlsAutoGenerate)
         prefs.setString(KEY_MCP_TLS_KEYSTORE, settings.tlsKeystorePath)
         prefs.setString(KEY_MCP_TLS_PASSWORD, cipher.encrypt(settings.tlsKeystorePassword, KEY_MCP_TLS_PASSWORD))
-        prefs.setInteger(KEY_MCP_SCAN_TASK_TTL_MINUTES, settings.scanTaskTtlMinutes.coerceIn(5, 24 * 60))
-        prefs.setInteger(
-            KEY_MCP_COLLABORATOR_TTL_MINUTES,
-            settings.collaboratorClientTtlMinutes.coerceIn(5, 24 * 60),
-        )
         prefs.setInteger(KEY_MCP_MAX_CONCURRENT, settings.maxConcurrentRequests)
         prefs.setInteger(KEY_MCP_MAX_BODY_BYTES, settings.maxBodyBytes)
         prefs.setInteger(

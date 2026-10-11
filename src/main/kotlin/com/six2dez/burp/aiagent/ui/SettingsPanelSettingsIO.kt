@@ -30,8 +30,6 @@ internal fun SettingsPanel.currentSettings(): AgentSettings {
             tlsAutoGenerate = mcpTlsAuto.isSelected,
             tlsKeystorePath = mcpKeystorePath.text.trim(),
             tlsKeystorePassword = String(mcpKeystorePassword.password),
-            scanTaskTtlMinutes = settings.mcpSettings.scanTaskTtlMinutes,
-            collaboratorClientTtlMinutes = settings.mcpSettings.collaboratorClientTtlMinutes,
             maxConcurrentRequests = (mcpMaxConcurrent.value as? Int) ?: 4,
             // 07-02 D-02: spinner is denominated in KB; convert to bytes for persistence.
             // Floor of 32 KB matches AgentSettings.loadMcpSettings coerceIn lower bound.

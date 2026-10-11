@@ -18,8 +18,6 @@ data class McpSettings(
     val tlsAutoGenerate: Boolean,
     val tlsKeystorePath: String,
     val tlsKeystorePassword: String,
-    val scanTaskTtlMinutes: Int,
-    val collaboratorClientTtlMinutes: Int,
     val maxConcurrentRequests: Int,
     val maxBodyBytes: Int,
     val proxyHistoryMaxItemsPerRequest: Int = Defaults.MCP_PROXY_HISTORY_MAX_ITEMS_PER_REQUEST,

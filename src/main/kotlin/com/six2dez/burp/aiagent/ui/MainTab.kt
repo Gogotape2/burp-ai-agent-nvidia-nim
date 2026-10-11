@@ -643,7 +643,8 @@ class MainTab(
      * seven settings writes; two apply MCP, five do not. The two that do are the MCP-enabled host
      * callback and the header `mcpToggle`; the other five are the backend picker, the passive and active
      * host callbacks and the passive and active header toggles.
-     * `McpSupervisor.stop()` also clears `ScannerTaskRegistry` and `CollaboratorRegistry`, so applying
+     * `McpSupervisor.stop()` also tells every tool provider the server stopped, and the generic provider
+     * then clears its scanner-task and Collaborator registries, so applying
      * MCP settings on every passive/active toggle would drop live scanner tasks — a behaviour change,
      * not a harmless no-op (`T-23-06-07`). Two narrow helpers keep that impossible by construction.
      */

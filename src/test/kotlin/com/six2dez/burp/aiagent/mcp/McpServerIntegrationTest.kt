@@ -38,8 +38,6 @@ class McpServerIntegrationTest {
                 tlsAutoGenerate = true,
                 tlsKeystorePath = "",
                 tlsKeystorePassword = "",
-                scanTaskTtlMinutes = 120,
-                collaboratorClientTtlMinutes = 60,
                 maxConcurrentRequests = 4,
                 maxBodyBytes = 262_144,
                 toolToggles = emptyMap(),
