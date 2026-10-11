@@ -71,14 +71,7 @@ java {
     }
 }
 
-// -PstoreBuild=true produces the BApp Store artifact (native tools only).
-// Default (false) produces the full GitHub release artifact.
-val storeBuild = providers.gradleProperty("storeBuild").orNull == "true"
-
 abstract class GenerateBuildFlagsTask : DefaultTask() {
-    @get:Input
-    abstract val storeBuildFlag: Property<Boolean>
-
     @get:Input
     abstract val version: Property<String>
 
@@ -98,7 +91,6 @@ abstract class GenerateBuildFlagsTask : DefaultTask() {
 package com.six2dez.burp.aiagent
 
 object BuildFlags {
-    const val STORE_BUILD = ${storeBuildFlag.get()}
     const val VERSION = "${version.get()}"
 }
             """.trimIndent() + "\n",
@@ -108,8 +100,9 @@ object BuildFlags {
 
 val generateBuildFlags by tasks.registering(GenerateBuildFlagsTask::class) {
     group = "build"
-    description = "Generates BuildFlags.kt with a compile-time store-build flag and the project version"
-    storeBuildFlag.set(storeBuild)
+    // Phase 29 / BUILD-04: VERSION is the only generated constant. The flavor is decided by which
+    // source sets a JAR packages (bappJar: main; fullJar: main + full), never by a compile-time flag.
+    description = "Generates BuildFlags.kt with the project version"
     // SEC-05 / P11: capture the project version at CONFIGURATION time. gradle.properties sets
     // org.gradle.configuration-cache=true, so reading any Project API (including project.version)
     // from inside @TaskAction generate() would fail the build. The Property carries the captured
@@ -413,12 +406,6 @@ tasks.test {
     // constructs a REAL ChatPanel and drives its REAL Send button. ubuntu-latest is headless anyway;
     // forcing the flag makes a developer Mac behave identically instead of silently taking the
     // windowed path and hiding a CI-only failure.
-    // The generated BuildFlags.STORE_BUILD offers no other seam a test can compare against, so
-    // McpBuildFlagsVersionTest used to assert a literal false — which made `-PstoreBuild=true`, the
-    // BApp Store artifact build path, fail its own test suite. Passing the already-resolved
-    // `storeBuild` Boolean (configuration-cache-safe, exactly as generateBuildFlags consumes it) lets
-    // the test assert that the generated constant tracks the Gradle property under either build.
-    systemProperty("storeBuild.expected", storeBuild.toString())
     declareStructuralInputs()
     excludeHeavyTestsIfRequested()
 }
@@ -446,7 +433,6 @@ tasks.register<Test>("edtGuardWithoutAssertionsTest") {
     classpath = testSourceSet.runtimeClasspath
     // `-da`, and no `-ea` anywhere: this is the flag the whole task exists for.
     jvmArgs("-da", "-Djava.awt.headless=true")
-    systemProperty("storeBuild.expected", storeBuild.toString())
     filter {
         includeTestsMatching("*McpToolExecutorEdtGuardTest")
     }
@@ -462,7 +448,6 @@ val fullTest =
         testClassesDirs = fullTestSourceSet.output.classesDirs
         classpath = fullTestSourceSet.runtimeClasspath
         jvmArgs("-ea", "-Djava.awt.headless=true")
-        systemProperty("storeBuild.expected", storeBuild.toString())
         declareStructuralInputs()
         excludeHeavyTestsIfRequested()
     }

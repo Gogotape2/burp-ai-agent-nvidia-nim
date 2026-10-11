@@ -42,7 +42,6 @@ private val statusHandler: ToolHandler =
                 category = "Extension",
                 defaultEnabled = true,
                 secTier = SecTier.AUTO,
-                nativeTool = true,
             ),
         schema = { Tool.Input() },
     ) { _, context ->
@@ -64,7 +63,6 @@ private val issueCreateHandler: ToolHandler =
                 category = "Issues",
                 defaultEnabled = true,
                 secTier = SecTier.CONFIRM,
-                nativeTool = true,
             ),
         schema = { CreateAuditIssue::class.asInputSchema() },
     ) { args, context ->
@@ -83,7 +81,6 @@ private val aiAnalyzeHandler: ToolHandler =
                 defaultEnabled = true,
                 // CONFIRM_EACH while NOT unsafeOnly — D-01's independence claim made concrete: binding the trust boundary to unsafeOnly would leave this ungated.
                 secTier = SecTier.CONFIRM_EACH,
-                nativeTool = true,
             ),
         schema = { AiAnalyzeInput::class.asInputSchema() },
     ) { args, context ->
@@ -129,7 +126,6 @@ private val aiPassiveScanHandler: ToolHandler =
                 defaultEnabled = true,
                 // CONFIRM_EACH while NOT unsafeOnly — D-01's independence claim made concrete: binding the trust boundary to unsafeOnly would leave this ungated.
                 secTier = SecTier.CONFIRM_EACH,
-                nativeTool = true,
             ),
         schema = { AiPassiveScanInput::class.asInputSchema() },
     ) { args, context ->
@@ -175,7 +171,6 @@ private val aiFindingsRecentHandler: ToolHandler =
                 category = "AI",
                 defaultEnabled = true,
                 secTier = SecTier.CONFIRM,
-                nativeTool = true,
             ),
         schema = { AiFindingsRecentInput::class.asInputSchema() },
     ) { args, context ->
@@ -200,7 +195,6 @@ private val redactPreviewHandler: ToolHandler =
                 category = "AI",
                 defaultEnabled = true,
                 secTier = SecTier.AUTO,
-                nativeTool = true,
             ),
         schema = { RedactPreviewInput::class.asInputSchema() },
     ) { args, context ->
@@ -220,7 +214,6 @@ private val aiAuditQueryHandler: ToolHandler =
                 category = "AI",
                 defaultEnabled = true,
                 secTier = SecTier.CONFIRM,
-                nativeTool = true,
             ),
         schema = { AiAuditQueryInput::class.asInputSchema() },
     ) { args, context ->
@@ -245,7 +238,6 @@ private val aiBackendsListHandler: ToolHandler =
                 category = "AI",
                 defaultEnabled = true,
                 secTier = SecTier.AUTO,
-                nativeTool = true,
             ),
         schema = { Tool.Input() },
     ) { _, context ->

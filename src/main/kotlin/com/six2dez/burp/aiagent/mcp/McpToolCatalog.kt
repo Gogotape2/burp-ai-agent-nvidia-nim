@@ -1,6 +1,5 @@
 package com.six2dez.burp.aiagent.mcp
 
-import com.six2dez.burp.aiagent.BuildFlags
 import com.six2dez.burp.aiagent.mcp.tools.NativeToolProvider
 import com.six2dez.burp.aiagent.mcp.tools.ToolRegistry
 import com.six2dez.burp.aiagent.spi.Plugins
@@ -47,7 +46,6 @@ data class McpToolDescriptor(
     // D-03: deliberately has NO default value. A default is how a new tool silently inherits a tier
     // nobody chose; the compile error at the catalog site is the control.
     val secTier: SecTier,
-    val nativeTool: Boolean = false, // true = extension-native; present in the BApp Store build
 )
 
 object McpToolCatalog {
@@ -60,7 +58,12 @@ object McpToolCatalog {
 
     fun all(): List<McpToolDescriptor> = registry.descriptors()
 
-    fun available(storeBuild: Boolean = BuildFlags.STORE_BUILD): List<McpToolDescriptor> = if (storeBuild) all().filter { it.nativeTool } else all()
+    /**
+     * The tools this build offers: every tool the loaded providers supply, so it equals [all]. Since
+     * BUILD-04 the flavor is decided by which providers a JAR packages (the generic provider moves to
+     * `src/full` in plan 29-11), never by a filter applied here.
+     */
+    fun available(): List<McpToolDescriptor> = all()
 
     fun defaults(): Map<String, Boolean> = all().associate { it.id to it.defaultEnabled }
 
@@ -72,6 +75,6 @@ object McpToolCatalog {
         return merged
     }
 
-    /** The native tool ids: what the store build ships. */
+    /** The ids of the core tools, compiled into every build; every other tool comes from a plug-in provider. */
     fun coreToolIds(): Set<String> = registry.coreToolIds()
 }

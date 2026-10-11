@@ -153,7 +153,9 @@ internal fun SettingsPanel.buildMcpToolsPanel(): JScrollPane {
     val edition = api.burpSuite().version().edition()
     val unsafeEnabled = mcpUnsafe.isSelected
     val unsafeAllowlist = settings.mcpSettings.enabledUnsafeTools
-    val grouping = McpToolTabModel.groupTools(McpToolCatalog.available(), McpToolCatalog.coreToolIds())
+    // Provenance from the registry (BUILD-04): core ids are compiled into every build.
+    val coreToolIds = McpToolCatalog.coreToolIds()
+    val grouping = McpToolTabModel.groupTools(McpToolCatalog.available(), coreToolIds)
 
     // STEP 2 — Search bar panel (full-width, above both sections)
     val searchField = JTextField()
@@ -200,8 +202,8 @@ internal fun SettingsPanel.buildMcpToolsPanel(): JScrollPane {
         // North sub-row: checkbox + gap + badge + glue + optional indicator
         val badge =
             toolBadge(
-                if (tool.nativeTool) "Store + Full" else "Full only",
-                McpToolTabModel.badgeStyle(tool, McpToolCatalog.coreToolIds()),
+                if (tool.id in coreToolIds) "Store + Full" else "Full only",
+                McpToolTabModel.badgeStyle(tool, coreToolIds),
             )
         val northRow =
             JPanel().apply {

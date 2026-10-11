@@ -4,10 +4,11 @@ import com.six2dez.burp.aiagent.mcp.McpToolDescriptor
 import com.six2dez.burp.aiagent.ui.design.BadgeStyle
 
 /**
- * Grouping result from [McpToolTabModel.groupTools].
+ * Grouping result from [McpToolTabModel.groupTools], each list sorted by title.
  *
- * [native] contains tools where [McpToolDescriptor.nativeTool] is true, sorted by title.
- * [generic] contains tools where [McpToolDescriptor.nativeTool] is false, sorted by title.
+ * [core] = compiled into every build; [provided] = supplied by a plug-in (full build only).
+ * Provenance comes from the tool registry's core id set (`McpToolCatalog.coreToolIds()`), not from a
+ * flag on the descriptor (BUILD-04).
  */
 data class ToolGrouping(
     val core: List<McpToolDescriptor>,
@@ -25,39 +26,35 @@ data class ToolGrouping(
  */
 object McpToolTabModel {
     /**
-     * Splits [tools] into native (extension-native, BApp Store compatible) and generic
-     * (Montoya API wrappers, full build only) groups, each sorted ascending by title.
+     * Splits [tools] into the core tools (ids in [coreIds]: compiled into every build) and the
+     * provider-supplied ones (full build only), each sorted ascending by title.
      *
      * UI-03: the two groups are rendered as separate sections in the MCP tools tab.
      */
-    // RED scaffolding (plan 29-08 task 2): the new signature over the old descriptor-flag body; GREEN keys it on coreIds.
-    @Suppress("UnusedParameter")
     fun groupTools(
         tools: List<McpToolDescriptor>,
         coreIds: Set<String>,
     ): ToolGrouping {
-        val (native, generic) = tools.partition { it.nativeTool }
+        val (core, provided) = tools.partition { it.id in coreIds }
         return ToolGrouping(
-            core = native.sortedBy { it.title },
-            provided = generic.sortedBy { it.title },
+            core = core.sortedBy { it.title },
+            provided = provided.sortedBy { it.title },
         )
     }
 
     /**
      * Returns the [BadgeStyle] for a given tool.
      *
-     * UI-04: native tools display "Store + Full" with [BadgeStyle.NATIVE];
-     * generic tools display "Full only" with [BadgeStyle.FULL].
+     * UI-04: core tools (ids in [coreIds]) display "Store + Full" with [BadgeStyle.NATIVE];
+     * provider-supplied tools display "Full only" with [BadgeStyle.FULL].
      *
-     * This is the sole source of truth for badge assignment; the Swing layer in Plan 02
-     * calls this and passes the result to `toolBadge()`.
+     * This is the sole source of truth for badge assignment; the Swing layer calls this and passes
+     * the result to `toolBadge()`.
      */
-    // RED scaffolding (plan 29-08 task 2): GREEN keys the badge on coreIds.
-    @Suppress("UnusedParameter")
     fun badgeStyle(
         tool: McpToolDescriptor,
         coreIds: Set<String>,
-    ): BadgeStyle = if (tool.nativeTool) BadgeStyle.NATIVE else BadgeStyle.FULL
+    ): BadgeStyle = if (tool.id in coreIds) BadgeStyle.NATIVE else BadgeStyle.FULL
 
     /**
      * Returns true when [tool] should be visible for the given [query].
