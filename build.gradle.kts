@@ -820,8 +820,9 @@ tasks.named("check") {
 }
 
 tasks.named<org.cyclonedx.gradle.CycloneDxTask>("cyclonedxBom") {
-    // The release workflow ships the full JAR, so the SBOM describes the full runtime classpath (a
-    // superset of the store one). Phase 30 revisits this with the dual-JAR release.
+    // The release publishes both JARs with one SBOM (Phase 30 / CI-02, SBOM decision):
+    // fullRuntimeClasspath extends the store runtime classpath (fullImplementation and fullRuntimeOnly
+    // extend implementation and runtimeOnly), so this bom.json lists every dependency of both assets.
     includeConfigs.set(listOf("fullRuntimeClasspath"))
     outputFormat.set("json")
     outputName.set("bom")

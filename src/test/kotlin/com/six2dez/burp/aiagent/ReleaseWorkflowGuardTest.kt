@@ -6,7 +6,7 @@ import org.junit.jupiter.api.Test
 import java.io.File
 
 /**
- * Phase 30 (CI-02, ROADMAP SC3, decisions D-01..D-03): every tagged release gates on the same store-JAR
+ * Phase 30 (CI-02, ROADMAP SC3, decisions D-01..D-04): every tagged release gates on the same store-JAR
  * inspection PRs run, then publishes both JARs, each with a `.sha256` that names the published file.
  *
  * - D-01: the store JAR is published as `Custom-AI-Agent-bapp-<version>.jar`, a copy of the Gradle output
@@ -14,11 +14,13 @@ import java.io.File
  * - D-02: lint, both flavors' suites and `bappJar fullJar storeJarContentTest` run before anything is
  *   staged or published, so a tag on a commit that never ran PR CI cannot publish an unchecked store JAR.
  * - D-03: checksums are computed inside the staging directory after the rename, in `sha256sum` format.
+ * - D-04: the notes open with a fixed "Which JAR?" block the workflow writes, carrying README's
+ *   "Load only one build." warning verbatim and making no isolation, identity or origin claim.
  *
  * Why a text guard: the release workflow only runs on a tag push, and there is no local runner for it.
  * A reordered step, a dropped glob or a `continue-on-error` would leave every local gate green until the
  * next release published the wrong thing. `.github/workflows` is the declared `workflowsStructuralInputs`
- * input of `test`, so an edit to release.yml re-runs this guard.
+ * input of `test` and README.md its `readmeClaims` input, so an edit to either re-runs this guard.
  *
  * BOUND: plain text, no YAML parser (none is on the test classpath). A comment is a line whose trimmed
  * text starts with `#`, which also hides Markdown headings inside a `run:` block from the marker scans;
@@ -105,6 +107,73 @@ class ReleaseWorkflowGuardTest {
     }
 
     @Test
+    fun whichJarBlockMirrorsTheReadmeWarning() {
+        val region = whichJarRegion(releaseLines())
+        val warning = readmeWarning()
+        val messages = mutableListOf<String>()
+        if (warning !in region) {
+            messages += "the block no longer carries README's warning verbatim: `$warning`"
+        }
+        REQUIRED_IN_BLOCK.filter { term -> region.none { it.contains(term) } }.forEach {
+            messages += "the block no longer mentions `$it`"
+        }
+        assertTrue(
+            messages.isEmpty(),
+            "$RELEASE_WORKFLOW: the Which JAR? release-notes block (D-04) drifted:\n" + messages.joinToString("\n"),
+        )
+    }
+
+    @Test
+    fun whichJarBlockMakesNoIsolationIdentityOrOriginClaim() {
+        // README's warning is carried verbatim and says the two builds "look identical" in Burp's
+        // Extensions list, which is about how they appear, not about their bytes. Its wording is pinned by
+        // ReadmeFlavorWarningTest, so it is the one line exempt from this scan.
+        val warning = readmeWarning()
+        val hits =
+            whichJarRegion(releaseLines())
+                .filter { it != warning }
+                .flatMap { line -> FORBIDDEN_IN_BLOCK.filter { line.lowercase().contains(it) }.map { it to line } }
+        assertTrue(
+            hits.isEmpty(),
+            "$RELEASE_WORKFLOW: the Which JAR? block overclaims. The BApp Store asset is the store flavor and " +
+                "build command, not the file the BApp Store distributes; the store build may still load code " +
+                "from outside its JAR until Phase 31 (ADR-18 residual); a checksum on the same release only " +
+                "shows a download is complete:\n" + hits.joinToString("\n") { "  `${it.first}` in: ${it.second}" },
+        )
+    }
+
+    @Test
+    fun releaseNotesOpenWithTheWhichJarBlock() {
+        val lines = releaseLines()
+        val messages = mutableListOf<String>()
+        val starts = lines.filter { it.contains("<<") && it.contains(HEREDOC_MARKER) }
+        if (starts.size != 1 || !starts.single().contains("<<'$HEREDOC_MARKER'")) {
+            messages += "the block must be written by exactly one quoted heredoc `<<'$HEREDOC_MARKER'` (an unquoted " +
+                "one runs the Markdown backticks as commands): $starts"
+        }
+        val notes = stepBlock(lines, NOTES_STEP)
+        val notesAt = lines.indexOfFirst { it.trim() == "- name: $NOTES_STEP" }
+        val write = notes.indexOfFirst { !isComment(it) && it.contains("> $NOTES_FILE") && !it.contains(">> $NOTES_FILE") }
+        val append = notes.indexOfFirst { !isComment(it) && it.contains(">> $NOTES_FILE") }
+        if (write < 0 || append < 0 || write >= append) {
+            messages += "the step must write $NOTES_FILE with `>` from the block before it appends the CHANGELOG " +
+                "section with `>>` (write at ${write + 1}, append at ${append + 1} of the step)"
+        } else if (!notes[write].contains("which-jar.md")) {
+            messages += "the first write of $NOTES_FILE no longer comes from the block: ${notes[write].trim()}"
+        }
+        if (live(notes).none { it.contains("notes_file=$NOTES_FILE") && it.contains("GITHUB_OUTPUT") }) {
+            messages += "the step no longer writes `notes_file=$NOTES_FILE` to GITHUB_OUTPUT"
+        }
+        val checksumAt = lines.indexOfFirst { it.trim() == "- name: $CHECKSUM_STEP" }
+        val publishAt = lines.indexOfFirst { !isComment(it) && it.contains(PUBLISH_ACTION) }
+        if (checksumAt < 0 || publishAt < 0 || notesAt !in (checksumAt + 1) until publishAt) {
+            messages += "the notes step must sit after `$CHECKSUM_STEP` and before the publish step " +
+                "(lines ${checksumAt + 1}, ${notesAt + 1}, ${publishAt + 1})"
+        }
+        assertTrue(messages.isEmpty(), "$RELEASE_WORKFLOW / $NOTES_STEP:\n" + messages.joinToString("\n"))
+    }
+
+    @Test
     fun aStepOutOfOrderIsReported() {
         // Fail-first proof: if the order check stopped reporting, the whole-file check above would pass
         // over a workflow that checksums before the rename (the .sha256 would name the wrong file).
@@ -162,6 +231,25 @@ class ReleaseWorkflowGuardTest {
             "$fileName:${a.second + 1} `${lines[a.second].trim()}` (${a.first.what}) must come before " +
                 "$fileName:${b.second + 1} `${lines[b.second].trim()}` (${b.first.what})"
         }
+    }
+
+    /** Trimmed lines between the `<<'WHICH_JAR'` line and its terminator; fails if the block is missing. */
+    private fun whichJarRegion(lines: List<String>): List<String> {
+        val start = lines.indexOfFirst { it.contains("<<'$HEREDOC_MARKER'") }
+        assertTrue(start >= 0, "$RELEASE_WORKFLOW no longer writes the Which JAR? block with <<'$HEREDOC_MARKER'")
+        val rest = lines.drop(start + 1)
+        val end = rest.indexOfFirst { it.trim() == HEREDOC_MARKER }
+        assertTrue(end >= 0, "$RELEASE_WORKFLOW: the <<'$HEREDOC_MARKER' heredoc has no terminator line")
+        val region = rest.take(end).map { it.trim() }
+        assertTrue(region.count { it.isNotEmpty() } >= MIN_BLOCK_LINES, "the Which JAR? block is nearly empty: $region")
+        return region
+    }
+
+    /** README's "Load only one build." line, trimmed (README.md is the declared `readmeClaims` input). */
+    private fun readmeWarning(): String {
+        val line = projectFile(README).readLines().map { it.trim() }.firstOrNull { it.startsWith(README_WARNING) }
+        assertTrue(line != null, "$README no longer has a line starting with $README_WARNING")
+        return line!!
     }
 
     /** Lines of the step whose `- name:` is [name], up to the next step at the same indentation. */
@@ -230,6 +318,30 @@ class ReleaseWorkflowGuardTest {
         const val RELEASE_WORKFLOW = ".github/workflows/release.yml"
         const val STAGING_STEP = "Stage release assets (D-01)"
         const val PUBLISH_ACTION = "softprops/action-gh-release"
+        const val CHECKSUM_STEP = "Compute SHA-256 checksums (D-03)"
+        const val NOTES_STEP = "Write release notes (D-04)"
+        const val NOTES_FILE = "build/release-notes/release_notes.md"
+        const val HEREDOC_MARKER = "WHICH_JAR"
+        const val README = "README.md"
+        const val README_WARNING = "**Load only one build.**"
+
+        /** The block has 6 non-blank lines today; fewer than this means the heredoc lost its content. */
+        const val MIN_BLOCK_LINES = 5
+
+        val REQUIRED_IN_BLOCK =
+            listOf(
+                "## Which JAR?",
+                "Custom-AI-Agent-full-@VERSION@.jar",
+                "Custom-AI-Agent-bapp-@VERSION@.jar",
+                "generic MCP tools",
+                "CLI backends",
+                "./gradlew bappJar",
+                "sha256sum -c",
+                "bom.json",
+            )
+
+        /** Byte identity with the BApp Store, store isolation, or checksum authenticity (T-30-11). */
+        val FORBIDDEN_IN_BLOCK = listOf("identical", "same bytes", "cannot load", "tamper", "authentic", "guarantee")
 
         /** The staging step's versioned store asset name, as written in the workflow. */
         const val BAPP_ASSET_LINE = "Custom-AI-Agent-bapp-\${VERSION}.jar"

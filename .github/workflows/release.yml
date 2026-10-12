@@ -91,21 +91,51 @@ jobs:
           done
           sha256sum -c ./*.sha256
 
-      - name: Extract release notes from CHANGELOG
+      # The workflow writes the "Which JAR?" block on every release instead of leaving it to each
+      # CHANGELOG section (D-04). The body is prepended to GitHub's generated notes, so the release page
+      # reads: Which JAR? block, CHANGELOG section, generated notes. The heredoc is quoted so the
+      # Markdown backticks are never run as command substitutions; the version is substituted after.
+      # The bullet for the BApp Store asset names the build command, not the file the BApp Store
+      # distributes (PortSwigger builds from source), and the checksum is described as an integrity
+      # check only.
+      - name: Write release notes (D-04)
         id: extract_notes
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#v}"
+          case "$VERSION" in
+            ''|*[!0-9A-Za-z.+-]*)
+              echo "::error::Tag ${TAG} does not hold a plain version; refusing to write release notes."
+              exit 1
+              ;;
+          esac
+          rm -rf build/release-notes
+          mkdir -p build/release-notes
+          cat > build/release-notes/which-jar.md <<'WHICH_JAR'
+          ## Which JAR?
+
+          - **`Custom-AI-Agent-full-@VERSION@.jar`** is the GitHub full build. It adds the generic MCP tools, the CLI backends (Claude Code, Codex, Gemini, OpenCode, Copilot), the external MCP client and the opt-in auto-queue to what the BApp Store build offers.
+          - **`Custom-AI-Agent-bapp-@VERSION@.jar`** is the BApp Store build: the extension-native MCP tools and the HTTP backends, built with `./gradlew bappJar`, the command PortSwigger's BApp Store build runs.
+
+          **Load only one build.** The full build and the BApp Store build both register as **Custom AI Agent**, so they look identical in Burp's Extensions list. Loading both at once gives you two Custom AI Agent tabs, two MCP servers competing for the same port, and two copies writing the shared `~/.burp-ai-agent` directory. Unload one before you load the other.
+
+          Each JAR has a `.sha256` file in `sha256sum` format. Run `sha256sum -c <asset>.sha256` next to the download to check that it is complete and uncorrupted. The checksum is published on the same release as the JAR, so it does not show who built the file.
+
+          `bom.json` lists the full build's runtime dependencies, which include every dependency of the BApp Store build.
+
+          WHICH_JAR
+          sed "s/@VERSION@/${VERSION}/g" build/release-notes/which-jar.md > build/release-notes/release_notes.md
           # Extract the section between "## [VERSION]" and the next "## [" heading
           awk -v ver="$VERSION" '
             $0 ~ "^## \\[" ver "\\]" { found=1; next }
             found && /^## \[/ { exit }
             found { print }
-          ' CHANGELOG.md > release_notes.md
-          if [ ! -s release_notes.md ]; then
-            echo "No changelog section for $VERSION, falling back to auto-generated notes." > release_notes.md
+          ' CHANGELOG.md > build/release-notes/changelog-section.md
+          if [ ! -s build/release-notes/changelog-section.md ]; then
+            echo "No changelog section for $VERSION, falling back to auto-generated notes." > build/release-notes/changelog-section.md
           fi
-          echo "notes_file=release_notes.md" >> "$GITHUB_OUTPUT"
+          cat build/release-notes/changelog-section.md >> build/release-notes/release_notes.md
+          echo "notes_file=build/release-notes/release_notes.md" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3

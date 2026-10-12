@@ -32,6 +32,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   card has neither. The Ollama required-field message for a blank base URL is gone from both builds.
 - **The BApp Store build requires Burp's "Use AI" for every provider** - with "Use AI" off, every
   AI backend is refused, not only Burp AI. The full build keeps the 1.0.1 rule.
+- **Releases carry both builds** - each GitHub release attaches `Custom-AI-Agent-full-<version>.jar`
+  (the GitHub full build) and `Custom-AI-Agent-bapp-<version>.jar` (the BApp Store build,
+  `./gradlew bappJar`), each with a `.sha256` in `sha256sum` format, and the release notes open with
+  a short "Which JAR?" section. CI and the release now build both JARs and fail if the BApp Store JAR
+  contains a full-only class or a CLI backend. One `bom.json` covers both.
 
 ### Removed
 
