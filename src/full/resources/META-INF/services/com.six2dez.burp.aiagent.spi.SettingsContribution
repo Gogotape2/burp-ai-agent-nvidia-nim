@@ -5,3 +5,4 @@ com.six2dez.burp.aiagent.full.cli.ClaudeCliContribution
 com.six2dez.burp.aiagent.full.cli.CopilotCliContribution
 com.six2dez.burp.aiagent.full.cli.OllamaCliContribution
 com.six2dez.burp.aiagent.full.external.ExternalMcpContribution
+com.six2dez.burp.aiagent.full.autoqueue.AutoQueueContribution
