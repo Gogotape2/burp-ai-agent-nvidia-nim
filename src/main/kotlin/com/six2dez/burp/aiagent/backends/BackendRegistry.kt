@@ -12,6 +12,7 @@ import com.six2dez.burp.aiagent.backends.openai.OpenAiCompatibleBackendFactory
 import com.six2dez.burp.aiagent.backends.perplexity.PerplexityBackendFactory
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.AgentSettingsRepository
+import com.six2dez.burp.aiagent.spi.PluginSettingsStore
 import com.six2dez.burp.aiagent.util.TokenTracker
 import java.io.File
 import java.net.URLClassLoader
@@ -38,6 +39,12 @@ class BackendRegistry(
     @Volatile
     private var httpTransport: MontoyaHttpTransport? = null
 
+    // Phase 29 / D-06: the plug-in settings store for backends whose configuration lives in plug-in keys
+    // (the full build's CLI backends). Remembered and re-applied on reload, like the HTTP transport, and
+    // declared above `init` for the same reason.
+    @Volatile
+    private var pluginSettings: PluginSettingsStore? = null
+
     init {
         reload()
     }
@@ -47,6 +54,13 @@ class BackendRegistry(
     fun setHttpTransport(transport: MontoyaHttpTransport) {
         httpTransport = transport
         applyHttpTransport()
+    }
+
+    /** Remembers [store] and applies it to every current and future [PluginSettingsAware] backend. */
+    @Synchronized
+    fun setPluginSettings(store: PluginSettingsStore) {
+        pluginSettings = store
+        applyPluginSettings()
     }
 
     @Synchronized
@@ -98,6 +112,7 @@ class BackendRegistry(
         loadExternalBackendJars()
 
         applyHttpTransport()
+        applyPluginSettings()
 
         // Phase 29 / D-09: each backend publishes its own token ratio; core names no full-only id.
         backends.values.forEach { backend ->
@@ -189,6 +204,15 @@ class BackendRegistry(
         backends.values.forEach { backend ->
             if (backend is HttpTransportAware) {
                 backend.setHealthCheckTransport(transport)
+            }
+        }
+    }
+
+    private fun applyPluginSettings() {
+        val store = pluginSettings ?: return
+        backends.values.forEach { backend ->
+            if (backend is PluginSettingsAware) {
+                backend.setPluginSettings(store)
             }
         }
     }

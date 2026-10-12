@@ -14,6 +14,7 @@ import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.spi.AiAccessPolicy
+import com.six2dez.burp.aiagent.spi.PluginSettingsStore
 import com.six2dez.burp.aiagent.util.HeaderParser
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
@@ -29,6 +30,13 @@ class AgentSupervisor(
     private val aiAccessPolicy: AiAccessPolicy,
 ) {
     var aiRequestLogger: AiRequestLogger? = null
+
+    /**
+     * Phase 29 / D-06: the plug-in settings store handed to [com.six2dez.burp.aiagent.spi.BackendModelHint]
+     * providers. App sets it once at startup; null (tests, or before wiring) means no hint is asked.
+     */
+    @Volatile
+    var pluginSettings: PluginSettingsStore? = null
 
     data class Status(
         val state: String,

@@ -1,12 +1,14 @@
 package com.six2dez.burp.aiagent.backends.cli
 
 import burp.api.montoya.MontoyaApi
+import com.six2dez.burp.aiagent.InMemoryPreferences
 import com.six2dez.burp.aiagent.TestSettings
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.backends.AiBackendFactory
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.config.AgentSettings
+import com.six2dez.burp.aiagent.config.AgentSettingsRepository
 import com.six2dez.burp.aiagent.full.FullAiAccessPolicy
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.util.TokenTracker
@@ -18,6 +20,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Answers
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.whenever
 import java.io.File
 import java.util.ServiceLoader
 
@@ -26,9 +29,22 @@ import java.util.ServiceLoader
  * [CliBackend.launchConfig]. These tests pin that every CLI id still launches with the 1.0.1
  * configuration when it goes through the supervisor and a registry built from the full build's merged
  * services, and that the CLI temp-file shutdown still runs on unload.
+ *
+ * 29-14 (D-06, D-11): the commands and the process timeout come from the CLI plug-in's own keys
+ * (codex.cmd, ..., cli.timeoutSeconds) through the registry's plug-in settings store, not from
+ * `AgentSettings`.
  */
 class CliLaunchConfigTest {
+    private val prefs = InMemoryPreferences()
     private val api = mock<MontoyaApi>(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
+
+    init {
+        whenever(api.persistence().preferences()).thenReturn(prefs)
+    }
+
+    private val store = AgentSettingsRepository(api).pluginSettings()
+
+    private fun registry(): BackendRegistry = BackendRegistry(api).also { it.setPluginSettings(store) }
 
     @AfterEach
     fun leaveRegistryClean() {
@@ -59,7 +75,7 @@ class CliLaunchConfigTest {
             factories,
             "the full classpath merges core's 6 HTTP factories and src/full's 5 CLI factories",
         )
-        val ids = BackendRegistry(api).listAllBackendIds()
+        val ids = registry().listAllBackendIds()
         assertEquals(12, ids.size, "full build: burp-ai + 6 HTTP + 5 CLI ids, got $ids")
         assertTrue(ids.containsAll(CLI_COMMANDS.keys), "every CLI id must be registered in the full build, got $ids")
     }
@@ -98,7 +114,7 @@ class CliLaunchConfigTest {
 
     @Test
     fun theLaunchedProcessTimeoutIsClampedToTheWatchdogRange() {
-        val backend = BackendRegistry(api).get("codex-cli")!!
+        val backend = registry().get("codex-cli")!!
         val low = backend.launch(BackendLaunchConfig("codex-cli", "Codex CLI", command = listOf("codex"), cliTimeoutSeconds = 5))
         val high = backend.launch(BackendLaunchConfig("codex-cli", "Codex CLI", command = listOf("codex"), cliTimeoutSeconds = 99_999))
         try {
@@ -112,7 +128,7 @@ class CliLaunchConfigTest {
 
     @Test
     fun registryShutdownRunsTheCliTempFileShutdown() {
-        val registry = BackendRegistry(api)
+        val registry = registry()
         val file = File.createTempFile("burp-ai-agent-cli-launch-test", ".txt")
         CliTempFileRegistry.register(file)
         assertTrue(CliTempFileRegistry.isHookRegisteredForTests(), "precondition: registering a file arms the exit hook")
@@ -126,7 +142,7 @@ class CliLaunchConfigTest {
 
     @Test
     fun cliBackendsKeepTheir101HealthLocalityAndTokenRatios() {
-        val registry = BackendRegistry(api)
+        val registry = registry()
         CLI_COMMANDS.keys.forEach { id ->
             assertTrue(registry.get(id)!!.healthCheckIsLocal, "$id: a CLI health check is a local process probe")
         }
@@ -143,28 +159,47 @@ class CliLaunchConfigTest {
 
     @Test
     fun cliConfigurationErrorsAreThe101MainTabMessages() {
-        val registry = BackendRegistry(api)
-        val blank =
-            TestSettings.baselineSettings().copy(codexCmd = " ", geminiCmd = "", opencodeCmd = "", claudeCmd = "", copilotCmd = "")
-        assertEquals("Codex command is empty.", registry.get("codex-cli")!!.configurationError(blank))
-        assertEquals("Gemini command is empty.", registry.get("gemini-cli")!!.configurationError(blank))
-        assertEquals("OpenCode command is empty.", registry.get("opencode-cli")!!.configurationError(blank))
-        assertEquals("Claude command is empty.", registry.get("claude-cli")!!.configurationError(blank))
-        assertEquals("Copilot command is empty.", registry.get("copilot-cli")!!.configurationError(blank))
+        val registry = registry()
+        val settings = TestSettings.baselineSettings()
+        CLI_KEYS.values.forEach { key -> prefs.strings[key] = if (key == "codex.cmd") " " else "" }
+        assertEquals("Codex command is empty.", registry.get("codex-cli")!!.configurationError(settings))
+        assertEquals("Gemini command is empty.", registry.get("gemini-cli")!!.configurationError(settings))
+        assertEquals("OpenCode command is empty.", registry.get("opencode-cli")!!.configurationError(settings))
+        assertEquals("Claude command is empty.", registry.get("claude-cli")!!.configurationError(settings))
+        assertEquals("Copilot command is empty.", registry.get("copilot-cli")!!.configurationError(settings))
 
-        val configured = cliSettings(mcpEnabled = false)
+        seedCliCommands()
         CLI_COMMANDS.keys.forEach { id ->
-            assertNull(registry.get(id)!!.configurationError(configured), "$id: a configured command is valid")
+            assertNull(registry.get(id)!!.configurationError(settings), "$id: a configured command is valid")
         }
 
         val openCode = registry.get("opencode-cli") as CliBackend
-        val bareExe = configured.copy(opencodeCmd = "opencode.exe")
+        prefs.strings["opencode.cmd"] = "opencode.exe"
         assertEquals(
             "OpenCode command looks like a bare .exe. If installed via npm, use 'opencode' (without .exe) or a full path to opencode.cmd.",
-            openCode.configurationErrorFor(bareExe, isWindows = true),
+            openCode.configurationErrorFor(isWindows = true),
         )
-        assertNull(openCode.configurationErrorFor(bareExe, isWindows = false), "the hint is Windows-only")
-        assertNull(openCode.configurationErrorFor(configured.copy(opencodeCmd = "C:\\npm\\opencode.exe"), isWindows = true))
+        assertNull(openCode.configurationErrorFor(isWindows = false), "the hint is Windows-only")
+        prefs.strings["opencode.cmd"] = "C:\\npm\\opencode.exe"
+        assertNull(openCode.configurationErrorFor(isWindows = true))
+    }
+
+    @Test
+    fun withoutStoredCommandsEveryCliIdLaunchesThe101DefaultCommand() {
+        val settings = TestSettings.baselineSettings().copy(mcpSettings = TestSettings.baselineSettings().mcpSettings.copy(enabled = false))
+        val defaults =
+            mapOf(
+                "codex-cli" to listOf("codex", "chat"),
+                "gemini-cli" to listOf("gemini", "--output-format", "text", "--model", "gemini-2.5-flash", "--yolo"),
+                "opencode-cli" to listOf("opencode"),
+                "claude-cli" to listOf("claude"),
+                "copilot-cli" to listOf("copilot"),
+            )
+        defaults.forEach { (id, tokens) ->
+            val config = supervisorLaunchConfig(settings, id, cliSessionId = null)
+            assertEquals(tokens, config.command, "$id default command")
+            assertEquals(120, config.cliTimeoutSeconds, "$id default timeout")
+        }
     }
 
     private fun supervisorLaunchConfig(
@@ -172,7 +207,7 @@ class CliLaunchConfigTest {
         backendId: String,
         cliSessionId: String?,
     ): BackendLaunchConfig {
-        val supervisor = AgentSupervisor(api, BackendRegistry(api), mock<AuditLogger>(), FullAiAccessPolicy())
+        val supervisor = AgentSupervisor(api, registry(), mock<AuditLogger>(), FullAiAccessPolicy())
         supervisor.applySettings(settings)
         val method =
             AgentSupervisor::class.java.getDeclaredMethod(
@@ -229,22 +264,22 @@ class CliLaunchConfigTest {
             determinismMode = settings.determinismMode,
             env = env,
             cliSessionId = cliSessionId,
-            cliTimeoutSeconds = settings.cliTimeoutSeconds,
+            cliTimeoutSeconds = STORED_TIMEOUT_SECONDS,
         )
     }
 
     private fun cliSettings(mcpEnabled: Boolean): AgentSettings {
+        seedCliCommands()
         val base = TestSettings.baselineSettings()
         return base.copy(
-            codexCmd = CLI_COMMANDS.getValue("codex-cli"),
-            geminiCmd = CLI_COMMANDS.getValue("gemini-cli"),
-            opencodeCmd = CLI_COMMANDS.getValue("opencode-cli"),
-            claudeCmd = CLI_COMMANDS.getValue("claude-cli"),
-            copilotCmd = CLI_COMMANDS.getValue("copilot-cli"),
             determinismMode = true,
-            cliTimeoutSeconds = 450,
             mcpSettings = base.mcpSettings.copy(enabled = mcpEnabled),
         )
+    }
+
+    private fun seedCliCommands() {
+        CLI_COMMANDS.forEach { (id, command) -> prefs.strings[CLI_KEYS.getValue(id)] = command }
+        prefs.integers["cli.timeoutSeconds"] = STORED_TIMEOUT_SECONDS
     }
 
     private fun timeoutOf(connection: Any): Int {
@@ -255,6 +290,17 @@ class CliLaunchConfigTest {
 
     private companion object {
         const val SESSION_ID = "session-cli-launch-test"
+        const val STORED_TIMEOUT_SECONDS = 450
+
+        // The 1.0.1 preference keys the CLI plug-in owns (D-11).
+        val CLI_KEYS =
+            mapOf(
+                "codex-cli" to "codex.cmd",
+                "gemini-cli" to "gemini.cmd",
+                "opencode-cli" to "opencode.cmd",
+                "claude-cli" to "claude.cmd",
+                "copilot-cli" to "copilot.cmd",
+            )
 
         val CLI_COMMANDS =
             linkedMapOf(

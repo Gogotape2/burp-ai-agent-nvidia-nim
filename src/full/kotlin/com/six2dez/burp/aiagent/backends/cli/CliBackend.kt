@@ -102,6 +102,9 @@ class CliBackend(
         return if (id == "opencode-cli" && isWindows && looksLikeBareExe(command)) OPENCODE_BARE_EXE_HINT else null
     }
 
+    /** RED skeleton (29-14 Task 1). */
+    internal fun configurationErrorFor(isWindows: Boolean): String? = null
+
     private fun looksLikeBareExe(cmd: String): Boolean {
         val trimmed = cmd.trim()
         if (!trimmed.lowercase().endsWith(".exe")) return false
