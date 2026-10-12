@@ -41,6 +41,53 @@ internal object StoreJarInspector {
             "com.six2dez.burp.aiagent.backends.anthropic.AnthropicBackendFactory",
         )
 
+    /** Layer B1: packages that belong to the full build. A prefix, so it also matches an empty directory entry. */
+    private val FULL_ONLY_PACKAGES =
+        listOf(
+            "com/six2dez/burp/aiagent/full/",
+            "com/six2dez/burp/aiagent/backends/cli/",
+            "com/six2dez/burp/aiagent/mcp/external/",
+            "com/six2dez/burp/aiagent/alerts/",
+        )
+
+    private const val OWN_ENTRY_ROOT = "com/six2dez/"
+
+    /** Layer B2: simple-name prefixes of full-only classes (generic MCP tools, external MCP client, auto-queue, ...). */
+    private val FULL_ONLY_NAME_PREFIXES =
+        listOf(
+            "Generic",
+            "ExternalMcp",
+            "ExternalServers",
+            "ExternalTool",
+            "AutoQueue",
+            "Alerting",
+            "McpScopeFilter",
+            "ScannerTaskRegistry",
+            "CollaboratorRegistry",
+            "McpToolHelpersKt",
+            "McpToolModelsKt",
+        )
+
+    private const val CLI_BACKEND_MARKER = "CliBackend"
+
+    /**
+     * Layer B3: libraries the store build does not ship. The whole Ktor client tree (the store JAR has no entry
+     * there), the Ktor server CIO engine, Ktor TLS and the MCP SDK client. `io/ktor/network/{selector,sockets,util}`
+     * stay allowed: the Netty-based store MCP server uses them.
+     */
+    private val BUNDLED_LIBRARY_PREFIXES =
+        listOf(
+            "io/ktor/client/",
+            "io/ktor/server/cio/",
+            "io/ktor/network/tls/",
+            "io/modelcontextprotocol/kotlin/sdk/client/",
+            "META-INF/ktor-client-",
+            "META-INF/ktor-network-tls",
+        )
+
+    private const val OWN_SERVICES_PREFIX = "META-INF/services/com.six2dez."
+    private const val KTOR_CLIENT_SERVICES_PREFIX = "META-INF/services/io.ktor.client."
+
     /** One rule per forbidden category. When an entry matches several, the first in declaration order wins. */
     enum class Rule(
         val reason: String,
@@ -122,8 +169,33 @@ internal object StoreJarInspector {
     ): Rule? =
         when {
             entry in fullOnly -> Rule.DERIVED_FULL_CLASS
+            FULL_ONLY_PACKAGES.any { entry.startsWith(it) } -> Rule.FULL_ONLY_PACKAGE
+            isFullOnlyName(entry) -> Rule.FULL_ONLY_NAME
+            BUNDLED_LIBRARY_PREFIXES.any { entry.startsWith(it) } -> Rule.BUNDLED_LIBRARY
+            isPluginServicesFile(entry) -> Rule.SERVICES_FILE
             else -> null
         }
+
+    /**
+     * Layer B2: the last path segment of an entry under `com/six2dez/`, matched case-sensitively. Never a bare
+     * `Client` or case-insensitive `cli` rule: the store legitimately ships McpTakeoverClient and dozens of MCP
+     * SDK `Client*` model classes, and 123 store entries contain `cli` in some case (RESEARCH Pitfall 4).
+     */
+    private fun isFullOnlyName(entry: String): Boolean {
+        if (!entry.startsWith(OWN_ENTRY_ROOT)) return false
+        val name = entry.removeSuffix("/").substringAfterLast('/')
+        return FULL_ONLY_NAME_PREFIXES.any { name.startsWith(it) } || name.contains(CLI_BACKEND_MARKER)
+    }
+
+    /**
+     * Layer C1: the AiBackendFactory file is the only `com.six2dez` services file the store JAR may carry, and no
+     * Ktor client engine container may be registered. Third-party services files are not pinned: an exact pin
+     * would fail on every Dependabot bump. The bare `META-INF/services/` directory entry is allowed.
+     */
+    private fun isPluginServicesFile(entry: String): Boolean {
+        val ownPlugin = entry.startsWith(OWN_SERVICES_PREFIX) && entry != FACTORY_SERVICES_ENTRY
+        return ownPlugin || entry.startsWith(KTOR_CLIENT_SERVICES_PREFIX)
+    }
 
     /**
      * Layer C2. Lines are trimmed; blank and `#` lines are skipped, so CRLF endings, comments and a missing

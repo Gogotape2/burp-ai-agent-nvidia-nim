@@ -95,22 +95,34 @@ class StoreJarContentTest {
     ): File {
         ZipFile(real).use { source ->
             ZipOutputStream(out.outputStream().buffered()).use { zip ->
-                source.entries().asSequence().filter { it.name != PLANTED_CLASS }.forEach { entry ->
-                    zip.putNextEntry(ZipEntry(entry.name))
-                    if (entry.name == FACTORY_SERVICES_ENTRY) {
-                        val text = source.getInputStream(entry).use { it.readBytes().toString(Charsets.UTF_8) }
-                        zip.write("$text\n$PLANTED_FACTORY".toByteArray(Charsets.UTF_8))
-                    } else if (!entry.isDirectory) {
-                        source.getInputStream(entry).use { it.copyTo(zip) }
-                    }
-                    zip.closeEntry()
-                }
+                // The planted class is skipped if the source has it, so the copy never writes a duplicate name.
+                source
+                    .entries()
+                    .asSequence()
+                    .filter { it.name != PLANTED_CLASS }
+                    .forEach { copyEntry(source, it, zip) }
                 zip.putNextEntry(ZipEntry(PLANTED_CLASS))
                 zip.write(byteArrayOf(0xCA.toByte(), 0xFE.toByte()))
                 zip.closeEntry()
             }
         }
         return out
+    }
+
+    /** Copies one entry; the AiBackendFactory services file gets the planted CLI factory line appended. */
+    private fun copyEntry(
+        source: ZipFile,
+        entry: ZipEntry,
+        zip: ZipOutputStream,
+    ) {
+        zip.putNextEntry(ZipEntry(entry.name))
+        if (entry.name == FACTORY_SERVICES_ENTRY) {
+            val text = source.getInputStream(entry).use { it.readBytes().toString(Charsets.UTF_8) }
+            zip.write("$text\n$PLANTED_FACTORY".toByteArray(Charsets.UTF_8))
+        } else if (!entry.isDirectory) {
+            source.getInputStream(entry).use { it.copyTo(zip) }
+        }
+        zip.closeEntry()
     }
 
     private fun sha256(file: File): String {
