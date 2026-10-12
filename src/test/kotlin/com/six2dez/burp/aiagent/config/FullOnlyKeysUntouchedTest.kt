@@ -13,6 +13,10 @@ import org.mockito.kotlin.whenever
  * must leave a full install's CLI configuration exactly as it found it, so switching back to the full
  * JAR restores it. The store-classpath repository never reads, writes or deletes the full-only CLI
  * keys: they now belong to the full build's CLI plug-in under their 1.0.1 names (D-11).
+ *
+ * Plan 29-15 (NET-02, T-29-29) adds `mcp.external.servers.v1`, the external MCP server list that the
+ * full build's external-MCP plug-in now owns. Its seeded value is a 1.0.1-shaped blob with an ENC1 token
+ * field, so a store save that re-serialized or blanked it would show as a changed value.
  */
 class FullOnlyKeysUntouchedTest {
     private val prefs = InMemoryPreferences()
@@ -77,6 +81,9 @@ class FullOnlyKeysUntouchedTest {
                 "claude.cmd" to "claude -p",
                 "copilot.cmd" to "copilot --allow-all-tools",
                 "ollama.cli.cmd" to "ollama run llama3.2",
+                "mcp.external.servers.v1" to
+                    "[{\"name\":\"x\",\"transport\":\"SSE\",\"url\":\"https://mcp.example.com/sse\"," +
+                    "\"bearerToken\":\"ENC1:AQAAAAAAAAAAAAAAAAAAAAAA\",\"enabled\":true}]",
             )
 
         val FULL_ONLY_KEYS = SEEDED_STRINGS.keys + KEY_CLI_TIMEOUT
