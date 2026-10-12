@@ -1,6 +1,7 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.testing.Test
+import org.gradle.api.tasks.testing.logging.TestExceptionFormat
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 import javax.xml.parsers.DocumentBuilderFactory
 
@@ -100,6 +101,28 @@ object BuildFlags {
             """.trimIndent() + "\n",
         )
     }
+}
+
+// Phase 30 / CI-01: the two build outputs storeJarContentTest reads from disk, handed to its JVM as system
+// properties. Gradle cannot infer a file a test opens by path, so they are declared here as annotated
+// properties: `jvmArgumentProviders` is a @Nested input of the Test task, which makes both the store JAR and
+// the src/full class directories task inputs. A changed JAR therefore re-runs the inspection instead of
+// being served from cache (the 22-09 stale-cache defect class). A lambda provider would be a Java lambda,
+// which Gradle cannot fingerprint as a nested input, so this is a class (RESEARCH assumption A1).
+abstract class StoreJarInspectionArgs : CommandLineArgumentProvider {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val storeJar: RegularFileProperty
+
+    @get:InputFiles
+    @get:PathSensitive(PathSensitivity.RELATIVE)
+    abstract val fullClassDirs: ConfigurableFileCollection
+
+    override fun asArguments(): Iterable<String> =
+        listOf(
+            "-Dburp.aiagent.storeJar=${storeJar.get().asFile.absolutePath}",
+            "-Dburp.aiagent.fullClassDirs=" + fullClassDirs.files.joinToString(File.pathSeparator) { it.absolutePath },
+        )
 }
 
 val generateBuildFlags by tasks.registering(GenerateBuildFlagsTask::class) {
@@ -430,6 +453,8 @@ tasks.test {
     // windowed path and hiding a CI-only failure.
     declareStructuralInputs()
     excludeHeavyTestsIfRequested()
+    // Phase 30 / CI-01: StoreJarContentTest needs the store JAR property and runs only in storeJarContentTest.
+    filter { excludeTestsMatching("*StoreJarContentTest") }
 }
 
 // REL-05 / SC1 / S-10: `tasks.test` above enables `-ea`, so a green McpToolExecutorEdtGuardTest there
@@ -472,6 +497,47 @@ val fullTest =
         jvmArgs("-ea", "-Djava.awt.headless=true")
         declareStructuralInputs()
         excludeHeavyTestsIfRequested()
+    }
+
+// Phase 30 / CI-01 (ADR-18: "checked by content, not by intent"): opens the JAR bappJar writes and fails,
+// naming each entry and its rule, on any full-only class, CLI backend, Ktor client / CIO or MCP SDK client
+// class, plug-in services file or CLI factory line. It automates the manual 29-17 check.
+//
+// It is its own task rather than a class in `test` on purpose: inside plain `test`, every unit run would
+// have to build the store JAR first, and the coverage job's dry-run guard would find a packaging check in
+// the graph it reads. `check` depends on it, and build.yml (pr-gate, store-build) and release.yml invoke it
+// by name, so a PR and a release are gated by the same task. It runs on the store test classpath only:
+// the src/full output is read as FILES (the derived forbidden set), never put on the classpath. It is
+// derived from the class directories alone, never from the full resources, which hold an AiBackendFactory
+// services file the store JAR legitimately carries too. Not finalized by jacocoTestReport and given no
+// structural inputs or heavy-test filter: it measures a JAR, not coverage.
+//
+// The store JAR is referenced only through bappJar's archiveFile provider: BappManifestTest pins the store
+// file name to a single occurrence in this script, the archive-name setter inside bappJar.
+// Run it locally with: ./gradlew bappJar storeJarContentTest
+val storeJarContentTest =
+    tasks.register<Test>("storeJarContentTest") {
+        description = "Inspects the BApp Store JAR for full-only and CLI content (CI-01)."
+        group = "verification"
+        useJUnitPlatform()
+        val testSourceSet = sourceSets.test.get()
+        testClassesDirs = testSourceSet.output.classesDirs
+        classpath = testSourceSet.runtimeClasspath
+        jvmArgs("-ea", "-Djava.awt.headless=true")
+        dependsOn(bappJar)
+        jvmArgumentProviders.add(
+            objects.newInstance<StoreJarInspectionArgs>().apply {
+                storeJar.set(bappJar.flatMap { it.archiveFile })
+                fullClassDirs.from(fullSourceSet.output.classesDirs)
+            },
+        )
+        filter { includeTestsMatching("*StoreJarContentTest") }
+        // The default SHORT format prints the exception type and location but not its message, so a CI log
+        // would show a failure without the offending entry (RESEARCH Pitfall 3).
+        testLogging {
+            events("failed")
+            exceptionFormat = TestExceptionFormat.FULL
+        }
     }
 
 tasks.register<Test>("nightlyRegressionTest") {
@@ -748,6 +814,7 @@ val jacocoMcpTreeCoverageVerification =
 
 tasks.named("check") {
     dependsOn(fullTest)
+    dependsOn(storeJarContentTest)
     dependsOn(tasks.named("jacocoTestCoverageVerification"))
     dependsOn(jacocoMcpTreeCoverageVerification)
 }
