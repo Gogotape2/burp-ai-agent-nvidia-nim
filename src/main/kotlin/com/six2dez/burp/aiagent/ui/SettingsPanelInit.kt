@@ -481,9 +481,6 @@ internal fun SettingsPanel.initUiWiring() {
     activeAiScopeOnly.addActionListener {
         applyActiveAiSettings()
     }
-    activeAiAutoFromPassive.addActionListener {
-        applyActiveAiSettings()
-    }
     activeAiMaxConcurrentSpinner.addChangeListener {
         applyActiveAiSettings()
     }

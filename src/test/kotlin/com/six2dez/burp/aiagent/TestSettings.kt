@@ -76,7 +76,6 @@ object TestSettings {
             activeAiRequestDelayMs = 100,
             activeAiMaxRiskLevel = PayloadRisk.SAFE,
             activeAiScopeOnly = true,
-            activeAiAutoFromPassive = true,
             activeAiScanMode = ScanMode.FULL,
             activeAiUseCollaborator = false,
             bountyPromptEnabled = false,

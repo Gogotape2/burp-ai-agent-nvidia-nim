@@ -24,7 +24,9 @@ import com.six2dez.burp.aiagent.scanner.AiScanCheck
 import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
 import com.six2dez.burp.aiagent.scanner.applyOptimizationSettings
 import com.six2dez.burp.aiagent.spi.AiAccessPolicy
+import com.six2dez.burp.aiagent.spi.ExtensionPlugin
 import com.six2dez.burp.aiagent.spi.FlavorProfile
+import com.six2dez.burp.aiagent.spi.PluginHost
 import com.six2dez.burp.aiagent.spi.Plugins
 import com.six2dez.burp.aiagent.spi.StoreAiAccessPolicy
 import com.six2dez.burp.aiagent.spi.StoreFlavorProfile
@@ -32,6 +34,7 @@ import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.MainTab
 import com.six2dez.burp.aiagent.ui.UiActions
 import java.nio.file.Paths
+import java.util.ServiceConfigurationError
 
 object App {
     lateinit var api: MontoyaApi
@@ -56,6 +59,9 @@ object App {
         private set
 
     private lateinit var settingsRepo: AgentSettingsRepository
+
+    @Volatile
+    private var installedPlugins: List<ExtensionPlugin> = emptyList()
 
     fun initialize(montoyaApi: MontoyaApi) {
         api = montoyaApi
@@ -166,7 +172,6 @@ object App {
         passiveAiScanner.scopeOnly = settings.passiveAiScopeOnly
         passiveAiScanner.maxSizeKb = settings.passiveAiMaxSizeKb
         passiveAiScanner.applyOptimizationSettings(settings)
-        passiveAiScanner.activeScanner = activeAiScanner // Wire passive -> active
         passiveAiScanner.setEnabled(settings.passiveAiEnabled)
 
         // Initialize active AI scanner
@@ -179,6 +184,11 @@ object App {
         activeAiScanner.scanMode = settings.activeAiScanMode
         activeAiScanner.useCollaborator = settings.activeAiUseCollaborator
         activeAiScanner.setEnabled(settings.activeAiEnabled)
+
+        // Phase 29 / D-02, BUILD-04: full-build plug-ins (the opt-in passive-to-active auto-queue)
+        // install here, after both scanners exist. The store JAR has no ExtensionPlugin services file,
+        // so it installs nothing and the passive scanner keeps no sink.
+        installExtensionPlugins()
 
         val ui =
             MainTab(
@@ -254,6 +264,11 @@ object App {
     fun shutdown() {
         safeShutdownStep("MainTab") { mainTab?.shutdown() }
         mainTab = null
+        // Plug-ins unhook before the scanners stop (the auto-queue plug-in clears the passive sink).
+        installedPlugins.forEach { plugin ->
+            safeShutdownStep("Plug-in ${plugin.javaClass.name}") { plugin.shutdown() }
+        }
+        installedPlugins = emptyList()
         safeShutdownStep("AI Request Logger") { aiRequestLogger.shutdown() }
         safeShutdownStep("Passive scanner") {
             passiveAiScanner.setEnabled(false)
@@ -293,6 +308,32 @@ object App {
         // harmless even if this line is ever removed.
         safeShutdownStep("Redaction truncation sink") { Redaction.truncationLogger = null }
         AuditLogger.registerGlobalEmitter(null)
+    }
+
+    /**
+     * Installs every [ExtensionPlugin] on the extension's classpath. A plug-in whose install throws is
+     * logged to Burp's error output and skipped, and the extension still loads (T-29-35).
+     */
+    private fun installExtensionPlugins() {
+        val host =
+            PluginHost(
+                api = api,
+                pluginSettings = settingsRepo.pluginSettings(),
+                passiveScanner = passiveAiScanner,
+                activeScanner = activeAiScanner,
+                log = api.logging()::logToOutput,
+            )
+        installedPlugins =
+            loadExtensionPlugins { error -> api.logging().logToError("Extension plug-in failed to load: ${error.message}") }
+                .filter { plugin ->
+                    try {
+                        plugin.install(host)
+                        true
+                    } catch (e: Exception) {
+                        api.logging().logToError("Extension plug-in ${plugin.javaClass.name} failed to install: ${e.message}")
+                        false
+                    }
+                }
     }
 
     private fun configureRollingLoggerFromProperties() {
@@ -347,6 +388,18 @@ object App {
  * (15 characters, no surrounding whitespace), pinned by ExtensionNameTest and FullExtensionNameTest.
  */
 const val EXTENSION_NAME = "Custom AI Agent"
+
+/**
+ * Phase 29 / D-02 — every [ExtensionPlugin] provider (none on the store classpath). A provider that
+ * cannot be instantiated is reported to [onError] and the result is empty, so extension load continues.
+ */
+internal fun loadExtensionPlugins(onError: (Throwable) -> Unit = {}): List<ExtensionPlugin> =
+    try {
+        Plugins.load(ExtensionPlugin::class.java)
+    } catch (e: ServiceConfigurationError) {
+        onError(e)
+        emptyList()
+    }
 
 /**
  * Phase 29 — the running flavor's [FlavorProfile]: the full build's provider when its services file is

@@ -153,7 +153,6 @@ internal fun SettingsPanel.activeAiScannerSection(): JPanel =
     ActiveScanConfigPanel(
         activeAiEnabled = activeAiEnabled,
         activeAiScopeOnly = activeAiScopeOnly,
-        activeAiAutoFromPassive = activeAiAutoFromPassive,
         activeAiMaxConcurrentSpinner = activeAiMaxConcurrentSpinner,
         activeAiMaxPayloadsSpinner = activeAiMaxPayloadsSpinner,
         activeAiTimeoutSpinner = activeAiTimeoutSpinner,

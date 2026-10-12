@@ -6,6 +6,7 @@ import com.six2dez.burp.aiagent.audit.AiRequestLogger
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
+import com.six2dez.burp.aiagent.spi.SuggestedTargetSink
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.util.BudgetGuard
 import java.util.LinkedHashMap
@@ -69,11 +70,13 @@ class PassiveAiScanner(
         }
     internal val findings = ArrayDeque<PassiveAiFinding>(Defaults.FINDINGS_BUFFER_SIZE)
 
-    // Reference to active scanner for auto-queueing
-    var activeScanner: ActiveAiScanner? = null
-
+    /**
+     * Phase 29 / D-02: where the suggested targets of a new finding go. Null in the store build, which
+     * installs no sink, so no target is built and the passive scan never queues target traffic. The
+     * full build's opt-in auto-queue plug-in sets it on install and clears it on unload.
+     */
     @Volatile
-    var suggestedTargetSink: com.six2dez.burp.aiagent.spi.SuggestedTargetSink? = null
+    var suggestedTargetSink: SuggestedTargetSink? = null
 
     // Configurable settings with defaults
     var rateLimitSeconds: Int = 5

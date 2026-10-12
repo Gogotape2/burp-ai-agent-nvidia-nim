@@ -521,7 +521,6 @@ class SettingsPanel(
     // Active AI Scanner UI components
     internal val activeAiEnabled = ToggleSwitch(settings.activeAiEnabled)
     internal val activeAiScopeOnly = JCheckBox("In-scope only", settings.activeAiScopeOnly)
-    internal val activeAiAutoFromPassive = JCheckBox("Auto-queue passive findings", settings.activeAiAutoFromPassive)
     internal val activeAiMaxConcurrentSpinner =
         JSpinner(SpinnerNumberModel(settings.activeAiMaxConcurrent, 1, 10, 1)).apply {
             preferredSize = java.awt.Dimension(70, preferredSize.height)

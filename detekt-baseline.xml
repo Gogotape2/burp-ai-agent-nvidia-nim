@@ -865,7 +865,6 @@
     <ID>ReturnCount:PassiveAiScannerFilters.kt$internal fun PassiveAiScanner.shouldSkipAiAfterLocalFindings( localFindings: List&lt;LocalFinding>, request: HttpRequest, requestBody: String, ): Boolean</ID>
     <ID>ReturnCount:PassiveAiScannerFilters.kt$internal fun PassiveAiScanner.shouldSkipKnownResponseFingerprint( request: HttpRequest, response: HttpResponse?, responseBody: String, ): Boolean</ID>
     <ID>ReturnCount:PassiveAiScannerFilters.kt$internal fun PassiveAiScanner.shouldSkipUninterestingTraffic( request: HttpRequest, response: HttpResponse?, responseBody: String, ): Boolean</ID>
-    <ID>ReturnCount:PassiveAiScannerFinding.kt$internal fun PassiveAiScanner.queueToActiveScanner( requestResponse: HttpRequestResponse, title: String, severity: String, detail: String, confidence: Int, settings: AgentSettings, )</ID>
     <ID>ReturnCount:PassiveAiScannerHeuristics.kt$private fun detectCsrf( request: HttpRequest, response: HttpResponse?, ): LocalFinding?</ID>
     <ID>ReturnCount:PassiveAiScannerHeuristics.kt$private fun detectUnrestrictedFileUpload( request: HttpRequest, response: HttpResponse?, requestBody: String, responseBody: String, ): LocalFinding?</ID>
     <ID>ReturnCount:PassiveAiScannerParsing.kt$internal fun cleanJsonResponse(text: String): String</ID>

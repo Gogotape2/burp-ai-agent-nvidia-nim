@@ -118,7 +118,6 @@ data class AgentSettings(
     val activeAiRequestDelayMs: Int = 100,
     val activeAiMaxRiskLevel: PayloadRisk = PayloadRisk.SAFE,
     val activeAiScopeOnly: Boolean = true,
-    val activeAiAutoFromPassive: Boolean = true, // Auto-queue passive findings
     val activeAiScanMode: ScanMode = ScanMode.FULL,
     val activeAiUseCollaborator: Boolean = false, // SSRF OAST confirmation
     val activeAiAdaptivePayloads: Boolean = false,
@@ -378,7 +377,6 @@ class AgentSettingsRepository(
             activeAiRequestDelayMs = (prefs.getInteger(KEY_ACTIVE_AI_DELAY) ?: 100).coerceIn(0, 5000),
             activeAiMaxRiskLevel = PayloadRisk.fromString(prefs.getString(KEY_ACTIVE_AI_RISK_LEVEL)),
             activeAiScopeOnly = prefs.getBoolean(KEY_ACTIVE_AI_SCOPE_ONLY) ?: true,
-            activeAiAutoFromPassive = prefs.getBoolean(KEY_ACTIVE_AI_AUTO_PASSIVE) ?: true,
             activeAiScanMode = ScanMode.fromString(prefs.getString(KEY_ACTIVE_AI_SCAN_MODE)),
             activeAiUseCollaborator = prefs.getBoolean(KEY_ACTIVE_AI_USE_COLLABORATOR) ?: false,
             activeAiAdaptivePayloads = prefs.getBoolean(KEY_ACTIVE_AI_ADAPTIVE_PAYLOADS) ?: false,
@@ -500,7 +498,6 @@ class AgentSettingsRepository(
             activeAiRequestDelayMs = 100,
             activeAiMaxRiskLevel = PayloadRisk.SAFE,
             activeAiScopeOnly = true,
-            activeAiAutoFromPassive = true,
             activeAiScanMode = ScanMode.FULL,
             activeAiUseCollaborator = false,
             bountyPromptEnabled = false,
@@ -648,7 +645,6 @@ class AgentSettingsRepository(
                 prefs.setInteger(KEY_ACTIVE_AI_DELAY, settings.activeAiRequestDelayMs)
                 prefs.setString(KEY_ACTIVE_AI_RISK_LEVEL, settings.activeAiMaxRiskLevel.name)
                 prefs.setBoolean(KEY_ACTIVE_AI_SCOPE_ONLY, settings.activeAiScopeOnly)
-                prefs.setBoolean(KEY_ACTIVE_AI_AUTO_PASSIVE, settings.activeAiAutoFromPassive)
                 prefs.setString(KEY_ACTIVE_AI_SCAN_MODE, settings.activeAiScanMode.name)
                 prefs.setBoolean(KEY_ACTIVE_AI_USE_COLLABORATOR, settings.activeAiUseCollaborator)
                 prefs.setBoolean(KEY_ACTIVE_AI_ADAPTIVE_PAYLOADS, settings.activeAiAdaptivePayloads)
@@ -958,7 +954,6 @@ class AgentSettingsRepository(
         private const val KEY_ACTIVE_AI_DELAY = "active.ai.delay"
         private const val KEY_ACTIVE_AI_RISK_LEVEL = "active.ai.risk.level"
         private const val KEY_ACTIVE_AI_SCOPE_ONLY = "active.ai.scope.only"
-        private const val KEY_ACTIVE_AI_AUTO_PASSIVE = "active.ai.auto.passive"
         private const val KEY_ACTIVE_AI_SCAN_MODE = "active.ai.scan.mode"
         private const val KEY_ACTIVE_AI_USE_COLLABORATOR = "active.ai.use.collaborator"
         private const val KEY_ACTIVE_AI_ADAPTIVE_PAYLOADS = "active.ai.adaptive.payloads"

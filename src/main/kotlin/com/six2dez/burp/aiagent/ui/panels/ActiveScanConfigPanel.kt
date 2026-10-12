@@ -26,7 +26,6 @@ import javax.swing.border.LineBorder
 class ActiveScanConfigPanel(
     private val activeAiEnabled: JComponent,
     private val activeAiScopeOnly: JCheckBox,
-    private val activeAiAutoFromPassive: JCheckBox,
     private val activeAiMaxConcurrentSpinner: JSpinner,
     private val activeAiMaxPayloadsSpinner: JSpinner,
     private val activeAiTimeoutSpinner: JSpinner,
@@ -57,11 +56,6 @@ class ActiveScanConfigPanel(
         activeAiScopeOnly.background = DesignTokens.Colors.surface
         activeAiScopeOnly.foreground = DesignTokens.Colors.onSurface
         activeAiScopeOnly.toolTipText = "Only test requests that are in the defined target scope."
-
-        activeAiAutoFromPassive.font = DesignTokens.Typography.body
-        activeAiAutoFromPassive.background = DesignTokens.Colors.surface
-        activeAiAutoFromPassive.foreground = DesignTokens.Colors.onSurface
-        activeAiAutoFromPassive.toolTipText = "Automatically queue passive scanner findings for active testing."
 
         activeAiStatusLabel.font = DesignTokens.Typography.body
         activeAiStatusLabel.foreground = DesignTokens.Colors.onSurfaceVariant
@@ -145,8 +139,6 @@ class ActiveScanConfigPanel(
         addRowFull(gridA, "Enable scanner", activeAiEnabled)
         addSpacerRow(gridA, DesignTokens.Spacing.xs)
         addRowFull(gridA, "In-scope only", activeAiScopeOnly)
-        addSpacerRow(gridA, DesignTokens.Spacing.xs)
-        addRowFull(gridA, "Auto-queue findings", activeAiAutoFromPassive)
         addSpacerRow(gridA, DesignTokens.Spacing.xs)
         addRowFull(gridA, "Status", activeAiStatusLabel)
         addSpacerRow(gridA, DesignTokens.Spacing.xs)

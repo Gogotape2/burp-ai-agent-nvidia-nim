@@ -29,7 +29,10 @@ private const val BASELINE_FILE = "detekt-baseline.xml"
  * ReturnCount entries carry local suppressions instead), then to 986 in the commit that replaced the
  * TokenTracker CLI ratios with backend-published ones (its `3.5` and `3.7` entries), then to 985 in
  * the commit that gave ActiveScanConfigPanel its settings-contribution parameter (plan 29-13: its
- * constructor's LongParameterList entry, replaced by a local suppression).
+ * constructor's LongParameterList entry, replaced by a local suppression), then, after later plans
+ * brought the baseline to 973, to 972 in the commit that replaced the passive scanner's direct
+ * active-scanner queueing with the suggested-target sink (plan 29-16: the old function's ReturnCount
+ * entry; the new offerSuggestedTargets passes on its own).
  *
  * This is a CEILING, not a target. ADR-17 clause 1 says the baseline may lose entries and may never
  * gain them, so the only edit this constant is ever allowed to receive is a DOWNWARD one, made in the
@@ -37,7 +40,7 @@ private const val BASELINE_FILE = "detekt-baseline.xml"
  * somebody would otherwise have had to answer into a finding nobody will ever see again — which is
  * precisely the inversion ADR-17 clause 1 exists to forbid.
  */
-private const val MAX_BASELINE_ENTRIES = 973
+private const val MAX_BASELINE_ENTRIES = 972
 
 /**
  * QUAL-07 / SC3 gate on ADR-17 clause 1 — "`detekt-baseline.xml` shrinks and is never appended to".

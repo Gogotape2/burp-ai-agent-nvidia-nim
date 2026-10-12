@@ -176,7 +176,6 @@ internal fun SettingsPanel.currentSettings(): AgentSettings {
         activeAiRequestDelayMs = (activeAiDelaySpinner.value as? Int) ?: 100,
         activeAiMaxRiskLevel = PayloadRisk.fromString(activeAiRiskLevelCombo.selectedItem as? String),
         activeAiScopeOnly = activeAiScopeOnly.isSelected,
-        activeAiAutoFromPassive = activeAiAutoFromPassive.isSelected,
         activeAiScanMode = ScanMode.fromString(activeAiScanModeCombo.selectedItem as? String),
         activeAiUseCollaborator = activeAiUseCollaborator.isSelected,
         activeAiAdaptivePayloads = activeAiAdaptivePayloads.isSelected,
@@ -425,7 +424,6 @@ internal fun SettingsPanel.applySettingsToUi(
     // Active AI Scanner settings
     activeAiEnabled.isSelected = updated.activeAiEnabled
     activeAiScopeOnly.isSelected = updated.activeAiScopeOnly
-    activeAiAutoFromPassive.isSelected = updated.activeAiAutoFromPassive
     activeAiMaxConcurrentSpinner.value = updated.activeAiMaxConcurrent
     activeAiMaxPayloadsSpinner.value = updated.activeAiMaxPayloadsPerPoint
     activeAiTimeoutSpinner.value = updated.activeAiTimeoutSeconds
