@@ -2,6 +2,7 @@ package com.six2dez.burp.aiagent.mcp.tools
 
 import burp.api.montoya.MontoyaApi
 import burp.api.montoya.core.BurpSuiteEdition
+import com.six2dez.burp.aiagent.full.external.ExternalToolProvider
 import com.six2dez.burp.aiagent.mcp.McpRequestLimiter
 import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.mcp.McpToolContext
@@ -11,7 +12,6 @@ import com.six2dez.burp.aiagent.redact.PrivacyMode
 import io.modelcontextprotocol.kotlin.sdk.TextContent
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Answers
@@ -24,12 +24,17 @@ import org.mockito.kotlin.whenever
 /**
  * Unit tests for Phase 16 (CAP-02) external tool routing in [McpToolExecutor].
  *
+ * Phase 29 (NET-02, D-14): the routing lives in the full build's [ExternalToolProvider], reached through
+ * the executor's provider dynamic namespace, so this suite runs on the fullTest classpath. A fake manager
+ * is injected through an [ExternalToolProvider] in a [ToolRegistry] passed as [McpToolContext.toolRegistry].
+ *
  * Covers:
  * - SC1: external tools appear in describeTools() preamble as ext:<server>:<tool>
  * - D-04: ext:-prefixed calls route to ExternalMcpClientManager, built-ins are unaffected
  * - D-03 (outbound privacy): redactIfNeeded() applied to outbound args before callTool()
  * - SC2: trust-boundary-wrapped result from callTool() flows unchanged into CallToolResult
  * - Null manager: returns error CallToolResult for ext: calls when no manager configured
+ * - knownTool: a name is known only when the manager exposes it
  */
 class McpToolExecutorExternalRoutingTest {
     private fun baseContext(
@@ -50,7 +55,7 @@ class McpToolExecutorExternalRoutingTest {
             limiter = McpRequestLimiter(4),
             edition = BurpSuiteEdition.PROFESSIONAL,
             maxBodyBytes = 8192,
-            externalClientManager = manager,
+            toolRegistry = ToolRegistry(listOf(NativeToolProvider(), GenericToolProvider(), ExternalToolProvider { manager })),
         )
     }
 
@@ -207,10 +212,8 @@ class McpToolExecutorExternalRoutingTest {
 
     @Test
     fun executeToolResult_extPrefix_redactsArgsBeforeForwarding() {
-        // Use STRICT privacy mode so that redactIfNeeded() is called and transforms secret-shaped values.
-        // We verify by capturing what args were received by callTool() — if redaction ran, the host
-        // salt will be applied; we confirm by checking the call was made (not that specific text changed,
-        // since Redaction transforms depend on host-salt + patterns).
+        // STRICT privacy mode, and a bearer-shaped value the redaction pipeline always rewrites: what
+        // callTool() receives must be the redacted arguments, never the raw ones.
         val capturedArgs = mutableListOf<Map<String, Any?>>()
         val manager =
             mock<ExternalMcpClientManager> {
@@ -223,35 +226,55 @@ class McpToolExecutorExternalRoutingTest {
 
         // STRICT mode ensures redactIfNeeded() passes through the redaction pipeline.
         val context = baseContext(manager = manager, privacyMode = PrivacyMode.STRICT)
-        val argsJson = """{"query":"example.com"}"""
+        val secret = "abcdef0123456789SECRETTOKEN"
+        val argsJson = """{"query":"Bearer $secret"}"""
         McpToolExecutor.executeToolResult("ext:s:t", argsJson, context)
 
         assertEquals(1, capturedArgs.size, "callTool() must be invoked exactly once")
-        // The key point: callTool() was called with the result of redactIfNeeded(), not with the raw argsJson.
-        // For STRICT mode with a non-secret value, redactIfNeeded() returns the value unchanged (no patterns match).
-        // This test asserts the args map was parsed and forwarded — the exact values depend on redaction patterns.
-        assertNotNull(capturedArgs.first(), "args map must not be null")
+        val forwarded = capturedArgs.single()["query"].toString()
+        assertFalse(forwarded.contains(secret), "D-03: the bearer value is redacted before it leaves for the server: $forwarded")
+        assertEquals(
+            ExternalToolProvider.parseArgsMapOrEmpty(context.redactIfNeeded(argsJson)),
+            capturedArgs.single(),
+            "the forwarded map is exactly the redacted arguments",
+        )
+    }
+
+    // ── knownTool (ChatPanel's audit record reads ToolRegistry.isKnown) ─────────────────────────────
+
+    @Test
+    fun isKnown_extName_trueOnlyForNamesTheManagerExposes() {
+        val manager = mock<ExternalMcpClientManager>()
+        whenever(manager.availableTools()).thenReturn(
+            listOf(ExternalToolDescriptor(serverName = "demo", name = "ext:demo:search", description = "Search")),
+        )
+        val context = baseContext(manager = manager)
+
+        assertTrue(context.toolRegistry.isKnown("ext:demo:search", context), "an exposed ext: name is known")
+        assertFalse(context.toolRegistry.isKnown("ext:demo:other", context), "an ext: name no server exposes is unknown")
+        assertTrue(context.toolRegistry.isKnown("status", context), "a catalog tool is known")
+        assertFalse(baseContext(manager = null).let { it.toolRegistry.isKnown("ext:demo:search", it) }, "no manager: unknown")
     }
 
     // ── parseArgsMapOrEmpty ──────────────────────────────────────────────────────────────────────
 
     @Test
     fun parseArgsMapOrEmpty_blankInput_returnsEmpty() {
-        assertTrue(McpToolExecutor.parseArgsMapOrEmpty("").isEmpty())
-        assertTrue(McpToolExecutor.parseArgsMapOrEmpty("{}").isEmpty())
-        assertTrue(McpToolExecutor.parseArgsMapOrEmpty("   ").isEmpty())
+        assertTrue(ExternalToolProvider.parseArgsMapOrEmpty("").isEmpty())
+        assertTrue(ExternalToolProvider.parseArgsMapOrEmpty("{}").isEmpty())
+        assertTrue(ExternalToolProvider.parseArgsMapOrEmpty("   ").isEmpty())
     }
 
     @Test
     fun parseArgsMapOrEmpty_validJson_parsesEntries() {
-        val result = McpToolExecutor.parseArgsMapOrEmpty("""{"key":"value","num":42}""")
+        val result = ExternalToolProvider.parseArgsMapOrEmpty("""{"key":"value","num":42}""")
         assertEquals("value", result["key"])
         assertEquals(42L, result["num"])
     }
 
     @Test
     fun parseArgsMapOrEmpty_invalidJson_returnsEmpty() {
-        val result = McpToolExecutor.parseArgsMapOrEmpty("{not-valid-json")
+        val result = ExternalToolProvider.parseArgsMapOrEmpty("{not-valid-json")
         assertTrue(result.isEmpty())
     }
 }

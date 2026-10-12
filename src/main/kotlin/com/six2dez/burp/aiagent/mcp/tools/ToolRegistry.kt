@@ -62,6 +62,16 @@ class ToolRegistry(
     /** The ids supplied by [NativeToolProvider]: the tools the store build ships. */
     fun coreToolIds(): Set<String> = coreIds
 
+    /**
+     * Whether [canonicalId] names a tool this registry can run: a registered tool, or a name some
+     * provider's dynamic namespace exposes now ([ToolProvider.isDynamicTool]). The chat audit's
+     * `knownTool` reads this, so an `ext:` name no configured server exposes is recorded as unknown.
+     */
+    fun isKnown(
+        canonicalId: String,
+        context: McpToolContext,
+    ): Boolean = canonicalId in handlersById || orderedProviders.any { it.isDynamicTool(canonicalId, context) }
+
     private fun register(
         handler: ToolHandler,
         provider: ToolProvider,

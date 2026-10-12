@@ -3,6 +3,8 @@ package com.six2dez.burp.aiagent.spi
 import com.six2dez.burp.aiagent.config.McpSettings
 import com.six2dez.burp.aiagent.mcp.McpToolContext
 import com.six2dez.burp.aiagent.mcp.McpToolDescriptor
+import com.six2dez.burp.aiagent.mcp.tools.ToolSpec
+import io.modelcontextprotocol.kotlin.sdk.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.Tool
 
 /**
@@ -67,4 +69,32 @@ interface ToolProvider {
      * client handles) so nothing outlives the server that handed it out.
      */
     fun onMcpServerStopped() {}
+
+    /**
+     * Phase 29 / D-14 — a provider-supplied dynamic namespace: tools that are not in the catalog because
+     * the provider only learns them at runtime (the full build's `ext:<server>:<tool>` external tools).
+     *
+     * `McpToolExecutor.executeToolResult` offers an `ext:`-prefixed name, after the REL-05 EDT check and
+     * canonicalization, to each provider in registry order; the first non-null result is returned, and
+     * none means "Unknown tool". A built-in name never reaches this function, so a provider can never
+     * shadow a catalog tool (T-16-04-COL). The approval tier of an `ext:` name is derived from its prefix
+     * in `ToolApprovalGate` (CONFIRM_EACH), never from the provider. The result is returned as the
+     * provider built it: a provider redacts what it sends out itself.
+     *
+     * @return the call's result if this provider owns [canonicalId], or null to let the next one try.
+     */
+    fun resolveDynamic(
+        canonicalId: String,
+        args: String?,
+        context: McpToolContext,
+    ): CallToolResult? = null
+
+    /** The dynamic tools this provider can run now, listed by `McpToolExecutor.describeTools` as `[external]`. */
+    fun describeDynamic(context: McpToolContext): List<ToolSpec> = emptyList()
+
+    /** True when [canonicalId] is a dynamic tool this provider can run now (the chat audit's `knownTool`). */
+    fun isDynamicTool(
+        canonicalId: String,
+        context: McpToolContext,
+    ): Boolean = false
 }
