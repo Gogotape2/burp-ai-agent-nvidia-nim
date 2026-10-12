@@ -1,9 +1,7 @@
 package com.six2dez.burp.aiagent
 
 import burp.api.montoya.MontoyaApi
-import burp.api.montoya.core.BurpSuiteEdition
 import burp.api.montoya.http.Http
-import burp.api.montoya.http.HttpMode
 import burp.api.montoya.http.HttpService
 import burp.api.montoya.http.RequestOptions
 import burp.api.montoya.http.message.HttpRequestResponse
@@ -15,12 +13,6 @@ import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPoint
 import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPointType
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
-import com.six2dez.burp.aiagent.mcp.McpRequestLimiter
-import com.six2dez.burp.aiagent.mcp.McpToolCatalog
-import com.six2dez.burp.aiagent.mcp.McpToolContext
-import com.six2dez.burp.aiagent.mcp.ToolCallOrigin
-import com.six2dez.burp.aiagent.mcp.tools.McpToolExecutor
-import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.scanner.ActiveAiScanner
 import com.six2dez.burp.aiagent.scanner.ActiveScanResult
 import com.six2dez.burp.aiagent.scanner.ActiveScanTarget
@@ -67,7 +59,10 @@ import burp.api.montoya.core.ByteArray as MontoyaByteArray
  * credentials cross to a third party there.
  *
  * The behaviour tests drive the real send paths through a mock Montoya object factory whose one
- * [RequestOptions] mock records every option invoked on it. The ledger tests pin the source tree:
+ * [RequestOptions] mock records every option invoked on it. Phase 29 (D-16): the two behaviour pins
+ * for `http1_request` / `http2_request` execute those generic tools, which only the full flavor
+ * packages, so they run in FullTargetTrafficTlsTest; their row in the table stays here, because the
+ * send-site ledger below still counts them through SourceRoots. The ledger tests pin the source tree:
  * a new `.sendRequest(` site turns [everyMontoyaSendSiteIsClassified] red until its author
  * classifies it in the table above and raises the count.
  */
@@ -159,35 +154,6 @@ class TargetTrafficTlsTest {
         val sends = sendsOn(apiHttp) + sendsOn(scanHttp)
         assertTrue(sends >= 2, "expected at least two sends, got $sends")
         assertEquals(0, tlsOptionCalls(), "the Burp Scanner AI check must not require upstream TLS verification on target traffic")
-    }
-
-    @Test
-    fun theMcpHttp1ToolSendsWithoutUpstreamTlsVerification() {
-        val api = newDeepStubApi()
-        val rawRequest = "GET / HTTP/1.1\r\nHost: $HOST\r\n\r\n"
-        val args =
-            "{\"content\":${jsonString(rawRequest)},\"targetHostname\":\"$HOST\"," +
-                "\"targetPort\":443,\"usesHttps\":true}"
-
-        val result = exec("http1_request", args, contextWith(api))
-
-        assertEquals(1, sendsOn(api.http()), "expected exactly one send, tool output: $result")
-        assertEquals(0, tlsOptionCalls(), "http1_request must not require upstream TLS verification on target traffic")
-    }
-
-    @Test
-    fun theMcpHttp2ToolKeepsHttp2ModeWithoutUpstreamTlsVerification() {
-        val api = newDeepStubApi()
-        val args =
-            "{\"pseudoHeaders\":{\"method\":\"GET\",\"path\":\"/\",\"scheme\":\"https\",\"authority\":\"$HOST\"}," +
-                "\"headers\":{},\"requestBody\":\"\",\"targetHostname\":\"$HOST\"," +
-                "\"targetPort\":443,\"usesHttps\":true}"
-
-        val result = exec("http2_request", args, contextWith(api))
-
-        assertEquals(1, sendsOn(api.http()), "expected exactly one send, tool output: $result")
-        verify(options).withHttpMode(HttpMode.HTTP_2)
-        assertEquals(0, tlsOptionCalls(), "http2_request must not require upstream TLS verification on target traffic")
     }
 
     @Test
@@ -334,45 +300,6 @@ class TargetTrafficTlsTest {
         }
     }
 
-    private fun exec(
-        toolId: String,
-        argsJson: String,
-        context: McpToolContext,
-    ): String = McpToolExecutor.executeTool(toolId, argsJson, context, ToolCallOrigin.UserSlashCommand)
-
-    private fun contextWith(api: MontoyaApi): McpToolContext =
-        McpToolContext(
-            api = api,
-            privacyMode = PrivacyMode.OFF,
-            determinismMode = false,
-            hostSalt = "test",
-            toolToggles = McpToolCatalog.all().associate { it.id to true },
-            unsafeEnabled = true,
-            unsafeTools = McpToolCatalog.unsafeToolIds(),
-            enabledUnsafeTools = McpToolCatalog.unsafeToolIds(),
-            limiter = McpRequestLimiter(8),
-            edition = BurpSuiteEdition.PROFESSIONAL,
-            maxBodyBytes = 16_384,
-            scopeOnly = false,
-        )
-
-    private fun newDeepStubApi(): MontoyaApi {
-        val api = mock<MontoyaApi>(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
-        whenever(api.burpSuite().version().edition()).thenReturn(BurpSuiteEdition.PROFESSIONAL)
-        whenever(api.scope().isInScope(any())).thenReturn(true)
-        return api
-    }
-
-    private fun jsonString(raw: String): String {
-        val escaped =
-            raw
-                .replace("\\", "\\\\")
-                .replace("\"", "\\\"")
-                .replace("\r", "\\r")
-                .replace("\n", "\\n")
-        return "\"$escaped\""
-    }
-
     private fun occurrencesPerFile(token: String): Map<String, Int> =
         SourceRoots
             .kotlinFiles()
@@ -390,7 +317,6 @@ class TargetTrafficTlsTest {
 
     private companion object {
         const val TLS_OPTION = "withUpstreamTLSVerification"
-        const val HOST = "example.com"
         const val PROVIDER_URL = "http://127.0.0.1:1234/v1/chat/completions"
     }
 }

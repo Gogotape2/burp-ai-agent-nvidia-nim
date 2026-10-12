@@ -24,6 +24,9 @@ import java.util.concurrent.TimeUnit
  * inherit an AUTO tier nobody assigned to it (T-29-11), so construction must FAIL on any id or alias
  * collision, naming both providers. Fake providers are injected by constructing a registry directly;
  * none is registered through `src/test/resources/META-INF/services`, which every store test would see.
+ *
+ * Phase 29 (D-16): the two tests that build a registry over the real `GenericToolProvider` (its alias
+ * table, and core ids that exclude its tools) run in FullToolRegistryTest, on the full classpath.
  */
 class ToolRegistryTest {
     @Test
@@ -92,25 +95,6 @@ class ToolRegistryTest {
         val second = build().descriptors().map { it.id }
         assertEquals(expected, first)
         assertEquals(first, second, "the order must not depend on the construction")
-    }
-
-    @Test
-    fun canonicalIdResolvesTheGenericAliasesAndPassesEverythingElseThrough() {
-        val registry = ToolRegistry(listOf(NativeToolProvider(), GenericToolProvider()))
-        assertEquals("proxy_http_history", registry.canonicalId("History"))
-        assertEquals("site_map", registry.canonicalId(" sitemap "))
-        assertEquals("proxy_ws_history", registry.canonicalId("websocket"))
-        assertEquals("not_a_tool", registry.canonicalId("not_a_tool"))
-        // Unmatched input comes back verbatim, case included: lowercasing is for MATCHING only.
-        assertEquals("EXT:demo:x", registry.canonicalId("EXT:demo:x"))
-    }
-
-    @Test
-    fun coreToolIdsAreExactlyTheEightNatives() {
-        val registry = ToolRegistry(listOf(NativeToolProvider(), GenericToolProvider()))
-        assertEquals(NATIVE_IDS.toSet(), registry.coreToolIds())
-        assertEquals(NATIVE_IDS.toSet(), McpToolCatalog.coreToolIds())
-        assertEquals(NATIVE_IDS, registry.descriptors().take(NATIVE_IDS.size).map { it.id })
     }
 
     @Test
