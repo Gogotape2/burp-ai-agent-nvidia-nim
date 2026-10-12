@@ -291,6 +291,18 @@ internal fun PassiveAiScanner.hasExistingIssue(
         issues = api.siteMap().issues().map { issue -> issue.name() to issue.baseUrl() },
     )
 
+// RED skeleton (29-16 Task 1): replaced by the real implementation in the GREEN commit.
+@Suppress("UNUSED_PARAMETER", "UnusedParameter")
+internal fun PassiveAiScanner.offerSuggestedTargets(
+    requestResponse: burp.api.montoya.http.message.HttpRequestResponse,
+    title: String,
+    severity: String,
+    detail: String,
+    confidence: Int,
+    settings: AgentSettings,
+) {
+}
+
 internal fun PassiveAiScanner.queueToActiveScanner(
     requestResponse: HttpRequestResponse,
     title: String,

@@ -72,6 +72,9 @@ class PassiveAiScanner(
     // Reference to active scanner for auto-queueing
     var activeScanner: ActiveAiScanner? = null
 
+    @Volatile
+    var suggestedTargetSink: com.six2dez.burp.aiagent.spi.SuggestedTargetSink? = null
+
     // Configurable settings with defaults
     var rateLimitSeconds: Int = 5
     var scopeOnly: Boolean = true

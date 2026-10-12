@@ -9,6 +9,9 @@ import com.six2dez.burp.aiagent.mcp.SecTier
 import com.six2dez.burp.aiagent.mcp.ToolApprovalGate
 import com.six2dez.burp.aiagent.mcp.tools.McpToolExecutor
 import com.six2dez.burp.aiagent.redact.PrivacyMode
+import com.six2dez.burp.aiagent.scanner.ActiveAiScanner
+import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
+import com.six2dez.burp.aiagent.spi.ExtensionPlugin
 import com.six2dez.burp.aiagent.spi.Plugins
 import com.six2dez.burp.aiagent.spi.StoreAiAccessPolicy
 import com.six2dez.burp.aiagent.spi.StoreFlavorProfile
@@ -51,6 +54,29 @@ class StoreFlavorSeamsTest {
             Plugins.load(ToolProvider::class.java).isEmpty(),
             "the ToolProvider services file must not be on the store classpath",
         )
+    }
+
+    @Test
+    fun storeClasspathHasNoExtensionPlugin() {
+        assertTrue(
+            Plugins.load(ExtensionPlugin::class.java).isEmpty(),
+            "the ExtensionPlugin services file must not be on the store classpath (no passive-to-active auto-queue)",
+        )
+    }
+
+    /**
+     * Plan 29-16 / D-02, T-29-33: the passive scanner offers suggested targets only to an optional
+     * SuggestedTargetSink, so it must hold no reference through which it could queue target traffic.
+     */
+    @Test
+    fun passiveScannerDeclaresNoActiveScannerField() {
+        val activeTyped =
+            generateSequence<Class<*>>(PassiveAiScanner::class.java) { it.superclass }
+                .flatMap { it.declaredFields.asSequence() }
+                .filter { ActiveAiScanner::class.java.isAssignableFrom(it.type) }
+                .map { "${it.declaringClass.simpleName}.${it.name}" }
+                .toList()
+        assertEquals(emptyList<String>(), activeTyped, "PassiveAiScanner fields typed ActiveAiScanner")
     }
 
     @Test
