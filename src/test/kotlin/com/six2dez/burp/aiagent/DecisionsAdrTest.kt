@@ -35,8 +35,8 @@ private const val MIN_ADR16_RESIDUALS = 7
 
 /**
  * SEC-06 / SC1 guard on ADR-15 — the written rule by which a tool added in a later phase inherits the
- * trust boundary instead of re-litigating it — since phase 25 the SEC-07 guard on ADR-16, and since
- * phase 26 the QUAL-07 guard on ADR-17.
+ * trust boundary instead of re-litigating it — since phase 25 the SEC-07 guard on ADR-16, since
+ * phase 26 the QUAL-07 guard on ADR-17, and since phase 29 the BUILD-01..04 guard on ADR-18.
  *
  * **What this test can do.** It is a string-match guard. It stops ADR-15 from disappearing, stops it
  * from silently losing D-05's `AUTO` sentence in a later edit, and — the part that carries the real
@@ -53,7 +53,7 @@ private const val MIN_ADR16_RESIDUALS = 7
  */
 class DecisionsAdrTest {
     @Test
-    fun adr17ExistsAndIsTheHighestNumberedAdr() {
+    fun adr18ExistsAndIsTheHighestNumberedAdr() {
         val decisions = readProjectFile(DECISIONS_FILE)
 
         assertTrue(
@@ -76,11 +76,40 @@ class DecisionsAdrTest {
                 "property actually is. ADR-15's `assertEdt()` residual points here, so deleting it " +
                 "strands that pointer.",
         )
-        assertFalse(
+        assertTrue(
             decisions.lineSequence().any { it.startsWith("## ADR-18") },
-            "$DECISIONS_FILE contains `## ADR-18`, so ADR-17 is no longer the highest-numbered ADR. " +
+            "$DECISIONS_FILE must contain a heading line starting `## ADR-18`. ADR-18 is phase 29's " +
+                "record of the two-flavor build split (BUILD-01..04): the compliant core, the " +
+                "ServiceLoader plug-ins, the two packaging tasks and the residuals the round-5 reply " +
+                "must disclose. Without it the drop-in backend JAR residual survives only in `.planning/`.",
+        )
+        assertFalse(
+            decisions.lineSequence().any { it.startsWith("## ADR-19") },
+            "$DECISIONS_FILE contains `## ADR-19`, so ADR-18 is no longer the highest-numbered ADR. " +
                 "This assertion exists to make the NEXT phase's author notice they must claim a new " +
                 "number and extend this guard, rather than quietly reusing one.",
+        )
+    }
+
+    @Test
+    fun adr18NamesTheTasksTheSourceRootAndTheSeam() {
+        val section = adrSection("## ADR-18")
+
+        // Each term is the thing a clause is ABOUT, so a rewording survives and an emptied section does not.
+        val subjects =
+            mapOf(
+                "bappJar" to "the BApp Store packaging task and the JAR BappManifest.bmf names",
+                "fullJar" to "the GitHub full-build packaging task",
+                "src/full" to "the source root that holds every full-only plug-in",
+                "ServiceLoader" to "the only seam through which full-only code reaches the core",
+            )
+        subjects.forEach { (term, why) ->
+            assertTrue(section.contains(term), "ADR-18 no longer names `$term`, so it has lost $why.")
+        }
+        assertTrue(
+            section.contains("loadExternalBackendJars"),
+            "ADR-18 must record the drop-in backend JAR loader as an open residual. Without it the ADR " +
+                "reads as though the store build cannot load code outside the reviewed JAR, which is false.",
         )
     }
 
