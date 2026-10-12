@@ -55,6 +55,64 @@ class CiWorkflowGuardTest {
     }
 
     @Test
+    fun storeBuildAndNightlyRunTheInspection() {
+        val inspection = setOf("bappJar", INSPECTION_TASK)
+        val messages =
+            missingPins(
+                BUILD_WORKFLOW,
+                projectFile(BUILD_WORKFLOW).readLines(),
+                listOf(Pin(STORE_JOB, inspection, "the store JAR the store-build job uploads must be inspected, CI-01")),
+            ) +
+                missingPins(
+                    NIGHTLY_WORKFLOW,
+                    projectFile(NIGHTLY_WORKFLOW).readLines(),
+                    listOf(Pin(NIGHTLY_JOB, inspection, "the nightly run builds and inspects the store JAR, CI-01")),
+                )
+        assertTrue(messages.isEmpty(), "CI stopped checking the store JAR:\n" + messages.joinToString("\n"))
+    }
+
+    @Test
+    fun coverageDryRunGuardReadsTheInspectionTaskGraph() {
+        val messages =
+            missingPins(
+                BUILD_WORKFLOW,
+                projectFile(BUILD_WORKFLOW).readLines(),
+                listOf(
+                    Pin(COVERAGE_JOB, setOf("--dry-run", INSPECTION_TASK), "the dry run must read the inspection task's graph"),
+                    Pin(COVERAGE_JOB, setOf("for", "task", "in", INSPECTION_TASK), "the guard loop must require the inspection task"),
+                    Pin(
+                        COVERAGE_JOB,
+                        setOf("test", "jacocoTestCoverageVerification", "jacocoMcpTreeCoverageVerification"),
+                        "the full suite and the coverage floors stay",
+                    ),
+                ),
+            )
+        assertTrue(messages.isEmpty(), "The coverage job's guard or floors lost an invocation:\n" + messages.joinToString("\n"))
+    }
+
+    @Test
+    fun ciRunsOnPushAndPullRequestToMainWithAReadOnlyToken() {
+        val lines = projectFile(BUILD_WORKFLOW).readLines()
+        val jobsAt = lines.indexOfFirst { it.trimEnd() == "jobs:" }
+        assertTrue(jobsAt >= 0, "$BUILD_WORKFLOW has no top-level `jobs:` line")
+        val header = lines.take(jobsAt).filterNot { isComment(it) || it.isBlank() }
+        val trimmed = header.map { it.trim() }
+        val messages = mutableListOf<String>()
+        listOf("push:", "pull_request:").filter { it !in trimmed }.forEach {
+            messages += "$BUILD_WORKFLOW: the `on:` block no longer has `$it` (SC1: CI on push to main and on PRs)"
+        }
+        val mainBranches = trimmed.count { it == "branches: [ main ]" }
+        if (mainBranches != 2) {
+            messages += "$BUILD_WORKFLOW: expected `branches: [ main ]` under both push and pull_request, found $mainBranches"
+        }
+        val permissionsAt = header.indexOfFirst { it.trimEnd() == "permissions:" }
+        if (permissionsAt < 0 || header.getOrNull(permissionsAt + 1)?.trim() != "contents: read") {
+            messages += "$BUILD_WORKFLOW: no top-level `permissions:` block with `contents: read` (read-only GITHUB_TOKEN, T-30-06)"
+        }
+        assertTrue(messages.isEmpty(), messages.joinToString("\n"))
+    }
+
+    @Test
     fun aMissingInvocationIsReportedNamingFileAndJob() {
         // Fail-first proof: if the matcher stopped reporting a missing token (or counted a comment as a
         // command), the whole-file pins above would pass over a workflow that no longer inspects the JAR.
@@ -135,7 +193,11 @@ class CiWorkflowGuardTest {
     private companion object {
         const val BUILD_SCRIPT = "build.gradle.kts"
         const val BUILD_WORKFLOW = ".github/workflows/build.yml"
+        const val NIGHTLY_WORKFLOW = ".github/workflows/nightly-regression.yml"
         const val PR_GATE_JOB = "pr-gate"
+        const val COVERAGE_JOB = "coverage"
+        const val STORE_JOB = "store-build"
+        const val NIGHTLY_JOB = "nightly-regression"
         const val INSPECTION_TASK = "storeJarContentTest"
 
         val PR_GATE_OSES = listOf("ubuntu-latest", "macos-latest", "windows-latest")

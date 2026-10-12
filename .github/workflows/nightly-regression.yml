@@ -5,6 +5,10 @@ on:
     - cron: '30 3 * * *'
   workflow_dispatch:
 
+# Checkout and artifact upload need no write scope: least privilege for the third-party actions.
+permissions:
+  contents: read
+
 jobs:
   nightly-regression:
     runs-on: ubuntu-latest
@@ -23,7 +27,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Run nightly regression suites
-        run: ./gradlew test nightlyRegressionTest nightlyRegressionFullTest edtGuardWithoutAssertionsTest fullJar --no-daemon
+        run: ./gradlew test nightlyRegressionTest nightlyRegressionFullTest edtGuardWithoutAssertionsTest fullJar bappJar storeJarContentTest --no-daemon
 
       - name: Upload regression reports
         if: always()
@@ -34,3 +38,4 @@ jobs:
             build/reports/tests/**
             build/test-results/**
             build/libs/Custom-AI-Agent-*.jar
+            build/libs/custom-ai-agent-bapp.jar
