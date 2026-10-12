@@ -145,14 +145,23 @@ class ReleaseWorkflowGuardTest {
     @Test
     fun releaseNotesOpenWithTheWhichJarBlock() {
         val lines = releaseLines()
-        val messages = mutableListOf<String>()
+        val messages = heredocQuotingMessages(lines) + notesWriteMessages(stepBlock(lines, NOTES_STEP)) + notesPositionMessages(lines)
+        assertTrue(messages.isEmpty(), "$RELEASE_WORKFLOW / $NOTES_STEP:\n" + messages.joinToString("\n"))
+    }
+
+    /** The block must come from exactly one quoted heredoc; an unquoted one runs the Markdown backticks. */
+    private fun heredocQuotingMessages(lines: List<String>): List<String> {
         val starts = lines.filter { it.contains("<<") && it.contains(HEREDOC_MARKER) }
-        if (starts.size != 1 || !starts.single().contains("<<'$HEREDOC_MARKER'")) {
-            messages += "the block must be written by exactly one quoted heredoc `<<'$HEREDOC_MARKER'` (an unquoted " +
-                "one runs the Markdown backticks as commands): $starts"
-        }
-        val notes = stepBlock(lines, NOTES_STEP)
-        val notesAt = lines.indexOfFirst { it.trim() == "- name: $NOTES_STEP" }
+        if (starts.size == 1 && starts.single().contains("<<'$HEREDOC_MARKER'")) return emptyList()
+        return listOf(
+            "the block must be written by exactly one quoted heredoc `<<'$HEREDOC_MARKER'` (an unquoted " +
+                "one runs the Markdown backticks as commands): $starts",
+        )
+    }
+
+    /** The notes file is written with `>` from the block, then the CHANGELOG section is appended with `>>`. */
+    private fun notesWriteMessages(notes: List<String>): List<String> {
+        val messages = mutableListOf<String>()
         val write = notes.indexOfFirst { !isComment(it) && it.contains("> $NOTES_FILE") && !it.contains(">> $NOTES_FILE") }
         val append = notes.indexOfFirst { !isComment(it) && it.contains(">> $NOTES_FILE") }
         if (write < 0 || append < 0 || write >= append) {
@@ -164,13 +173,19 @@ class ReleaseWorkflowGuardTest {
         if (live(notes).none { it.contains("notes_file=$NOTES_FILE") && it.contains("GITHUB_OUTPUT") }) {
             messages += "the step no longer writes `notes_file=$NOTES_FILE` to GITHUB_OUTPUT"
         }
+        return messages
+    }
+
+    /** The notes step sits after the checksum step and before the publish step. */
+    private fun notesPositionMessages(lines: List<String>): List<String> {
+        val notesAt = lines.indexOfFirst { it.trim() == "- name: $NOTES_STEP" }
         val checksumAt = lines.indexOfFirst { it.trim() == "- name: $CHECKSUM_STEP" }
         val publishAt = lines.indexOfFirst { !isComment(it) && it.contains(PUBLISH_ACTION) }
-        if (checksumAt < 0 || publishAt < 0 || notesAt !in (checksumAt + 1) until publishAt) {
-            messages += "the notes step must sit after `$CHECKSUM_STEP` and before the publish step " +
-                "(lines ${checksumAt + 1}, ${notesAt + 1}, ${publishAt + 1})"
-        }
-        assertTrue(messages.isEmpty(), "$RELEASE_WORKFLOW / $NOTES_STEP:\n" + messages.joinToString("\n"))
+        if (checksumAt >= 0 && publishAt >= 0 && notesAt in (checksumAt + 1) until publishAt) return emptyList()
+        return listOf(
+            "the notes step must sit after `$CHECKSUM_STEP` and before the publish step " +
+                "(lines ${checksumAt + 1}, ${notesAt + 1}, ${publishAt + 1})",
+        )
     }
 
     @Test
