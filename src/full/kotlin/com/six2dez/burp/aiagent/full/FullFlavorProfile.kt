@@ -9,5 +9,5 @@ import com.six2dez.burp.aiagent.spi.FlavorProfile
  * A class rather than an `object`: ServiceLoader needs a public no-arg constructor.
  */
 class FullFlavorProfile : FlavorProfile {
-    override val label: String = "full build (GitHub)"
+    override val label: String = "GitHub full build"
 }
