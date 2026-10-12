@@ -7,6 +7,10 @@ import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.AgentSettingsRepository
 import com.six2dez.burp.aiagent.mcp.McpSupervisor
 import com.six2dez.burp.aiagent.redact.PrivacyMode
+import com.six2dez.burp.aiagent.spi.PluginSettingsStore
+import com.six2dez.burp.aiagent.spi.Plugins
+import com.six2dez.burp.aiagent.spi.SettingsContribution
+import com.six2dez.burp.aiagent.spi.SettingsSlot
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.components.CustomPromptLibraryEditor
 import com.six2dez.burp.aiagent.ui.components.ToggleSwitch
@@ -38,6 +42,12 @@ class SettingsPanel(
     internal val mcpSupervisor: McpSupervisor,
     internal val passiveAiScanner: com.six2dez.burp.aiagent.scanner.PassiveAiScanner,
     internal val activeAiScanner: com.six2dez.burp.aiagent.scanner.ActiveAiScanner,
+    /**
+     * Phase 29 / D-07: the settings contributions to host. Production loads them with the extension's
+     * classloader; the store build ships no provider, so the list is empty there. Tests pass a list
+     * directly and never register a test provider through `META-INF/services`.
+     */
+    contributions: List<SettingsContribution> = Plugins.load(SettingsContribution::class.java),
 ) {
     /**
      * The panel's working copy for fields that have no component (salt, TTLs, context window), not an
@@ -96,6 +106,27 @@ class SettingsPanel(
     internal lateinit var customPromptsTab: JComponent
     internal lateinit var privacyTab: JComponent
     internal lateinit var helpTab: JComponent
+
+    /** The plug-in settings store contributions read and persist through. */
+    internal val pluginSettings: PluginSettingsStore = settingsRepo.pluginSettings()
+
+    /** Every contribution this panel was given, in list order (UI-SPEC H-1). */
+    internal val requestedContributions: List<SettingsContribution> = contributions.toList()
+
+    /**
+     * The contributions whose component was built, each with its component, in list order. EDT only.
+     * A contribution whose `createComponent` threw is absent: no other member of it is ever called
+     * (UI-SPEC PC-10, M4).
+     */
+    internal val contributionComponents = LinkedHashMap<SettingsContribution, JComponent>()
+
+    /** The contributions the host collects, persists, restores and refreshes. EDT only. */
+    internal val activeContributions: List<SettingsContribution>
+        get() = contributionComponents.keys.toList()
+
+    /** The built components of the active contributions in [slot], in list order. EDT only. */
+    internal fun contributedComponents(slot: SettingsSlot): List<JComponent> =
+        contributionComponents.filterKeys { it.slot == slot }.values.toList()
 
     internal val backendConfigPanel =
         BackendConfigPanel(

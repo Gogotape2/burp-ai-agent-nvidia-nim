@@ -3,6 +3,7 @@ package com.six2dez.burp.aiagent.ui
 import com.six2dez.burp.aiagent.scanner.PayloadRisk
 import com.six2dez.burp.aiagent.scanner.ScanMode
 import com.six2dez.burp.aiagent.scanner.applyOptimizationSettings
+import com.six2dez.burp.aiagent.spi.SettingsSlot
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
 import com.six2dez.burp.aiagent.ui.panels.ActiveScanConfigPanel
 import com.six2dez.burp.aiagent.ui.panels.ActiveScanQueuePanel
@@ -167,6 +168,7 @@ internal fun SettingsPanel.activeAiScannerSection(): JPanel =
         activeAiViewQueue = activeAiViewQueue,
         activeAiClearQueue = activeAiClearQueue,
         activeAiResetStats = activeAiResetStats,
+        contributions = contributedComponents(SettingsSlot.ACTIVE_SCANNER_TAB),
     ).build()
 
 internal fun SettingsPanel.updateActiveRiskDescription() {

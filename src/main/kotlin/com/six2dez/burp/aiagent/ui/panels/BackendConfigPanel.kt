@@ -71,6 +71,9 @@ class BackendConfigPanel(
     private val cardLayout = CardLayout()
     private val cards = JPanel(cardLayout)
 
+    /** Every card by backend id, core and contributed, in registration order. */
+    private val cardsById = LinkedHashMap<String, JPanel>()
+
     /**
      * SEC-03 / A6: inline, non-blocking SSRF advisory shown when a backend base-URL resolves to a
      * private/link-local/cloud-metadata address. Hidden by default (takes no visible space). Shared
@@ -198,18 +201,18 @@ class BackendConfigPanel(
         anthropicApiKey.toolTipText = "Anthropic API key (x-api-key header). Stored encrypted at rest."
         copilotCmd.toolTipText = "Command used to launch Copilot CLI (e.g., copilot)."
 
-        cards.add(buildBurpAiPanel(), "burp-ai")
-        cards.add(buildSingleFieldPanelWithCli("Codex CLI command", codexCmd, "codex-cli") { codexCmd.text.trim() }, "codex-cli")
-        cards.add(buildSingleFieldPanelWithCli("Gemini CLI command", geminiCmd, "gemini-cli") { geminiCmd.text.trim() }, "gemini-cli")
-        cards.add(buildOpenCodePanel(), "opencode-cli")
-        cards.add(buildSingleFieldPanelWithCli("Claude Code command", claudeCmd, "claude-cli") { claudeCmd.text.trim() }, "claude-cli")
-        cards.add(buildOllamaPanel(), "ollama")
-        cards.add(buildLmStudioPanel(), "lmstudio")
-        cards.add(buildOpenAiCompatPanel(), "openai-compatible")
-        cards.add(buildNvidiaNimPanel(), "nvidia-nim")
-        cards.add(buildPerplexityPanel(), "perplexity")
-        cards.add(buildAnthropicPanel(), "anthropic")
-        cards.add(buildSingleFieldPanelWithCli("Copilot CLI command", copilotCmd, "copilot-cli") { copilotCmd.text.trim() }, "copilot-cli")
+        registerCard("burp-ai", buildBurpAiPanel())
+        registerCard("codex-cli", buildSingleFieldPanelWithCli("Codex CLI command", codexCmd, "codex-cli") { codexCmd.text.trim() })
+        registerCard("gemini-cli", buildSingleFieldPanelWithCli("Gemini CLI command", geminiCmd, "gemini-cli") { geminiCmd.text.trim() })
+        registerCard("opencode-cli", buildOpenCodePanel())
+        registerCard("claude-cli", buildSingleFieldPanelWithCli("Claude Code command", claudeCmd, "claude-cli") { claudeCmd.text.trim() })
+        registerCard("ollama", buildOllamaPanel())
+        registerCard("lmstudio", buildLmStudioPanel())
+        registerCard("openai-compatible", buildOpenAiCompatPanel())
+        registerCard("nvidia-nim", buildNvidiaNimPanel())
+        registerCard("perplexity", buildPerplexityPanel())
+        registerCard("anthropic", buildAnthropicPanel())
+        registerCard("copilot-cli", buildSingleFieldPanelWithCli("Copilot CLI command", copilotCmd, "copilot-cli") { copilotCmd.text.trim() })
 
         add(cards, BorderLayout.CENTER)
 
@@ -232,6 +235,30 @@ class BackendConfigPanel(
     private fun checkAndShowSsrfWarning(urls: List<String>) {
         ssrfWarningLabel.isVisible = urls.any { it.isNotBlank() && SsrfGuard.isPrivateOrLinkLocal(it) }
     }
+
+    private fun registerCard(
+        id: String,
+        card: JPanel,
+    ) {
+        cardsById[id] = card
+        cards.add(card, id)
+    }
+
+    /**
+     * Phase 29 / D-07 (UI-SPEC Contribution Host Geometry, BACKEND_CARD): places a settings
+     * contribution's [component] under [backendId]'s card.
+     */
+    fun addContribution(
+        backendId: String,
+        component: JComponent,
+    ) {
+    }
+
+    /** The card registered under [id], or null. EDT only. */
+    internal fun cardFor(id: String): JPanel? = cardsById[id]
+
+    /** Every registered card id, core first, in registration order. EDT only. */
+    internal fun cardIds(): List<String> = cardsById.keys.toList()
 
     fun setBackend(id: String) {
         cardLayout.show(cards, id)

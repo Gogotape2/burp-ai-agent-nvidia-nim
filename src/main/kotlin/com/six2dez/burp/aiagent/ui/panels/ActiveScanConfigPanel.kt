@@ -37,6 +37,11 @@ class ActiveScanConfigPanel(
     private val activeAiViewQueue: JButton,
     private val activeAiClearQueue: JButton,
     private val activeAiResetStats: JButton,
+    /**
+     * Phase 29 / D-07: ACTIVE_SCANNER_TAB settings contributions, placed after "Scan parameters" in
+     * the same body (UI-SPEC PC-9). Empty in the store build, where the body is the 1.0.1 one.
+     */
+    private val contributions: List<JComponent> = emptyList(),
 ) : ConfigPanel {
     override fun build(): JPanel {
         activeAiEnabled.font = DesignTokens.Typography.body
