@@ -3,11 +3,6 @@ package com.six2dez.burp.aiagent.backends
 import burp.api.montoya.MontoyaApi
 import com.six2dez.burp.aiagent.backends.anthropic.AnthropicBackendFactory
 import com.six2dez.burp.aiagent.backends.burpai.BurpAiBackend
-import com.six2dez.burp.aiagent.backends.cli.ClaudeCliBackendFactory
-import com.six2dez.burp.aiagent.backends.cli.CodexCliBackendFactory
-import com.six2dez.burp.aiagent.backends.cli.CopilotCliBackendFactory
-import com.six2dez.burp.aiagent.backends.cli.GeminiCliBackendFactory
-import com.six2dez.burp.aiagent.backends.cli.OpenCodeCliBackendFactory
 import com.six2dez.burp.aiagent.backends.http.HttpBackendSupport
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
 import com.six2dez.burp.aiagent.backends.lmstudio.LmStudioBackendFactory
@@ -65,16 +60,13 @@ class BackendRegistry(
                 .toList()
         if (builtIns.isEmpty()) {
             api.logging().logToOutput("No AiBackendFactory found via ServiceLoader; falling back to built-ins.")
+            // Core's HTTP backends only. Phase 29 / D-03: the full build's CLI backends register through
+            // src/full's services file and are never named here, so the store build cannot reach them.
             listOf(
-                CodexCliBackendFactory(),
-                GeminiCliBackendFactory(),
-                OpenCodeCliBackendFactory(),
-                ClaudeCliBackendFactory(),
                 LmStudioBackendFactory(),
                 OllamaBackendFactory(),
                 NvidiaNimBackendFactory(),
                 OpenAiCompatibleBackendFactory(),
-                CopilotCliBackendFactory(),
                 PerplexityBackendFactory(),
                 AnthropicBackendFactory(),
             ).forEach { f ->
@@ -145,7 +137,23 @@ class BackendRegistry(
         }
     }
 
+    /**
+     * Extension unload. Each backend releases its process-wide resources first (the full build's CLI
+     * backends drain their temp-file registry and unregister its JVM exit hook here). REL-07 / SC5 /
+     * D-03: this runs after the supervisor has stopped, so every in-flight CLI call has already run its
+     * finally block and the drain sweeps a settled set. It is also the ONLY cleanup an unload gets: the
+     * JVM exit hook does not fire when the extension is unloaded while Burp keeps running. Unregistering
+     * the hook here is what stops a reload from pinning a dead classloader (threat T-24-07).
+     * Never called from [reload]: a Settings save must not drain files of calls still in flight.
+     */
     fun shutdown() {
+        backends.values.forEach { backend ->
+            try {
+                backend.shutdown()
+            } catch (e: Exception) {
+                api.logging().logToError("Backend ${backend.id} shutdown failed: ${e.message}")
+            }
+        }
         backends.clear()
         availabilityCache.clear()
         closeExternalClassLoader()

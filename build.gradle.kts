@@ -187,6 +187,10 @@ val bappJar by tasks.registering(ShadowJar::class) {
     configurations = listOf(project.configurations.runtimeClasspath.get())
     mergeServiceFiles()
     exclude(*shadowDefaultExcludes)
+    // Phase 29 / 29-12: incremental Kotlin compilation leaves the empty directory of a package that moved
+    // to src/full (backends/cli/) in build/classes. Without this the store JAR carries that empty
+    // directory entry, and a content inspection of the store JAR cannot tell it from a leaked package.
+    includeEmptyDirs = false
     isZip64 = true
 }
 

@@ -43,7 +43,8 @@ import java.util.concurrent.ConcurrentHashMap
  *  unregistered pins a dead classloader on every extension reload, and re-arms a second one on the
  *  next load (threat T-24-07). This is a property of THIS hook specifically, and not of the JDK
  *  facility being removed, which retained plain path strings and pinned nothing. [shutdown] is called
- *  from `App.shutdown()`, which is also the only thing that covers a CLI call still in flight when the
+ *  from `App.shutdown()` through the "Backend registry" step (`BackendRegistry.shutdown()` runs
+ *  `CliBackend.shutdown()`), which is also the only thing that covers a CLI call still in flight when the
  *  extension is unloaded while Burp keeps running — the JVM exit hook does not fire on unload.
  *
  * Visibility: `internal` so `CliBackendTempFileTest` can drive every path in pure JVM without a
@@ -121,14 +122,14 @@ internal object CliTempFileRegistry {
     }
 
     /**
-     * Unregisters the exit hook and drains the registry. Called from `App.shutdown()` on extension
-     * unload.
+     * Unregisters the exit hook and drains the registry. Called on extension unload through
+     * `CliBackend.shutdown()`, which `BackendRegistry.shutdown()` runs for each of the five CLI backends.
      *
      * Idempotent: calling it twice, or calling it in a session that never armed a hook, does nothing.
      * No catch is hand-rolled around the unregistration — the JVM's hook-removal call throws
-     * `IllegalStateException` when the VM is already shutting down, and the caller wraps this in
-     * `App.safeShutdownStep`, which already catches it and already isolates the rest of the shutdown
-     * sequence from a throw here (threat T-24-16). In that case the hook itself performs the drain.
+     * `IllegalStateException` when the VM is already shutting down, and `BackendRegistry.shutdown()`
+     * catches each backend's throw so the other backends still shut down, inside App's
+     * "Backend registry" safeShutdownStep (threat T-24-16). In that case the hook itself performs the drain.
      */
     fun shutdown() {
         val armed =

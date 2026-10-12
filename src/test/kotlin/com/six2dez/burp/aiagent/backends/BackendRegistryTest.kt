@@ -51,6 +51,34 @@ class BackendRegistryTest {
     }
 
     @Test
+    fun storeClasspath_registersTheSixHttpBackendsAndBurpAiOnly() {
+        // Phase 29 / D-03: the store build registers no CLI backend, through ServiceLoader or the
+        // ServiceLoader-empty fallback list alike.
+        val factories =
+            java.util.ServiceLoader
+                .load(AiBackendFactory::class.java, AiBackendFactory::class.java.classLoader)
+                .map { it.javaClass.simpleName }
+                .sorted()
+        assertEquals(
+            listOf(
+                "AnthropicBackendFactory",
+                "LmStudioBackendFactory",
+                "NvidiaNimBackendFactory",
+                "OllamaBackendFactory",
+                "OpenAiCompatibleBackendFactory",
+                "PerplexityBackendFactory",
+            ),
+            factories,
+        )
+        val ids = createRegistry().listAllBackendIds()
+        assertEquals(
+            setOf("burp-ai", "anthropic", "lmstudio", "nvidia-nim", "ollama", "openai-compatible", "perplexity"),
+            ids.toSet(),
+        )
+        assertTrue(ids.none { it.endsWith("-cli") }, "no CLI backend id in the store build, got $ids")
+    }
+
+    @Test
     fun reloadAndShutdown_clearAvailabilityCache() {
         val registry = createRegistry()
         val cache = availabilityCacheField(registry)

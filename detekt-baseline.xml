@@ -207,7 +207,6 @@
     <ID>MagicNumber:AgentSettings.kt$AgentSettingsRepository$65535</ID>
     <ID>MagicNumber:AgentSettings.kt$AgentSettingsRepository$80_000</ID>
     <ID>MagicNumber:AgentSupervisor.kt$AgentSupervisor$3</ID>
-    <ID>MagicNumber:AgentSupervisor.kt$AgentSupervisor.Companion$5</ID>
     <ID>MagicNumber:AiLoggerPanel.kt$AiLoggerPanel$0.7</ID>
     <ID>MagicNumber:AiLoggerPanel.kt$AiLoggerPanel$10</ID>
     <ID>MagicNumber:AiLoggerPanel.kt$AiLoggerPanel$100</ID>
@@ -815,9 +814,6 @@
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$fun startOrAttach(backendId: String): Boolean</ID>
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$private fun parseOllamaModelFromCli(cmd: String): String?</ID>
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$private fun startService( name: String, cmd: String, ): Boolean</ID>
-    <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor.Companion$fun buildCliPathStatic(): String</ID>
-    <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor.Companion$private fun capturePathFromShells(): String?</ID>
-    <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor.Companion$private fun tryCapture( shellPath: String, args: List&lt;String>, ): String?</ID>
     <ID>ReturnCount:AiScanCheck.kt$AiScanCheck$override fun doCheck( baseRequestResponse: HttpRequestResponse, insertionPoint: AuditInsertionPoint, http: Http, ): AuditResult</ID>
     <ID>ReturnCount:AiScanCheck.kt$AiScanCheck$private fun testPayload( baseRequestResponse: HttpRequestResponse, insertionPoint: AuditInsertionPoint, payload: Payload, vulnClass: VulnClass, ): AuditIssue?</ID>
     <ID>ReturnCount:BatchAnalysisQueue.kt$BatchAnalysisQueue$fun shouldFlush(): Boolean</ID>

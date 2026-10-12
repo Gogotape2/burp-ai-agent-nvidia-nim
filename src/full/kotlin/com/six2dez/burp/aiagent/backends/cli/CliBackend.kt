@@ -6,8 +6,11 @@ import com.six2dez.burp.aiagent.backends.BackendDiagnostics
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.ChatMessage
 import com.six2dez.burp.aiagent.backends.HealthCheckResult
+import com.six2dez.burp.aiagent.backends.LaunchRequest
 import com.six2dez.burp.aiagent.backends.SessionAwareConnection
+import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
+import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.ArrayDeque
@@ -36,6 +39,57 @@ class CliBackend(
         return NonInteractiveCliConnection(id, config.command, config.env, config.cliSessionId, timeoutSeconds)
     }
 
+    /**
+     * The CLI launch dialect (Phase 29 / D-09), moved out of the core supervisor unchanged: the command
+     * the user configured for this id, the captured login-shell PATH, the MCP variables when the MCP
+     * server is on, the non-interactive variables, the resumable CLI session and the process timeout.
+     */
+    override fun launchConfig(request: LaunchRequest): BackendLaunchConfig {
+        val settings = request.settings
+        val env =
+            CliEnvironment.nonInteractiveEnv(
+                request.baseEnv +
+                    ("PATH" to CliEnvironment.buildCliPathStatic()) +
+                    CliEnvironment.mcpEnv(settings?.mcpSettings),
+            )
+        return BackendLaunchConfig(
+            backendId = request.backendId,
+            displayName = launchDisplayName(),
+            command = AgentSupervisor.tokenizeCommand(configuredCommand(settings).trim()),
+            sessionId = request.sessionId,
+            determinismMode = request.determinismMode,
+            env = env,
+            cliSessionId = request.cliSessionId,
+            cliTimeoutSeconds = settings?.cliTimeoutSeconds,
+        )
+    }
+
+    /** Releases the temp-file registry shared by every CLI backend. Idempotent, so five instances may call it. */
+    override fun shutdown() {
+        CliTempFileRegistry.shutdown()
+    }
+
+    private fun launchDisplayName(): String =
+        when (id) {
+            "codex-cli" -> "Codex CLI"
+            "gemini-cli" -> "Gemini CLI"
+            "opencode-cli" -> "OpenCode CLI"
+            "claude-cli" -> "Claude Code"
+            "copilot-cli" -> "Copilot CLI"
+            else -> displayName
+        }
+
+    // Without settings (the supervisor before its first applySettings) the default command for the id.
+    private fun configuredCommand(settings: AgentSettings?): String =
+        when (id) {
+            "codex-cli" -> settings?.codexCmd ?: "codex"
+            "gemini-cli" -> settings?.geminiCmd ?: "gemini"
+            "opencode-cli" -> settings?.opencodeCmd ?: "opencode"
+            "claude-cli" -> settings?.claudeCmd ?: "claude"
+            "copilot-cli" -> settings?.copilotCmd ?: "copilot"
+            else -> ""
+        }
+
     override fun isAvailable(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean {
         val command =
             when (id) {
@@ -50,15 +104,8 @@ class CliBackend(
         if (command.isBlank()) return false
         // Bug #67: share the tokenizer with the supervisor's launch path so isAvailable() and
         // send() agree on argv[0] (Windows backslash-paths must not be split as escape sequences).
-        val cmdList =
-            com.six2dez.burp.aiagent.supervisor.AgentSupervisor
-                .tokenizeCommand(command.trim())
-        val env =
-            mapOf(
-                "PATH" to
-                    com.six2dez.burp.aiagent.supervisor.AgentSupervisor
-                        .buildCliPathStatic(),
-            )
+        val cmdList = AgentSupervisor.tokenizeCommand(command.trim())
+        val env = mapOf("PATH" to CliEnvironment.buildCliPathStatic())
         val resolved = resolveCommand(cmdList, env)
         if (resolved.isEmpty()) return false
         val executable = resolved[0]

@@ -8,6 +8,7 @@ import com.six2dez.burp.aiagent.backends.AgentConnection
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.backends.HealthCheckResult
+import com.six2dez.burp.aiagent.backends.LaunchRequest
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
@@ -15,7 +16,6 @@ import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.spi.AiAccessPolicy
 import com.six2dez.burp.aiagent.util.HeaderParser
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -575,7 +575,8 @@ class AgentSupervisor(
     }
 
     // Suppressed here rather than baselined (ADR-17 forbids new baseline entries): one branch per
-    // registered backend; the CLI branches move to the src/full dialect in plan 29-12.
+    // backend core ships. Phase 29 / D-09: every other backend (the full build's CLI backends, drop-in
+    // JARs) builds its own configuration through AiBackend.launchConfig, in the `else` branch.
     @Suppress("CyclomaticComplexMethod", "LongMethod")
     private fun buildLaunchConfig(
         backendId: String,
@@ -586,29 +587,11 @@ class AgentSupervisor(
         val settings = settingsRef.get()
         val determinism = settings?.determinismMode ?: (prefs.getBoolean("determinism.enabled") ?: false)
 
-        val mcpSettings = settings?.mcpSettings
-        val mcpEnv =
-            if (mcpSettings != null && mcpSettings.enabled) {
-                val url = "http://${mcpSettings.host}:${mcpSettings.port}/mcp"
-                mapOf(
-                    "BURP_MCP_PORT" to mcpSettings.port.toString(),
-                    "BURP_MCP_HOST" to mcpSettings.host,
-                    "BURP_MCP_TOKEN" to mcpSettings.token,
-                    "BURP_MCP_API_URL" to url,
-                    "MCP_SERVER_URL" to url,
-                    "MCP_SERVER" to url,
-                    "MCP_TOKEN" to mcpSettings.token,
-                )
-            } else {
-                emptyMap()
-            }
-
         val baseEnv =
             mapOf(
                 "BURP_AI_AGENT_SESSION_ID" to sessionId,
                 "BURP_AI_AGENT_DETERMINISM" to determinism.toString(),
-                "PATH" to buildCliPathStatic(),
-            ) + mcpEnv
+            )
 
         return when (backendId) {
             "burp-ai" ->
@@ -619,63 +602,6 @@ class AgentSupervisor(
                     determinismMode = determinism,
                     env = baseEnv,
                 )
-            "codex-cli" -> {
-                val cmd = (settings?.codexCmd ?: prefs.getString("codex.cmd") ?: "codex").trim()
-                val env = embeddedCliEnv(baseEnv)
-                BackendLaunchConfig(
-                    backendId = backendId,
-                    displayName = "Codex CLI",
-                    command = tokenizeCommand(cmd),
-                    sessionId = sessionId,
-                    determinismMode = determinism,
-                    env = env,
-                    cliSessionId = cliSessionId,
-                    cliTimeoutSeconds = settings?.cliTimeoutSeconds,
-                )
-            }
-            "gemini-cli" -> {
-                val cmd = (settings?.geminiCmd ?: prefs.getString("gemini.cmd") ?: "gemini").trim()
-                val env = embeddedCliEnv(baseEnv)
-                BackendLaunchConfig(
-                    backendId = backendId,
-                    displayName = "Gemini CLI",
-                    command = tokenizeCommand(cmd),
-                    sessionId = sessionId,
-                    determinismMode = determinism,
-                    env = env,
-                    cliSessionId = cliSessionId,
-                    cliTimeoutSeconds = settings?.cliTimeoutSeconds,
-                )
-            }
-            "opencode-cli" -> {
-                val baseCmd = (settings?.opencodeCmd ?: prefs.getString("opencode.cmd") ?: "opencode").trim()
-                val cmdParts = tokenizeCommand(baseCmd)
-                val env = embeddedCliEnv(baseEnv)
-                BackendLaunchConfig(
-                    backendId = backendId,
-                    displayName = "OpenCode CLI",
-                    command = cmdParts,
-                    sessionId = sessionId,
-                    determinismMode = determinism,
-                    env = env,
-                    cliSessionId = cliSessionId,
-                    cliTimeoutSeconds = settings?.cliTimeoutSeconds,
-                )
-            }
-            "claude-cli" -> {
-                val cmd = (settings?.claudeCmd ?: prefs.getString("claude.cmd") ?: "claude").trim()
-                val env = embeddedCliEnv(baseEnv)
-                BackendLaunchConfig(
-                    backendId = backendId,
-                    displayName = "Claude Code",
-                    command = tokenizeCommand(cmd),
-                    sessionId = sessionId,
-                    determinismMode = determinism,
-                    env = env,
-                    cliSessionId = cliSessionId,
-                    cliTimeoutSeconds = settings?.cliTimeoutSeconds,
-                )
-            }
             "ollama" -> {
                 val url = (settings?.ollamaUrl ?: prefs.getString("ollama.url") ?: "http://127.0.0.1:11434").trim()
                 val explicitModel = (settings?.ollamaModel ?: prefs.getString("ollama.model")).orEmpty().trim()
@@ -843,34 +769,19 @@ class AgentSupervisor(
                     transport = httpTransport,
                 )
             }
-            "copilot-cli" -> {
-                val cmd = (settings?.copilotCmd ?: prefs.getString("copilot.cmd") ?: "copilot").trim()
-                val env = embeddedCliEnv(baseEnv)
-                BackendLaunchConfig(
-                    backendId = backendId,
-                    displayName = "Copilot CLI",
-                    command = tokenizeCommand(cmd),
-                    sessionId = sessionId,
-                    determinismMode = determinism,
-                    env = env,
-                    cliSessionId = cliSessionId,
-                    cliTimeoutSeconds = settings?.cliTimeoutSeconds,
-                )
-            }
-            else -> BackendLaunchConfig(backendId, backendId, env = baseEnv, cliSessionId = cliSessionId)
+            else ->
+                registry.get(backendId)?.launchConfig(
+                    LaunchRequest(
+                        backendId = backendId,
+                        sessionId = sessionId,
+                        determinismMode = determinism,
+                        cliSessionId = cliSessionId,
+                        settings = settings,
+                        baseEnv = baseEnv,
+                    ),
+                ) ?: BackendLaunchConfig(backendId, backendId, env = baseEnv, cliSessionId = cliSessionId)
         }
     }
-
-    private fun embeddedCliEnv(baseEnv: Map<String, String>): Map<String, String> =
-        baseEnv +
-            mapOf(
-                "CI" to "1",
-                "TERM" to "dumb",
-                "NO_COLOR" to "1",
-                "CLICOLOR" to "0",
-                "FORCE_COLOR" to "0",
-                "BURP_AI_AGENT_EMBEDDED" to "1",
-            )
 
     private fun resolveOllamaModel(settings: AgentSettings?): String {
         val cmd = settings?.ollamaCliCmd?.trim().orEmpty()
@@ -977,13 +888,12 @@ class AgentSupervisor(
     }
 
     companion object {
-        private val cachedPathRef = AtomicReference<String?>(null)
-
         /**
          * Splits a user-typed command string into argv tokens with quote and backslash handling.
          *
-         * Shared between [AgentSupervisor]'s service launch paths and [com.six2dez.burp.aiagent.backends.cli.CliBackend.isAvailable]
-         * so that the executable resolved by `isAvailable()` is the same as the one launched by `send()` (fixes bug #67).
+         * Shared between [AgentSupervisor]'s service launch paths and the full build's CLI backend (its
+         * `isAvailable()` and its launch configuration), so that the executable resolved by
+         * `isAvailable()` is the same as the one launched by `send()` (fixes bug #67).
          *
          * On Windows the backslash is the path separator and MUST NOT be interpreted as an escape
          * character — otherwise paths like `C:\Users\u\bin\claude.exe` collapse to `C:Usersubinclaude.exe`.
@@ -1043,108 +953,6 @@ class AgentSupervisor(
                 tokens.add(currentToken.toString())
             }
             return tokens
-        }
-
-        fun buildCliPathStatic(): String {
-            cachedPathRef.get()?.let { return it }
-
-            val initialBase = System.getenv("PATH").orEmpty()
-            val userHome = System.getProperty("user.home")
-            val sep = java.io.File.pathSeparator
-            val os = System.getProperty("os.name").lowercase(java.util.Locale.ROOT)
-            val isWin = os.contains("win")
-
-            if (isWin) {
-                cachedPathRef.compareAndSet(null, initialBase)
-                return cachedPathRef.get()!!
-            }
-
-            // On Unix (macOS/Linux), Burp often has a truncated PATH if not started from terminal.
-            val capturedPath = capturePathFromShells() ?: initialBase
-
-            // Merge everything and inject common local folders that are often missed
-            val rawList = (capturedPath.split(sep) + initialBase.split(sep)).toMutableList()
-
-            val commonFolders =
-                listOf(
-                    "~/.local/bin",
-                    "~/bin",
-                    "/opt/homebrew/bin",
-                    "/usr/local/bin",
-                )
-
-            for (f in commonFolders) {
-                val expanded = expandHome(f, userHome)
-                if (java.io.File(expanded).exists()) {
-                    rawList.add(expanded)
-                }
-            }
-
-            val finalPath = rawList.filter { it.isNotBlank() }.distinct().joinToString(sep)
-
-            // Atomic set — first thread wins, subsequent calls use the cached value
-            cachedPathRef.compareAndSet(null, finalPath)
-            return cachedPathRef.get()!!
-        }
-
-        private fun expandHome(
-            path: String,
-            home: String,
-        ): String =
-            if (path.startsWith("~")) {
-                home + path.substring(1)
-            } else {
-                path
-            }
-
-        private fun capturePathFromShells(): String? {
-            val shells =
-                listOf(
-                    System.getenv("SHELL"),
-                    "/bin/zsh",
-                    "/usr/bin/zsh",
-                    "/bin/bash",
-                    "/usr/bin/bash",
-                    "/bin/sh",
-                ).filterNotNull().distinct()
-
-            for (shellPath in shells) {
-                if (!java.io.File(shellPath).exists()) continue
-
-                // Strategy A: Standard login shell
-                val captured = tryCapture(shellPath, listOf("-l", "-c", "echo ___BURP_PATH___\$PATH"))
-                if (!captured.isNullOrBlank()) return captured
-
-                // Strategy B: Explicit source (often needed for macOS GUI apps)
-                if (shellPath.endsWith("zsh")) {
-                    val fallback = tryCapture(shellPath, listOf("-c", "source ~/.zshrc 2>/dev/null; echo ___BURP_PATH___\$PATH"))
-                    if (!fallback.isNullOrBlank()) return fallback
-                }
-            }
-            return null
-        }
-
-        private fun tryCapture(
-            shellPath: String,
-            args: List<String>,
-        ): String? {
-            try {
-                val process = ProcessBuilder(listOf(shellPath) + args).start()
-                val output = process.inputStream.bufferedReader().use { it.readText() }
-                if (!process.waitFor(5, TimeUnit.SECONDS)) {
-                    process.destroyForcibly()
-                    return null
-                }
-                if (process.exitValue() == 0 && output.contains("___BURP_PATH___")) {
-                    val result = output.substringAfter("___BURP_PATH___").substringBefore("\n").trim()
-                    if (result.isNotBlank()) {
-                        return result
-                    }
-                }
-            } catch (_: Exception) {
-                // INTENTIONAL: shell PATH capture is best-effort; returns null on failure (fallback to System.getenv)
-            }
-            return null
         }
     }
 }

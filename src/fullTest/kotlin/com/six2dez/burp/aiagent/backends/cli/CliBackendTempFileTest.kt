@@ -458,49 +458,56 @@ class CliBackendTempFileTest {
     /**
      * D-03 — the unload half of SC5, pinned structurally.
      *
-     * The JVM exit hook does NOT fire when the extension is unloaded while Burp keeps running, so
-     * `App.shutdown()`'s drain is the only thing that covers a CLI call in flight at unload, and the
-     * only thing that stops a reload from accumulating hooks that pin a dead classloader (threat
-     * T-24-07).
+     * The JVM exit hook does NOT fire when the extension is unloaded while Burp keeps running, so the
+     * unload drain is the only thing that covers a CLI call in flight at unload, and the only thing that
+     * stops a reload from accumulating hooks that pin a dead classloader (threat T-24-07).
+     *
+     * Phase 29 / D-03 / D-09: core App no longer names the CLI registry. The drain runs inside App's
+     * "Backend registry" step: `BackendRegistry.shutdown()` calls every backend's `shutdown()`, and
+     * `CliBackend.shutdown()` calls the registry's. CliLaunchConfigTest proves that chain at runtime;
+     * this test pins where it sits in App's order.
      */
     @Test
-    fun appShutdownDrainsTheRegistryAfterTheBackendRegistryAndBeforeTheRedactionMappings() {
+    fun appShutdownDrainsTheRegistryInsideTheBackendRegistryStepBeforeTheRedactionMappings() {
         val code = codeLinesOf(APP_SOURCE)
 
         assertEquals(
+            0,
+            code.count { it.contains("CliTempFileRegistry") },
+            "App ledger: core App must not name the full-only CLI registry (D-09); the drain runs " +
+                "through BackendRegistry.shutdown() -> CliBackend.shutdown().",
+        )
+        assertEquals(
             1,
-            code.count { it.contains("safeShutdownStep(\"CLI temp files\")") },
-            "App ledger: exactly one \"CLI temp files\" shutdown step. Zero means an extension unload " +
+            code.count { it.contains("safeShutdownStep(\"Backend registry\")") },
+            "App ledger: exactly one \"Backend registry\" shutdown step. Zero means an extension unload " +
                 "leaves the extension's own exit hook armed — an extension-classloader object pinning a " +
                 "dead classloader on every reload — and leaves any CLI call in flight at unload without " +
                 "any cleanup at all, because the JVM exit hook does not fire on unload (D-03).",
         )
         assertEquals(
             1,
-            code.count { it.contains("CliTempFileRegistry.shutdown()") },
-            "App ledger: the step must actually call into the registry. One call site, no more.",
+            codeLinesOf(CLI_BACKEND_SOURCE).count { it.contains("CliTempFileRegistry.shutdown()") },
+            "CliBackend ledger: its shutdown() must actually call into the registry. One call site, no more.",
         )
 
+        val supervisorStep = code.indexOfFirst { it.contains("safeShutdownStep(\"Supervisor\")") }
         val backendRegistryStep = code.indexOfFirst { it.contains("safeShutdownStep(\"Backend registry\")") }
-        val cliTempFilesStep = code.indexOfFirst { it.contains("safeShutdownStep(\"CLI temp files\")") }
-        // The "Worker pool" step that used to follow the drain went with the pool (DEAD-01, plan 29-05);
-        // "Redaction mappings" is now the drain's next neighbour.
         val redactionMappingsStep = code.indexOfFirst { it.contains("safeShutdownStep(\"Redaction mappings\")") }
 
         assertTrue(
-            backendRegistryStep >= 0 && redactionMappingsStep >= 0,
+            supervisorStep >= 0 && redactionMappingsStep >= 0,
             "App ledger: both neighbouring steps must still exist, or this ordering assertion is vacuous. " +
-                "Found Backend registry at $backendRegistryStep and Redaction mappings at $redactionMappingsStep.",
+                "Found Supervisor at $supervisorStep and Redaction mappings at $redactionMappingsStep.",
         )
         assertTrue(
-            cliTempFilesStep > backendRegistryStep,
-            "App ledger: the drain must run AFTER the backend registry has shut down. The CLI executor " +
-                "lives under the backend registry, so draining earlier would sweep a set that is still " +
-                "moving — a call whose finally block has not run yet would have its temp files deleted " +
-                "out from under it.",
+            backendRegistryStep > supervisorStep,
+            "App ledger: the drain must run AFTER the supervisor has stopped the running backend, so " +
+                "every in-flight CLI call has run its finally block — draining earlier would sweep a set " +
+                "that is still moving and delete a call's temp files out from under it.",
         )
         assertTrue(
-            cliTempFilesStep < redactionMappingsStep,
+            backendRegistryStep < redactionMappingsStep,
             "App ledger: the drain must run BEFORE the redaction mappings are cleared, so the step order " +
                 "stays the one D-03 fixed and reviewed.",
         )
