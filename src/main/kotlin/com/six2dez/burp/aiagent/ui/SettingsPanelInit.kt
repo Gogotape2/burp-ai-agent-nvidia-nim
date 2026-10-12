@@ -1,6 +1,8 @@
 package com.six2dez.burp.aiagent.ui
 
 import com.six2dez.burp.aiagent.config.McpSettings
+import com.six2dez.burp.aiagent.spi.SettingsContributionContext
+import com.six2dez.burp.aiagent.spi.SettingsSlot
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
 import com.six2dez.burp.aiagent.ui.design.addRowFull
 import com.six2dez.burp.aiagent.ui.design.addSpacerRow
@@ -96,6 +98,8 @@ internal const val AUDIT_VERBOSE_TOOLTIP =
 @Suppress("LongMethod")
 internal fun SettingsPanel.initUiWiring() {
     refreshProfileOptions()
+    // Before any section is composed: the MCP and active-scanner sections read the built components.
+    buildContributionComponents()
 
     applyFieldStyle(mcpHost)
     applyFieldStyle(mcpKeystorePath)
@@ -540,4 +544,58 @@ internal fun SettingsPanel.initUiWiring() {
         }
     statusRefreshTimer?.start()
     updateProfileWarnings()
+}
+
+/**
+ * Phase 29 / D-07 (UI-SPEC PC-9, PC-10, M4): builds every requested contribution's component, in list
+ * order, and records the ones that built in [SettingsPanel.contributionComponents]. BACKEND_CARD
+ * components are placed here; the MCP and active-scanner sections pick theirs up when composed.
+ *
+ * A contribution that fails is logged to Burp's error output with its class name and message, and
+ * dropped: it gets no slot, and collect, persist, defaults, applyToUi and onCoreSettingsApplied never
+ * run on it, since it has no Swing state. The window keeps building. Failing means `createComponent`
+ * threw, or the contribution broke the [com.six2dez.burp.aiagent.spi.SettingsContribution] contract
+ * (blank or repeated `sectionId`, BACKEND_CARD without a `backendId`), which the host checks first.
+ *
+ * **Why the catch is broad.** A plug-in may throw anything, including a `LinkageError` from a missing
+ * class, and one broken plug-in must not take the settings window down with it. A
+ * `VirtualMachineError` is rethrown: the JVM, not the plug-in, is failing then.
+ */
+@Suppress("TooGenericExceptionCaught")
+internal fun SettingsPanel.buildContributionComponents() {
+    val context =
+        SettingsContributionContext(
+            api = api,
+            store = pluginSettings,
+            coreSettings = { settings },
+            dialogParent = { dialogParentComponent() },
+            testConnection = { backendId -> testBackendConnection(backendId) },
+        )
+    val sectionIds = mutableSetOf<String>()
+    requestedContributions.forEach { contribution ->
+        try {
+            val sectionId = contribution.sectionId
+            require(sectionId.isNotBlank()) { "its sectionId is blank" }
+            require(sectionId !in sectionIds) { "its sectionId '$sectionId' is already used" }
+            val cardId =
+                if (contribution.slot == SettingsSlot.BACKEND_CARD) {
+                    requireNotNull(contribution.backendId?.takeIf { it.isNotBlank() }) {
+                        "it targets BACKEND_CARD without a backendId"
+                    }
+                } else {
+                    null
+                }
+            val component = contribution.createComponent(context)
+            cardId?.let { backendConfigPanel.addContribution(it, component) }
+            sectionIds.add(sectionId)
+            contributionComponents[contribution] = component
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Throwable) {
+            api.logging().logToError(
+                "[SettingsPanel] Settings contribution ${contribution.javaClass.name} was skipped: " +
+                    "${failure.javaClass.simpleName}: ${failure.message}",
+            )
+        }
+    }
 }

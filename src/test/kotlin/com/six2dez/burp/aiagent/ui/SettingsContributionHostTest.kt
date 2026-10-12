@@ -228,6 +228,29 @@ class SettingsContributionHostTest {
         assertEquals(listOf("create"), throwing.calls, "No member but createComponent ever runs on it.")
     }
 
+    @Test
+    fun aContributionThatBreaksTheContractIsLoggedAndSkippedLikeAThrowingOne() {
+        val first = RecordingContribution("test.same", SettingsSlot.MCP_TAB)
+        val duplicate = RecordingContribution("test.same", SettingsSlot.MCP_TAB)
+        val blank = RecordingContribution(" ", SettingsSlot.MCP_TAB)
+        val noCard = RecordingContribution("test.nocard", SettingsSlot.BACKEND_CARD, backendId = null)
+        val fixture = newFixture(listOf(first, duplicate, blank, noCard))
+        onEdt {
+            assertEquals(listOf<SettingsContribution>(first), fixture.panel.activeContributions, "Only the valid one.")
+            val logged = argumentCaptor<String>()
+            verify(fixture.api.logging(), atLeastOnce()).logToError(logged.capture())
+            val skipped = logged.allValues.filter { it.contains(RecordingContribution::class.java.name) }
+            assertEquals(3, skipped.size, "One error line per skipped contribution. Logged: ${logged.allValues}")
+            assertTrue(skipped.any { it.contains("already used") }, "A repeated sectionId is named.")
+            assertTrue(skipped.any { it.contains("blank") }, "A blank sectionId is named.")
+            assertTrue(skipped.any { it.contains("without a backendId") }, "A BACKEND_CARD without an id is named.")
+            assertEquals(CORE_CARD_IDS, fixture.panel.backendConfigPanel.cardIds(), "No card for the broken one.")
+        }
+        listOf(duplicate, blank, noCard).forEach {
+            assertTrue(it.members.isEmpty(), "A contract break is caught before createComponent: ${it.members}")
+        }
+    }
+
     // ------------------------------------------------------------------------------------------------
     // Fixture
     // ------------------------------------------------------------------------------------------------
@@ -394,7 +417,7 @@ class SettingsContributionHostTest {
 
         override fun createComponent(context: SettingsContributionContext): JComponent {
             calls.add("create")
-            throw IllegalStateException("boom")
+            error("boom")
         }
 
         override fun collect(): ContributionSnapshot {

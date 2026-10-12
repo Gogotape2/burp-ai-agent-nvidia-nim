@@ -11,6 +11,7 @@ import com.six2dez.burp.aiagent.util.SsrfGuard
 import java.awt.BorderLayout
 import java.awt.CardLayout
 import java.awt.GridBagConstraints
+import java.awt.GridBagLayout
 import java.awt.Insets
 import javax.swing.JButton
 import javax.swing.JComponent
@@ -246,12 +247,67 @@ class BackendConfigPanel(
 
     /**
      * Phase 29 / D-07 (UI-SPEC Contribution Host Geometry, BACKEND_CARD): places a settings
-     * contribution's [component] under [backendId]'s card.
+     * contribution's [component] under [backendId]'s card. EDT only.
+     *
+     * - An id with a card (a core card such as `ollama`, or one an earlier contribution created) gets
+     *   [component] appended as a new full-width row below that card's last row.
+     * - An id with no card gets a new card registered under it, whose only content is [component]:
+     *   it fills the card exactly as a 1.0.1 card filled the `CardLayout`.
+     *
+     * The host adds no spacing: the contribution owns its padding (S6 table, `sectionPad` sides).
      */
     fun addContribution(
         backendId: String,
         component: JComponent,
     ) {
+        val existing = cardsById[backendId]
+        if (existing == null) {
+            val card =
+                JPanel(GridBagLayout()).apply {
+                    background = DesignTokens.Colors.surface
+                }
+            card.add(
+                component,
+                GridBagConstraints().apply {
+                    gridx = 0
+                    gridy = 0
+                    weightx = 1.0
+                    weighty = 1.0
+                    fill = GridBagConstraints.BOTH
+                },
+            )
+            card.putClientProperty("row", 1)
+            registerCard(backendId, card)
+        } else {
+            appendBelowLastRow(existing, component)
+        }
+    }
+
+    /** Adds [component] as a full-width row under every row [card]'s `GridBagLayout` already holds. */
+    private fun appendBelowLastRow(
+        card: JPanel,
+        component: JComponent,
+    ) {
+        val layout = card.layout as? GridBagLayout
+        if (layout == null) {
+            card.add(component)
+            return
+        }
+        val row = (card.components.maxOfOrNull { layout.getConstraints(it).gridy } ?: -1) + 1
+        card.add(
+            component,
+            GridBagConstraints().apply {
+                gridx = 0
+                gridy = row
+                gridwidth = GridBagConstraints.REMAINDER
+                weightx = 1.0
+                fill = GridBagConstraints.HORIZONTAL
+                anchor = GridBagConstraints.WEST
+                insets = Insets(0, 0, 0, 0)
+            },
+        )
+        // formGrid() helpers read the next row from this property; keep it past the appended row.
+        card.putClientProperty("row", row + 1)
     }
 
     /** The card registered under [id], or null. EDT only. */

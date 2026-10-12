@@ -125,8 +125,7 @@ class SettingsPanel(
         get() = contributionComponents.keys.toList()
 
     /** The built components of the active contributions in [slot], in list order. EDT only. */
-    internal fun contributedComponents(slot: SettingsSlot): List<JComponent> =
-        contributionComponents.filterKeys { it.slot == slot }.values.toList()
+    internal fun contributedComponents(slot: SettingsSlot): List<JComponent> = contributionComponents.filterKeys { it.slot == slot }.values.toList()
 
     internal val backendConfigPanel =
         BackendConfigPanel(

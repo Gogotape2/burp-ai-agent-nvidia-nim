@@ -4,6 +4,7 @@ import burp.api.montoya.core.BurpSuiteEdition
 import com.six2dez.burp.aiagent.config.McpSettings
 import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.redact.PrivacyMode
+import com.six2dez.burp.aiagent.spi.SettingsSlot
 import com.six2dez.burp.aiagent.ui.components.AccordionPanel
 import com.six2dez.burp.aiagent.ui.components.SubtleNotice
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
@@ -79,6 +80,8 @@ internal fun SettingsPanel.mcpSection(): JPanel {
         background = DesignTokens.Colors.surface
         add(mcpPanel)
         add(externalPanel)
+        // UI-SPEC PC-9: MCP_TAB contributions close the stack with no host gap; none in the store build.
+        contributedComponents(SettingsSlot.MCP_TAB).forEach { add(it) }
     }
 }
 

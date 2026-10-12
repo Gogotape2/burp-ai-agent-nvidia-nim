@@ -27,7 +27,9 @@ private const val BASELINE_FILE = "detekt-baseline.xml"
  * 988 in the commit that moved the CLI PATH capture out of AgentSupervisor's companion (plan 29-12: its
  * `5` second timeout became a named constant in the full build's CliEnvironment, and its three
  * ReturnCount entries carry local suppressions instead), then to 986 in the commit that replaced the
- * TokenTracker CLI ratios with backend-published ones (its `3.5` and `3.7` entries).
+ * TokenTracker CLI ratios with backend-published ones (its `3.5` and `3.7` entries), then to 985 in
+ * the commit that gave ActiveScanConfigPanel its settings-contribution parameter (plan 29-13: its
+ * constructor's LongParameterList entry, replaced by a local suppression).
  *
  * This is a CEILING, not a target. ADR-17 clause 1 says the baseline may lose entries and may never
  * gain them, so the only edit this constant is ever allowed to receive is a DOWNWARD one, made in the
@@ -35,7 +37,7 @@ private const val BASELINE_FILE = "detekt-baseline.xml"
  * somebody would otherwise have had to answer into a finding nobody will ever see again — which is
  * precisely the inversion ADR-17 clause 1 exists to forbid.
  */
-private const val MAX_BASELINE_ENTRIES = 986
+private const val MAX_BASELINE_ENTRIES = 985
 
 /**
  * QUAL-07 / SC3 gate on ADR-17 clause 1 — "`detekt-baseline.xml` shrinks and is never appended to".

@@ -19,6 +19,10 @@ import javax.swing.JSpinner
 import javax.swing.border.EmptyBorder
 import javax.swing.border.LineBorder
 
+// The 1.0.1 constructor was baselined as LongParameterList; the baseline keys on the full signature, so
+// the contributions parameter orphaned that entry. Every parameter is a component SettingsPanel owns
+// and binds to its settings field, so grouping them would only move the list (ADR-17: no re-baseline).
+@Suppress("LongParameterList")
 class ActiveScanConfigPanel(
     private val activeAiEnabled: JComponent,
     private val activeAiScopeOnly: JCheckBox,
@@ -192,6 +196,12 @@ class ActiveScanConfigPanel(
                 add(sectionA)
                 add(Box.createRigidArea(Dimension(0, DesignTokens.Spacing.sm)))
                 add(sectionB)
+                // UI-SPEC PC-9: contributions share the accordions' body and left edge, each after the
+                // same Spacing.sm gap. With none (store build) the body is exactly the 1.0.1 one.
+                contributions.forEach { contribution ->
+                    add(Box.createRigidArea(Dimension(0, DesignTokens.Spacing.sm)))
+                    add(contribution)
+                }
             }
         return body
     }
