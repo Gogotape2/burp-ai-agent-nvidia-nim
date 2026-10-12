@@ -205,7 +205,6 @@
     <ID>MagicNumber:AgentSettings.kt$AgentSettingsRepository$64</ID>
     <ID>MagicNumber:AgentSettings.kt$AgentSettingsRepository$65535</ID>
     <ID>MagicNumber:AgentSettings.kt$AgentSettingsRepository$80_000</ID>
-    <ID>MagicNumber:AgentSupervisor.kt$AgentSupervisor$3</ID>
     <ID>MagicNumber:AiLoggerPanel.kt$AiLoggerPanel$0.7</ID>
     <ID>MagicNumber:AiLoggerPanel.kt$AiLoggerPanel$10</ID>
     <ID>MagicNumber:AiLoggerPanel.kt$AiLoggerPanel$100</ID>
@@ -809,7 +808,6 @@
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>? = null, contextJson: String?, privacyMode: PrivacyMode, determinismMode: Boolean, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, traceId: String? = null, systemPrompt: String? = null, jsonMode: Boolean = false, maxOutputTokens: Int? = null, )</ID>
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$fun sendChat( chatSessionId: String, backendId: String, text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>? = null, contextJson: String?, privacyMode: PrivacyMode, determinismMode: Boolean, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, traceId: String? = null, systemPrompt: String? = null, maxOutputTokens: Int? = null, launchMetadata: Map&lt;String, String>? = null, ): com.six2dez.burp.aiagent.backends.AgentConnection?</ID>
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$fun startOrAttach(backendId: String): Boolean</ID>
-    <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$private fun parseOllamaModelFromCli(cmd: String): String?</ID>
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$private fun startService( name: String, cmd: String, ): Boolean</ID>
     <ID>ReturnCount:AiScanCheck.kt$AiScanCheck$override fun doCheck( baseRequestResponse: HttpRequestResponse, insertionPoint: AuditInsertionPoint, http: Http, ): AuditResult</ID>
     <ID>ReturnCount:AiScanCheck.kt$AiScanCheck$private fun testPayload( baseRequestResponse: HttpRequestResponse, insertionPoint: AuditInsertionPoint, payload: Payload, vulnClass: VulnClass, ): AuditIssue?</ID>

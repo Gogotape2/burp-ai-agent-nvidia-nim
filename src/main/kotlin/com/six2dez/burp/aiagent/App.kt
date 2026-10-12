@@ -81,6 +81,8 @@ object App {
 
         settingsRepo = AgentSettingsRepository(api)
         backendRegistry = BackendRegistry(api)
+        // Phase 29 / D-06: backends whose settings live in plug-in keys read them through this store.
+        backendRegistry.setPluginSettings(settingsRepo.pluginSettings())
         auditLogger = AuditLogger(api)
         AuditLogger.registerGlobalEmitter { type, payload -> auditLogger.logEvent(type, payload) }
         val aiAccessPolicy =
@@ -92,6 +94,7 @@ object App {
             }
         supervisor = AgentSupervisor(api, backendRegistry, auditLogger, aiAccessPolicy)
         mirrorAppliedSettingsInto(settingsRepo, supervisor)
+        supervisor.pluginSettings = settingsRepo.pluginSettings()
         aiRequestLogger = AiRequestLogger()
         supervisor.aiRequestLogger = aiRequestLogger
         mcpSupervisor = McpSupervisor(api)

@@ -14,7 +14,9 @@ import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.spi.AiAccessPolicy
+import com.six2dez.burp.aiagent.spi.BackendModelHint
 import com.six2dez.burp.aiagent.spi.PluginSettingsStore
+import com.six2dez.burp.aiagent.spi.Plugins
 import com.six2dez.burp.aiagent.util.HeaderParser
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
@@ -37,6 +39,9 @@ class AgentSupervisor(
      */
     @Volatile
     var pluginSettings: PluginSettingsStore? = null
+
+    // Loaded once. The store build ships no provider; the full build's CLI plug-in answers for ollama.
+    private val modelHints: List<BackendModelHint> = Plugins.load(BackendModelHint::class.java)
 
     data class Status(
         val state: String,
@@ -636,7 +641,7 @@ class AgentSupervisor(
             "ollama" -> {
                 val url = (settings?.ollamaUrl ?: prefs.getString("ollama.url") ?: "http://127.0.0.1:11434").trim()
                 val explicitModel = (settings?.ollamaModel ?: prefs.getString("ollama.model")).orEmpty().trim()
-                val model = explicitModel.ifBlank { resolveOllamaModel(settings) }
+                val model = explicitModel.ifBlank { hintedModel("ollama") ?: DEFAULT_OLLAMA_MODEL }
                 val apiKey = settings?.ollamaApiKey ?: prefs.getString("ollama.apiKey").orEmpty()
                 val rawHeaders = settings?.ollamaHeaders ?: prefs.getString("ollama.headers").orEmpty()
                 val headers =
@@ -814,25 +819,22 @@ class AgentSupervisor(
         }
     }
 
-    private fun resolveOllamaModel(settings: AgentSettings?): String {
-        val cmd = settings?.ollamaCliCmd?.trim().orEmpty()
-        val fromCmd = parseOllamaModelFromCli(cmd)
-        if (!fromCmd.isNullOrBlank()) return fromCmd
-        return "llama3.1"
-    }
-
-    private fun parseOllamaModelFromCli(cmd: String): String? {
-        if (cmd.isBlank()) return null
-        val parts = tokenizeCommand(cmd)
-        val runIdx = parts.indexOf("run")
-        if (runIdx >= 0 && runIdx + 1 < parts.size) {
-            val candidate = parts[runIdx + 1]
-            return if (candidate.startsWith("-")) null else candidate
+    /**
+     * Phase 29 / D-06: the first non-blank model a [BackendModelHint] plug-in suggests for [backendId],
+     * or null. A hint that throws is logged and skipped, so a broken plug-in cannot stop a launch
+     * (TooGenericExceptionCaught is suppressed for that reason: a plug-in may throw anything).
+     */
+    @Suppress("TooGenericExceptionCaught")
+    private fun hintedModel(backendId: String): String? {
+        val store = pluginSettings ?: return null
+        return modelHints.firstNotNullOfOrNull { hint ->
+            try {
+                hint.defaultModel(backendId, store)?.trim()?.takeIf { it.isNotEmpty() }
+            } catch (e: Exception) {
+                api.logging().logToError("[AgentSupervisor] Model hint ${hint.javaClass.name} failed: ${e.message}")
+                null
+            }
         }
-        if (parts.size >= 3 && parts[0] == "ollama" && parts[1] == "run") {
-            return parts[2]
-        }
-        return null
     }
 
     private fun startService(
@@ -919,6 +921,9 @@ class AgentSupervisor(
     }
 
     companion object {
+        /** The Ollama model when the user left the field blank and no plug-in suggests one. */
+        private const val DEFAULT_OLLAMA_MODEL = "llama3.1"
+
         /**
          * Splits a user-typed command string into argv tokens with quote and backslash handling.
          *

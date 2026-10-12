@@ -1,0 +1,6 @@
+com.six2dez.burp.aiagent.full.cli.CodexCliContribution
+com.six2dez.burp.aiagent.full.cli.GeminiCliContribution
+com.six2dez.burp.aiagent.full.cli.OpenCodeCliContribution
+com.six2dez.burp.aiagent.full.cli.ClaudeCliContribution
+com.six2dez.burp.aiagent.full.cli.CopilotCliContribution
+com.six2dez.burp.aiagent.full.cli.OllamaCliContribution

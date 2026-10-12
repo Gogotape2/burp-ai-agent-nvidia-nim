@@ -437,7 +437,7 @@ class BackendConfigPanel(
             "",
             buildButtonRowPanel(
                 buildOpenCliButton(backendId, commandProvider),
-                buildTestConnectionButton(backendId),
+                testConnectionButton(backendId),
             ),
         )
         addSpacerRow(panel, DesignTokens.Spacing.sm)
@@ -497,7 +497,7 @@ class BackendConfigPanel(
             "",
             buildButtonRowPanel(
                 buildOpenCliButton("ollama", { ollamaCliCmd.text.trim() }),
-                buildTestConnectionButton("ollama"),
+                testConnectionButton("ollama"),
             ),
         )
         addRowFull(panel, "Ollama model", ollamaModel)
@@ -525,7 +525,7 @@ class BackendConfigPanel(
             "",
             buildButtonRowPanel(
                 buildOpenCliButton("opencode-cli", { opencodeCmd.text.trim() }),
-                buildTestConnectionButton("opencode-cli"),
+                testConnectionButton("opencode-cli"),
             ),
         )
         return panel
@@ -541,7 +541,7 @@ class BackendConfigPanel(
                 DesignTokens.Spacing.sectionPad,
             )
         addRowFull(panel, "LM Studio base URL", lmStudioUrl)
-        addRowFull(panel, "", buildButtonRowPanel(buildTestConnectionButton("lmstudio")))
+        addRowFull(panel, "", buildButtonRowPanel(testConnectionButton("lmstudio")))
         addRowFull(panel, "LM Studio model", lmStudioModel)
         addRowFull(panel, "LM Studio timeout (seconds)", lmStudioTimeout)
         addRowFull(panel, "LM Studio serve command", lmStudioServeCmd)
@@ -561,7 +561,7 @@ class BackendConfigPanel(
                 DesignTokens.Spacing.sectionPad,
             )
         addRowFull(panel, "Base URL", openAiCompatUrl)
-        addRowFull(panel, "", buildButtonRowPanel(buildTestConnectionButton("openai-compatible")))
+        addRowFull(panel, "", buildButtonRowPanel(testConnectionButton("openai-compatible")))
         addRowFull(panel, "Model", openAiCompatModel)
         addRowFull(panel, "API key (Bearer)", openAiCompatApiKey)
         addRowFull(panel, "Extra headers", JScrollPane(openAiCompatHeaders))
@@ -580,7 +580,7 @@ class BackendConfigPanel(
                 DesignTokens.Spacing.sectionPad,
             )
         addRowFull(panel, "Base URL", nvidiaNimUrl)
-        addRowFull(panel, "", buildButtonRowPanel(buildTestConnectionButton("nvidia-nim")))
+        addRowFull(panel, "", buildButtonRowPanel(testConnectionButton("nvidia-nim")))
         addRowFull(panel, "Model", nvidiaNimModel)
         addRowFull(panel, "API key (Bearer)", nvidiaNimApiKey)
         addRowFull(panel, "Extra headers", JScrollPane(nvidiaNimHeaders))
@@ -599,7 +599,7 @@ class BackendConfigPanel(
                 DesignTokens.Spacing.sectionPad,
             )
         addRowFull(panel, "Base URL", perplexityUrl)
-        addRowFull(panel, "", buildButtonRowPanel(buildTestConnectionButton("perplexity")))
+        addRowFull(panel, "", buildButtonRowPanel(testConnectionButton("perplexity")))
         addRowFull(panel, "Model", perplexityModel)
         addRowFull(panel, "API key (Bearer)", perplexityApiKey)
         addRowFull(panel, "Extra headers", JScrollPane(perplexityHeaders))
@@ -620,7 +620,7 @@ class BackendConfigPanel(
             )
         addRowFull(panel, "Model", anthropicModel)
         addRowFull(panel, "API key (Bearer)", anthropicApiKey)
-        addRowFull(panel, "", buildButtonRowPanel(buildTestConnectionButton("anthropic")))
+        addRowFull(panel, "", buildButtonRowPanel(testConnectionButton("anthropic")))
         addSpacerRow(panel, DesignTokens.Spacing.sm)
         return panel
     }
@@ -637,25 +637,34 @@ class BackendConfigPanel(
             }
         }
 
-    private fun buildTestConnectionButton(backendId: String): JButton =
-        JButton("Test connection").apply {
-            font = DesignTokens.Typography.body
-            toolTipText = "Run backend health check with current settings."
-            addActionListener {
-                onTestConnection?.invoke(backendId)
-            }
-        }
-
-    private fun buildButtonRowPanel(vararg buttons: JButton): JPanel =
-        JPanel().apply {
-            layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.X_AXIS)
-            isOpaque = false
-            background = DesignTokens.Colors.surface
-            buttons.forEachIndexed { index, button ->
-                add(button)
-                if (index < buttons.lastIndex) {
-                    add(javax.swing.Box.createRigidArea(java.awt.Dimension(DesignTokens.Spacing.sm, 0)))
-                }
-            }
-        }
+    /** A core card's "Test connection" button: runs the host's health check for [backendId]. */
+    private fun testConnectionButton(backendId: String): JButton = buildTestConnectionButton { onTestConnection?.invoke(backendId) }
 }
+
+/**
+ * The 1.0.1 "Test connection" button. Flavor-neutral: the core cards and the full build's contributed
+ * CLI cards (through `associateWith`) both build it here, so the label, tooltip and font cannot drift
+ * (UI-SPEC PC-8). [onClick] runs on the EDT.
+ */
+internal fun buildTestConnectionButton(onClick: () -> Unit): JButton =
+    JButton("Test connection").apply {
+        font = DesignTokens.Typography.body
+        toolTipText = "Run backend health check with current settings."
+        addActionListener {
+            onClick()
+        }
+    }
+
+/** The 1.0.1 card button row: [buttons] left to right, `Spacing.sm` apart. Shared like [buildTestConnectionButton]. */
+internal fun buildButtonRowPanel(vararg buttons: JButton): JPanel =
+    JPanel().apply {
+        layout = javax.swing.BoxLayout(this, javax.swing.BoxLayout.X_AXIS)
+        isOpaque = false
+        background = DesignTokens.Colors.surface
+        buttons.forEachIndexed { index, button ->
+            add(button)
+            if (index < buttons.lastIndex) {
+                add(javax.swing.Box.createRigidArea(java.awt.Dimension(DesignTokens.Spacing.sm, 0)))
+            }
+        }
+    }

@@ -7,9 +7,11 @@ import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.ChatMessage
 import com.six2dez.burp.aiagent.backends.HealthCheckResult
 import com.six2dez.burp.aiagent.backends.LaunchRequest
+import com.six2dez.burp.aiagent.backends.PluginSettingsAware
 import com.six2dez.burp.aiagent.backends.SessionAwareConnection
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
+import com.six2dez.burp.aiagent.spi.PluginSettingsStore
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import java.io.BufferedReader
 import java.io.InputStreamReader
@@ -23,9 +25,21 @@ import java.util.concurrent.atomic.AtomicReference
 class CliBackend(
     override val id: String,
     override val displayName: String,
-) : AiBackend {
+) : AiBackend,
+    PluginSettingsAware {
     /** Avoid spamming "Found X CLI" on every isAvailable() call. */
     private val availabilityLogged = AtomicBoolean(false)
+
+    /**
+     * Phase 29 / D-06: the command and the process timeout live in the CLI plug-in's own keys
+     * ([CliSettings]), applied by the registry on every reload. Defaults until then.
+     */
+    @Volatile
+    private var cliSettings = CliSettings(null)
+
+    override fun setPluginSettings(store: PluginSettingsStore) {
+        cliSettings = CliSettings(store)
+    }
 
     override fun launch(config: BackendLaunchConfig): AgentConnection {
         require(config.command.isNotEmpty()) { "CLI backend requires a command" }
@@ -33,9 +47,11 @@ class CliBackend(
         // WR-02: re-coerce at the consumption boundary. BackendLaunchConfig.cliTimeoutSeconds is a plain
         // nullable Int with no invariant — a directly-constructed config (tests / future call sites) could
         // inject 0 or a negative value, yielding waitFor(0) (immediate timeout) or overflow on the
-        // wall-clock break. Floor 30s / ceiling 3600s mirrors the AgentSettings persistence clamp so the
+        // wall-clock break. Floor 30s / ceiling 3600s mirrors the CliSettings read clamp so the
         // watchdog never trusts an unvalidated value regardless of how the config was built.
-        val timeoutSeconds = (config.cliTimeoutSeconds ?: Defaults.CLI_PROCESS_TIMEOUT_SECONDS).coerceIn(30, 3600)
+        val timeoutSeconds =
+            (config.cliTimeoutSeconds ?: Defaults.CLI_PROCESS_TIMEOUT_SECONDS)
+                .coerceIn(CliSettings.MIN_TIMEOUT_SECONDS, CliSettings.MAX_TIMEOUT_SECONDS)
         return NonInteractiveCliConnection(id, config.command, config.env, config.cliSessionId, timeoutSeconds)
     }
 
@@ -55,12 +71,12 @@ class CliBackend(
         return BackendLaunchConfig(
             backendId = request.backendId,
             displayName = LAUNCH_DISPLAY_NAMES[id] ?: displayName,
-            command = AgentSupervisor.tokenizeCommand(configuredCommand(settings).trim()),
+            command = AgentSupervisor.tokenizeCommand(configuredCommand().trim()),
             sessionId = request.sessionId,
             determinismMode = request.determinismMode,
             env = env,
             cliSessionId = request.cliSessionId,
-            cliTimeoutSeconds = settings?.cliTimeoutSeconds,
+            cliTimeoutSeconds = cliSettings.timeoutSeconds(),
         )
     }
 
@@ -69,16 +85,8 @@ class CliBackend(
         CliTempFileRegistry.shutdown()
     }
 
-    // Without settings (the supervisor before its first applySettings) the default command for the id.
-    private fun configuredCommand(settings: AgentSettings?): String =
-        when (id) {
-            "codex-cli" -> settings?.codexCmd ?: "codex"
-            "gemini-cli" -> settings?.geminiCmd ?: "gemini"
-            "opencode-cli" -> settings?.opencodeCmd ?: "opencode"
-            "claude-cli" -> settings?.claudeCmd ?: "claude"
-            "copilot-cli" -> settings?.copilotCmd ?: "copilot"
-            else -> ""
-        }
+    // The plug-in's stored command for this id (its 1.0.1 default when never saved).
+    private fun configuredCommand(): String = cliSettings.command(id)
 
     /** A CLI health check is a local process probe (isAvailable), so background polling may run it. */
     override val healthCheckIsLocal: Boolean = true
@@ -87,23 +95,20 @@ class CliBackend(
     override val charsPerTokenEstimate: Double?
         get() = CHARS_PER_TOKEN[id]
 
-    /** The 1.0.1 MainTab validation messages, moved here so core names no CLI id (D-09). */
+    /**
+     * The 1.0.1 MainTab validation messages, moved here so core names no CLI id (D-09). The command is
+     * read from the plug-in's keys, not from [settings] (D-06).
+     */
     override fun configurationError(settings: AgentSettings): String? {
         val isWindows = System.getProperty("os.name").lowercase().contains("win")
-        return configurationErrorFor(settings, isWindows)
+        return configurationErrorFor(isWindows)
     }
 
-    internal fun configurationErrorFor(
-        settings: AgentSettings,
-        isWindows: Boolean,
-    ): String? {
-        val command = configuredCommand(settings)
+    internal fun configurationErrorFor(isWindows: Boolean): String? {
+        val command = configuredCommand()
         if (command.isBlank()) return EMPTY_COMMAND_MESSAGES[id]
         return if (id == "opencode-cli" && isWindows && looksLikeBareExe(command)) OPENCODE_BARE_EXE_HINT else null
     }
-
-    /** RED skeleton (29-14 Task 1). */
-    internal fun configurationErrorFor(isWindows: Boolean): String? = null
 
     private fun looksLikeBareExe(cmd: String): Boolean {
         val trimmed = cmd.trim()
@@ -111,17 +116,9 @@ class CliBackend(
         return !trimmed.contains("\\") && !trimmed.contains("/")
     }
 
+    // The command is read from the plug-in's keys, not from [settings] (D-06).
     override fun isAvailable(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean {
-        val command =
-            when (id) {
-                "claude-cli" -> settings.claudeCmd
-                "gemini-cli" -> settings.geminiCmd
-                "codex-cli" -> settings.codexCmd
-                "opencode-cli" -> settings.opencodeCmd
-                "copilot-cli" -> settings.copilotCmd
-                "ollama" -> settings.ollamaCliCmd
-                else -> ""
-            }
+        val command = configuredCommand()
         if (command.isBlank()) return false
         // Bug #67: share the tokenizer with the supervisor's launch path so isAvailable() and
         // send() agree on argv[0] (Windows backslash-paths must not be split as escape sequences).

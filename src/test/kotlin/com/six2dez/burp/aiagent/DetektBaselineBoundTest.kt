@@ -37,7 +37,7 @@ private const val BASELINE_FILE = "detekt-baseline.xml"
  * somebody would otherwise have had to answer into a finding nobody will ever see again — which is
  * precisely the inversion ADR-17 clause 1 exists to forbid.
  */
-private const val MAX_BASELINE_ENTRIES = 985
+private const val MAX_BASELINE_ENTRIES = 983
 
 /**
  * QUAL-07 / SC3 gate on ADR-17 clause 1 — "`detekt-baseline.xml` shrinks and is never appended to".

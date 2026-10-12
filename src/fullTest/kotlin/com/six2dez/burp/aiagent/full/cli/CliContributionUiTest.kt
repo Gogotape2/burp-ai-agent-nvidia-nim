@@ -183,8 +183,7 @@ class CliContributionUiTest {
         }
     }
 
-    private fun descendants(root: Component): List<Component> =
-        listOf(root) + ((root as? Container)?.components?.flatMap { descendants(it) } ?: emptyList())
+    private fun descendants(root: Component): List<Component> = listOf(root) + ((root as? Container)?.components?.flatMap { descendants(it) } ?: emptyList())
 
     private fun onEdt(block: () -> Unit) {
         var failure: Throwable? = null
