@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.full
 
 import burp.api.montoya.MontoyaApi
+import com.six2dez.burp.aiagent.BuildFlags
 import com.six2dez.burp.aiagent.EXTENSION_NAME
 import com.six2dez.burp.aiagent.registerExtensionIdentity
 import com.six2dez.burp.aiagent.resolveFlavorProfile
@@ -22,6 +23,9 @@ import org.mockito.kotlin.verify
  * resolve [FullFlavorProfile], and the extension must still register under the same byte-exact name
  * as the store build: one name, one Burp preferences node, so the settings and encrypted secrets of an
  * existing install stay readable after the upgrade.
+ *
+ * Plan 29-17 / UI-SPEC PC-14 (S3, C-N8, user decision Q6): the full label is "GitHub full build" and the
+ * banner is pinned as an exact line, not a substring.
  */
 class FullExtensionNameTest {
     @Test
@@ -44,6 +48,11 @@ class FullExtensionNameTest {
         assertEquals("Custom AI Agent", EXTENSION_NAME)
         val banner = argumentCaptor<String>()
         verify(api.logging(), times(1)).logToOutput(banner.capture())
-        assertTrue(banner.firstValue.contains("full build"), "banner: ${banner.firstValue}")
+        assertEquals("Custom AI Agent ${BuildFlags.VERSION} (GitHub full build)", banner.firstValue, "C-N8: the full banner")
+    }
+
+    @Test
+    fun theFullProfileIsLabelledGitHubFullBuild() {
+        assertEquals("GitHub full build", FullFlavorProfile().label, "C-N8 / Q6")
     }
 }

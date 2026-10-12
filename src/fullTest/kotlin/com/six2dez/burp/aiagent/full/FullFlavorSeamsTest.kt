@@ -1,18 +1,42 @@
 package com.six2dez.burp.aiagent.full
 
+import burp.api.montoya.MontoyaApi
+import com.six2dez.burp.aiagent.InMemoryPreferences
+import com.six2dez.burp.aiagent.TestSettings
 import com.six2dez.burp.aiagent.backends.AiBackendFactory
+import com.six2dez.burp.aiagent.backends.cli.CliSettings
+import com.six2dez.burp.aiagent.config.AgentSettingsRepository
+import com.six2dez.burp.aiagent.full.autoqueue.AutoQueueContribution
+import com.six2dez.burp.aiagent.full.autoqueue.AutoQueuePlugin
+import com.six2dez.burp.aiagent.full.autoqueue.AutoQueueSink
+import com.six2dez.burp.aiagent.full.autoqueue.AutoQueueSnapshot
+import com.six2dez.burp.aiagent.full.external.ExternalMcpSettings
 import com.six2dez.burp.aiagent.full.external.ExternalToolProvider
 import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.mcp.ToolApprovalGate
 import com.six2dez.burp.aiagent.mcp.tools.GenericToolProvider
 import com.six2dez.burp.aiagent.mcp.tools.McpToolExecutor
+import com.six2dez.burp.aiagent.scanner.ActiveAiScanner
+import com.six2dez.burp.aiagent.scanner.ActiveScanTarget
+import com.six2dez.burp.aiagent.scanner.InjectionPoint
+import com.six2dez.burp.aiagent.scanner.InjectionType
+import com.six2dez.burp.aiagent.scanner.VulnClass
+import com.six2dez.burp.aiagent.scanner.VulnHint
 import com.six2dez.burp.aiagent.spi.AiAccessPolicy
+import com.six2dez.burp.aiagent.spi.BackendModelHint
+import com.six2dez.burp.aiagent.spi.ExtensionPlugin
 import com.six2dez.burp.aiagent.spi.FlavorProfile
 import com.six2dez.burp.aiagent.spi.Plugins
+import com.six2dez.burp.aiagent.spi.SettingsContribution
 import com.six2dez.burp.aiagent.spi.ToolProvider
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.mockito.Answers
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.verifyNoInteractions
+import org.mockito.kotlin.whenever
 import java.io.File
 import java.net.URI
 
@@ -26,6 +50,10 @@ import java.net.URI
  * Every `com.six2dez.burp.aiagent` services file on this classpath must load through [Plugins] without
  * `ServiceConfigurationError`, which is what a Kotlin `object` provider or a missing class would raise.
  * The set of SPI files is pinned, so a new SPI has to be added here on purpose.
+ *
+ * Plan 29-17 (phase seal, BUILD-01, BUILD-03, BUILD-04) adds the provider census by class name for every
+ * SPI, and the fresh-install edge: an empty preferences node reads the 1.0.1 CLI commands, no external
+ * MCP server and the auto-queue OFF, each through the plug-in's own settings object.
  */
 class FullFlavorSeamsTest {
     @Test
@@ -78,6 +106,54 @@ class FullFlavorSeamsTest {
         assertTrue(Plugins.load(AiBackendFactory::class.java).isNotEmpty())
     }
 
+    @Test
+    fun everySpiLoadsExactlyTheExpectedProviderClassesOnTheFullClasspath() {
+        PROVIDER_CENSUS.forEach { (type, expected) ->
+            assertEquals(
+                expected.sorted(),
+                Plugins.load(type).map { it.javaClass.name },
+                "providers of ${type.name}",
+            )
+        }
+        assertEquals(EXPECTED_SPI_TYPES, PROVIDER_CENSUS.keys.map { it.name }.toSet(), "the census covers every SPI file")
+        assertEquals(11, PROVIDER_CENSUS.getValue(AiBackendFactory::class.java).size, "6 core HTTP + 5 CLI factories")
+    }
+
+    @Test
+    fun aFreshFullInstallReadsTheCliDefaultsNoExternalServerAndTheAutoQueueOff() {
+        val prefs = InMemoryPreferences()
+        val api = mock<MontoyaApi>(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
+        whenever(api.persistence().preferences()).thenReturn(prefs)
+        val store = AgentSettingsRepository(api).pluginSettings()
+
+        val cli = CliSettings(store)
+        FRESH_CLI_COMMANDS.forEach { (backendId, expected) ->
+            assertEquals(expected, cli.command(backendId), "$backendId command on a fresh install")
+        }
+
+        val logLines = mutableListOf<String>()
+        assertEquals(emptyList<Any>(), ExternalMcpSettings(store) { logLines += it }.load(), "no external MCP server")
+        assertEquals(emptyList<String>(), logLines, "an absent server list is not a parse failure")
+
+        assertNull(store.getBoolean(AutoQueuePlugin.KEY), "a fresh install has no auto-queue value")
+        assertEquals(AutoQueueSnapshot(enabled = false), AutoQueueContribution().defaults(), "the auto-queue default is OFF")
+        val activeScanner = mock<ActiveAiScanner>()
+        AutoQueueSink(activeScanner, store) { logLines += it }
+            .offer(listOf(target()), TestSettings.baselineSettings().copy(activeAiEnabled = true))
+        verifyNoInteractions(activeScanner)
+
+        val pluginKeys = FRESH_CLI_COMMANDS.keys.mapNotNull { CliSettings.keyFor(it) } + ExternalMcpSettings.KEY + AutoQueuePlugin.KEY
+        assertEquals(emptyList<String>(), prefs.writes.filter { it in pluginKeys }, "reading the defaults writes no plug-in key")
+    }
+
+    private fun target(): ActiveScanTarget =
+        ActiveScanTarget(
+            originalRequest = mock(defaultAnswer = Answers.RETURNS_DEEP_STUBS),
+            injectionPoint = InjectionPoint(InjectionType.URL_PARAM, "id", "1"),
+            vulnHint = VulnHint(VulnClass.SQLI, 90, "evidence"),
+            priority = 80,
+        )
+
     /**
      * Every `META-INF/services/com.six2dez.burp.aiagent.*` file in the main and full production resource
      * directories, keyed by SPI type, with the provider class names it declares (comments and blank lines
@@ -125,6 +201,58 @@ class FullFlavorSeamsTest {
                 "redact_preview",
                 "ai_audit_query",
                 "ai_backends_list",
+            )
+
+        /** The 1.0.1 default command per CLI-owned backend id, as literals (BUILD-03 empty-input edge). */
+        val FRESH_CLI_COMMANDS =
+            mapOf(
+                "codex-cli" to "codex chat",
+                "gemini-cli" to "gemini --output-format text --model gemini-2.5-flash --yolo",
+                "opencode-cli" to "opencode",
+                "claude-cli" to "claude",
+                "copilot-cli" to "copilot",
+                "ollama" to "ollama run llama3.1",
+            )
+
+        private const val PKG = "com.six2dez.burp.aiagent"
+
+        /** Plan 29-17: every SPI with its expected provider classes on the full classpath, by name. */
+        val PROVIDER_CENSUS: Map<Class<*>, List<String>> =
+            mapOf(
+                AiBackendFactory::class.java to
+                    listOf(
+                        "$PKG.backends.anthropic.AnthropicBackendFactory",
+                        "$PKG.backends.lmstudio.LmStudioBackendFactory",
+                        "$PKG.backends.nvidia.NvidiaNimBackendFactory",
+                        "$PKG.backends.ollama.OllamaBackendFactory",
+                        "$PKG.backends.openai.OpenAiCompatibleBackendFactory",
+                        "$PKG.backends.perplexity.PerplexityBackendFactory",
+                        "$PKG.backends.cli.ClaudeCliBackendFactory",
+                        "$PKG.backends.cli.CodexCliBackendFactory",
+                        "$PKG.backends.cli.CopilotCliBackendFactory",
+                        "$PKG.backends.cli.GeminiCliBackendFactory",
+                        "$PKG.backends.cli.OpenCodeCliBackendFactory",
+                    ),
+                ToolProvider::class.java to
+                    listOf(
+                        "$PKG.mcp.tools.GenericToolProvider",
+                        "$PKG.full.external.ExternalToolProvider",
+                    ),
+                SettingsContribution::class.java to
+                    listOf(
+                        "$PKG.full.cli.ClaudeCliContribution",
+                        "$PKG.full.cli.CodexCliContribution",
+                        "$PKG.full.cli.CopilotCliContribution",
+                        "$PKG.full.cli.GeminiCliContribution",
+                        "$PKG.full.cli.OpenCodeCliContribution",
+                        "$PKG.full.cli.OllamaCliContribution",
+                        "$PKG.full.external.ExternalMcpContribution",
+                        "$PKG.full.autoqueue.AutoQueueContribution",
+                    ),
+                ExtensionPlugin::class.java to listOf("$PKG.full.autoqueue.AutoQueuePlugin"),
+                AiAccessPolicy::class.java to listOf("$PKG.full.FullAiAccessPolicy"),
+                FlavorProfile::class.java to listOf("$PKG.full.FullFlavorProfile"),
+                BackendModelHint::class.java to listOf("$PKG.full.cli.OllamaCliModelHint"),
             )
 
         val EXPECTED_SPI_TYPES =
