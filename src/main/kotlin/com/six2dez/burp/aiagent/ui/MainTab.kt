@@ -52,6 +52,9 @@ import javax.swing.border.EmptyBorder
  */
 private const val CHAT_PANEL_MIN_WIDTH = 560
 
+// Ten parameters since UI-SPEC PC-15 added buildIdentity: each one is a service App builds once and
+// hands down, so grouping them would only move the list into a holder object (ADR-17: no re-baseline).
+@Suppress("LongParameterList")
 class MainTab(
     private val api: MontoyaApi,
     private val settingsRepo: AgentSettingsRepository,

@@ -72,8 +72,11 @@ fun SettingsPanel.updateUsageSummary(
 fun SettingsPanel.saveSettings() {
     // currentSettings() reads the Swing components, so it stays on the EDT before dispatch.
     val updated = currentSettings()
+    // D-07 (UI-SPEC H-2): contribution values are read off their components here too, with the core
+    // snapshot; the worker persists them after the core save.
+    val contributionSnapshots = activeContributions.map { it to it.collect() }
     updateSaveFeedback("Saving settings...", DesignTokens.Colors.statusWarning)
-    applyAndSaveSettingsAsync(updated) { result ->
+    applyAndSaveSettingsAsync(updated, contributionSnapshots) { result ->
         result
             .onSuccess {
                 updateSaveFeedback("Saved and applied.", DesignTokens.Colors.statusSuccess, resetMs = 3000)
@@ -120,8 +123,13 @@ fun SettingsPanel.restoreDefaultsWithConfirmation() {
 internal fun SettingsPanel.restoreDefaultsConfirmed() {
     val defaults = settingsRepo.defaultSettings()
     applySettingsToUi(defaults, notifyHosts = false)
+    // D-10 amended: each contribution's defaults are shown here, on the EDT, and persisted on the worker.
+    val contributionDefaults =
+        activeContributions.map { contribution ->
+            contribution to contribution.defaults().also { contribution.applyToUi(it) }
+        }
     updateSaveFeedback("Restoring defaults...", DesignTokens.Colors.statusWarning)
-    applyAndSaveSettingsAsync(defaults) { result ->
+    applyAndSaveSettingsAsync(defaults, contributionDefaults) { result ->
         result
             .onSuccess {
                 updateSaveFeedback("Defaults restored and applied.", DesignTokens.Colors.statusSuccess, resetMs = 3000)
@@ -227,7 +235,7 @@ internal fun SettingsPanel.dialogParentComponent(): JComponent? = dialogParent
 internal fun SettingsPanel.helpSection(): JPanel =
     HelpConfigPanel(
         dialogParentProvider = ::dialogParentComponent,
-        buildIdentity = "",
+        buildIdentity = buildIdentity,
     ).build()
 
 internal fun SettingsPanel.privacySection(): JPanel =

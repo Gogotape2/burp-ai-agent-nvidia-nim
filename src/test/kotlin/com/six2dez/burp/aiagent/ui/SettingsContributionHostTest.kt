@@ -7,6 +7,7 @@ import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.AgentSettingsRepository
 import com.six2dez.burp.aiagent.mcp.McpSupervisor
+import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.scanner.ActiveAiScanner
 import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
 import com.six2dez.burp.aiagent.spi.ContributionSnapshot
@@ -18,7 +19,6 @@ import com.six2dez.burp.aiagent.spi.SettingsSlot
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.components.AccordionPanel
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
-import com.six2dez.burp.aiagent.redact.PrivacyMode
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse

@@ -33,6 +33,9 @@ import javax.swing.SpinnerNumberModel
 import javax.swing.SwingUtilities
 import javax.swing.Timer
 
+// Ten parameters since phase 29 added buildIdentity and contributions (UI-SPEC PC-15, D-07): the
+// services MainTab hands down plus the two values App resolves once (ADR-17: no re-baseline).
+@Suppress("LongParameterList")
 class SettingsPanel(
     internal val api: MontoyaApi,
     internal val settingsRepo: AgentSettingsRepository,

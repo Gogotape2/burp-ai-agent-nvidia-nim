@@ -12,6 +12,8 @@ import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.scanner.PayloadRisk
 import com.six2dez.burp.aiagent.scanner.ScanMode
 import com.six2dez.burp.aiagent.scanner.applyOptimizationSettings
+import com.six2dez.burp.aiagent.spi.ContributionSnapshot
+import com.six2dez.burp.aiagent.spi.SettingsContribution
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
 import com.six2dez.burp.aiagent.ui.panels.BackendConfigState
 import java.util.concurrent.atomic.AtomicBoolean
@@ -452,6 +454,8 @@ internal fun SettingsPanel.applySettingsToUi(
     activeAiAdaptivePayloads.isSelected = updated.activeAiAdaptivePayloads
     updateActiveRiskDescription()
     refreshActiveAiStatus()
+    // D-07: every contribution hears about the core apply, after the core components show it.
+    activeContributions.forEach { it.onCoreSettingsApplied(updated) }
     if (notifyHosts) {
         onMcpEnabledChanged?.invoke(updated.mcpSettings.enabled)
         onPassiveAiEnabledChanged?.invoke(updated.passiveAiEnabled)
@@ -537,9 +541,15 @@ internal fun SettingsPanel.parseContentTypePrefixesInput(
 internal fun SettingsPanel.applyAndSaveSettingsBody(
     updated: AgentSettings,
     isCurrent: () -> Boolean = { true },
+    contributionSnapshots: List<Pair<SettingsContribution, ContributionSnapshot>> = emptyList(),
 ) {
     settings = updated
     settingsRepo.save(updated)
+    // D-07 (UI-SPEC H-2, T-29-28): contributions persist on this worker, strictly after the core save
+    // and before the backends reload, so a reloaded backend reads the values just saved. A persist that
+    // throws does not stop the core apply steps below: its failure is rethrown at the end of the body,
+    // where it reaches the caller's onFailure ("Save failed: {message}") with core settings applied.
+    val contributionFailure = if (isCurrent()) persistContributions(contributionSnapshots) else null
     // Re-prime the BountyPrompt cache off-thread so menu builds never touch disk (BApp #231, finding 2).
     // Called from this worker it starts a second, nested daemon thread. That nesting is harmless and
     // deliberate: the cache refresh is fire-and-forget, this worker never reads its result, and the
@@ -605,7 +615,36 @@ internal fun SettingsPanel.applyAndSaveSettingsBody(
     if (!isCurrent()) return
     activeAiScanner.setEnabled(updated.activeAiEnabled)
 
+    contributionFailure?.let { throw it }
     api.logging().logToOutput("AI Agent settings saved.")
+}
+
+/**
+ * Runs each contribution's `persist` on the calling thread (the settings-save worker), in list order,
+ * and returns the first failure with any later ones attached as suppressed, or null. Every contribution
+ * gets its turn even when an earlier one throws, and each failure is logged with its class name.
+ *
+ * **Why the catch is broad.** A plug-in may throw anything; one failing plug-in must neither skip the
+ * others nor the core apply steps. A `VirtualMachineError` is rethrown at once.
+ */
+@Suppress("TooGenericExceptionCaught")
+internal fun SettingsPanel.persistContributions(snapshots: List<Pair<SettingsContribution, ContributionSnapshot>>): Throwable? {
+    var firstFailure: Throwable? = null
+    snapshots.forEach { (contribution, snapshot) ->
+        try {
+            contribution.persist(snapshot, pluginSettings)
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Throwable) {
+            api.logging().logToError(
+                "[SettingsPanel] Settings contribution ${contribution.javaClass.name} failed to persist: " +
+                    "${failure.javaClass.simpleName}: ${failure.message}",
+            )
+            val earlier = firstFailure
+            if (earlier == null) firstFailure = failure else earlier.addSuppressed(failure)
+        }
+    }
+    return firstFailure
 }
 
 /**
@@ -629,6 +668,7 @@ internal fun SettingsPanel.applyAndSaveSettingsBody(
 @Suppress("TooGenericExceptionCaught")
 internal fun SettingsPanel.applyAndSaveSettingsAsync(
     updated: AgentSettings,
+    contributionSnapshots: List<Pair<SettingsContribution, ContributionSnapshot>> = emptyList(),
     onDone: (Result<Unit>) -> Unit,
 ) {
     // CR-01: a save submitted AFTER unload is refused outright rather than superseded mid-body.
@@ -671,6 +711,7 @@ internal fun SettingsPanel.applyAndSaveSettingsAsync(
                 applyAndSaveSettingsBody(
                     updated,
                     isCurrent = { saveGeneration.get() == generation && !disposed },
+                    contributionSnapshots = contributionSnapshots,
                 )
             } catch (failure: Throwable) {
                 // Outer layer. The dispatcher posts its EDT tail after routing this throwable to

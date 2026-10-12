@@ -59,15 +59,16 @@ object App {
 
     fun initialize(montoyaApi: MontoyaApi) {
         api = montoyaApi
-        registerExtensionIdentity(
-            api,
+        // UI-SPEC PC-15: the profile is resolved ONCE. The banner and the Help caption both come from it,
+        // so a provider conflict is logged once and the two can never disagree.
+        val flavorProfile =
             resolveFlavorProfile { providers ->
                 api.logging().logToError(
                     "More than one FlavorProfile provider found (${providers.joinToString(", ")}); " +
                         "using the BApp Store default.",
                 )
-            },
-        )
+            }
+        registerExtensionIdentity(api, flavorProfile)
 
         BackendDiagnostics.output = { api.logging().logToOutput(it) }
         BackendDiagnostics.error = { api.logging().logToError(it) }
@@ -176,7 +177,8 @@ object App {
         activeAiScanner.useCollaborator = settings.activeAiUseCollaborator
         activeAiScanner.setEnabled(settings.activeAiEnabled)
 
-        val ui = MainTab(
+        val ui =
+            MainTab(
                 api,
                 settingsRepo,
                 backendRegistry,
@@ -186,7 +188,7 @@ object App {
                 passiveAiScanner,
                 activeAiScanner,
                 aiRequestLogger,
-                buildIdentity = "",
+                buildIdentity = buildIdentityLine(flavorProfile),
             )
         mainTab = ui
         api.userInterface().registerSuiteTab(EXTENSION_NAME, ui.root)
@@ -367,11 +369,15 @@ internal fun registerExtensionIdentity(
     profile: FlavorProfile,
 ) {
     api.extension().setName(EXTENSION_NAME)
-    api.logging().logToOutput("$EXTENSION_NAME ${BuildFlags.VERSION} (${profile.label})")
+    api.logging().logToOutput(buildIdentityLine(profile))
 }
 
-/** Phase 29 / UI-SPEC PC-15 (S3, S25, C-N12): the one string that names the running build. */
-internal fun buildIdentityLine(profile: FlavorProfile): String = ""
+/**
+ * Phase 29 / UI-SPEC PC-15 (S3, S25, C-N12): the one string that names the running build, for example
+ * `Custom AI Agent 1.0.1 (BApp Store build)`. [registerExtensionIdentity] logs it as the Output banner
+ * and App passes the same value down to the Settings Help caption. The label is shown, never compared.
+ */
+internal fun buildIdentityLine(profile: FlavorProfile): String = "$EXTENSION_NAME ${BuildFlags.VERSION} (${profile.label})"
 
 /**
  * Quick 261008-n0c — makes [AgentSupervisor]'s settings copy a mirror of the one [settingsRepo].
