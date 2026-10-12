@@ -132,6 +132,7 @@ class FullFlavorSeamsTest {
                 "com.six2dez.burp.aiagent.backends.AiBackendFactory",
                 "com.six2dez.burp.aiagent.spi.AiAccessPolicy",
                 "com.six2dez.burp.aiagent.spi.BackendModelHint",
+                "com.six2dez.burp.aiagent.spi.ExtensionPlugin",
                 "com.six2dez.burp.aiagent.spi.FlavorProfile",
                 "com.six2dez.burp.aiagent.spi.SettingsContribution",
                 "com.six2dez.burp.aiagent.spi.ToolProvider",
