@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.ui
 
 import com.six2dez.burp.aiagent.agents.AgentProfileLoader
+import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.backends.HealthCheckResult
 import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.redact.PrivacyMode
@@ -141,12 +142,39 @@ internal fun SettingsPanel.restoreDefaultsConfirmed() {
     }
 }
 
+/**
+ * The user's pick in the Main tab header picker. Any pick, burp-ai included, replaces an unavailable
+ * saved backend id, so the S8 notice hides with S5 (UI-SPEC PC-3).
+ */
 fun SettingsPanel.setPreferredBackend(value: String) {
+    unavailableSavedBackendId = null
     preferredBackend.selectedItem = value
     backendConfigPanel.setBackend(preferredBackendId())
+    syncUnavailableBackendNotice()
 }
 
-fun SettingsPanel.preferredBackendId(): String = preferredBackend.selectedItem as? String ?: "codex-cli"
+fun SettingsPanel.preferredBackendId(): String = preferredBackend.selectedItem as? String ?: BackendRegistry.DEFAULT_BACKEND_ID
+
+/**
+ * The backend id a Save stores: the unavailable saved id while the picker still shows the substituted
+ * default, so the substitution is never persisted (D-08, P-1); the picked id otherwise.
+ */
+internal fun SettingsPanel.backendIdToStore(): String {
+    val picked = preferredBackendId()
+    val unavailable = unavailableSavedBackendId
+    return if (unavailable != null && picked == BackendRegistry.DEFAULT_BACKEND_ID) unavailable else picked
+}
+
+/** UI-SPEC S8: shows C-N1 while the saved backend id is unavailable, hides it (and its gap) otherwise. */
+internal fun SettingsPanel.syncUnavailableBackendNotice() {
+    val unavailable = unavailableSavedBackendId
+    if (unavailable == null) {
+        unavailableBackendNotice.hideNotice()
+    } else {
+        unavailableBackendNotice.setMessage(SubtleNotice.Level.INFO, unavailableBackendNoticeHtml(unavailable))
+    }
+    unavailableBackendNoticeRow.isVisible = unavailable != null
+}
 
 fun SettingsPanel.setMcpEnabled(enabled: Boolean) {
     mcpEnabled.isSelected = enabled

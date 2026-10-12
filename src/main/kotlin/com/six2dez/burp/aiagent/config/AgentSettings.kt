@@ -368,7 +368,7 @@ class AgentSettingsRepository(
                     prefs.setString(KEY_HOST_SALT, generated)
                     generated
                 },
-            preferredBackendId = (prefs.getString(KEY_PREFERRED_BACKEND) ?: "burp-ai").trim(),
+            preferredBackendId = (prefs.getString(KEY_PREFERRED_BACKEND) ?: DEFAULT_PREFERRED_BACKEND_ID).trim(),
             privacyMode = privacy,
             determinismMode = prefs.getBoolean(KEY_DETERMINISM) ?: false,
             auditEnabled = prefs.getBoolean(KEY_AUDIT_ENABLED) ?: false,
@@ -523,7 +523,7 @@ class AgentSettingsRepository(
             accessControlPrompt = defaultAccessControlPrompt(),
             loginSequencePrompt = defaultLoginSequencePrompt(),
             hostAnonymizationSalt = McpSettings.generateToken(),
-            preferredBackendId = "burp-ai",
+            preferredBackendId = DEFAULT_PREFERRED_BACKEND_ID,
             privacyMode = PrivacyMode.BALANCED,
             determinismMode = false,
             auditEnabled = false,
@@ -910,6 +910,13 @@ class AgentSettingsRepository(
     }
 
     companion object {
+        /**
+         * The backend new installs use, and the one the registry substitutes for a saved id the
+         * running build does not register (Phase 29 / D-08). BackendRegistry.DEFAULT_BACKEND_ID is
+         * this constant, so the two cannot drift.
+         */
+        const val DEFAULT_PREFERRED_BACKEND_ID = "burp-ai"
+
         private const val KEY_CODEX_CMD = "codex.cmd"
         private const val KEY_GEMINI_CMD = "gemini.cmd"
         private const val KEY_OPENCODE_CMD = "opencode.cmd"

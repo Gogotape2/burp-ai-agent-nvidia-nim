@@ -13,6 +13,7 @@ import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.scanner.ScanKnowledgeBase
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.components.DependencyBanner
+import com.six2dez.burp.aiagent.ui.components.SubtleNotice
 import com.six2dez.burp.aiagent.ui.components.ToggleSwitch
 import java.awt.BorderLayout
 import java.awt.Cursor
@@ -103,6 +104,13 @@ class MainTab(
     private var attentionActive = false
     private val dependencyBanner =
         DependencyBanner("MCP Server must be enabled. Toggle MCP to enable AI features.")
+
+    // UI-SPEC S5 (D-08): shown while the saved backend id is not registered in this build.
+    private val unavailableBackendNotice = SubtleNotice()
+
+    // P-1: true while the picker is set programmatically (initial B1 selection, the onSettingsChanged
+    // re-sync); only a user selection persists.
+    private var syncingBackendPicker = false
     private var syncingToggles = false
     private var healthTimer: Timer? = null
 
@@ -174,10 +182,12 @@ class MainTab(
         backendPicker.foreground = UiTheme.Colors.comboForeground
         backendPicker.border = javax.swing.border.LineBorder(UiTheme.Colors.outline, 1, true)
         val initialSettings = settingsRepo.load()
-        backendPicker.model = javax.swing.DefaultComboBoxModel(backends.listAllBackendIds().toTypedArray())
-        backendPicker.selectedItem = initialSettings.preferredBackendId
+        syncBackendPicker(initialSettings.preferredBackendId)
         backendPicker.addActionListener {
-            val selected = backendPicker.selectedItem as? String ?: "codex-cli"
+            if (syncingBackendPicker) return@addActionListener
+            // PC-3: any user pick, burp-ai included, replaces an unavailable saved id and hides both notices.
+            val selected = backendPicker.selectedItem as? String ?: BackendRegistry.DEFAULT_BACKEND_ID
+            unavailableBackendNotice.hideNotice()
             settingsPanel.setPreferredBackend(selected)
             persistSettings("backend-picker", HeaderSettingsChange.PreferredBackend(selected), recheckHealth = true)
         }
@@ -298,6 +308,7 @@ class MainTab(
         val north = JPanel(BorderLayout())
         north.background = UiTheme.Colors.surface
         north.add(top, BorderLayout.NORTH)
+        north.add(unavailableBackendNotice, BorderLayout.CENTER)
         north.add(dependencyBanner, BorderLayout.SOUTH)
         root.add(north, BorderLayout.NORTH)
         root.add(center, BorderLayout.CENTER)
@@ -493,11 +504,7 @@ class MainTab(
             SwingUtilities.invokeLater {
                 aiRequestLogger?.enabled = updated.aiRequestLoggerEnabled
                 aiRequestLogger?.maxEntries = updated.aiRequestLoggerMaxEntries
-                val allBackends = backends.listAllBackendIds()
-                backendPicker.model = javax.swing.DefaultComboBoxModel(allBackends.toTypedArray())
-                if (allBackends.contains(updated.preferredBackendId)) {
-                    backendPicker.selectedItem = updated.preferredBackendId
-                }
+                syncBackendPicker(updated.preferredBackendId)
                 // Header sync. This fires from applyAndSaveSettingsAsync's EDT tail for BOTH callers,
                 // and performs Swing writes only — no disk write, no MCP stop — so it is EDT-safe by
                 // construction. It is what keeps the header honest now that the restore path no longer
@@ -511,6 +518,27 @@ class MainTab(
                 renderStatus()
                 requestHealthCheck(HealthCheckTrigger.SETTINGS_CHANGED)
             }
+        }
+    }
+
+    /**
+     * EDT only. Rebuilds the header picker from the registry and selects [savedId], or burp-ai when this
+     * build does not register it (UI-SPEC S4/S5 state B1: never blank, the S5 notice names the id). The
+     * selection is programmatic, so it never persists (P-1); the stored id is left as it is.
+     */
+    private fun syncBackendPicker(savedId: String) {
+        val unavailable = unavailableBackendId(savedId, backends)
+        syncingBackendPicker = true
+        try {
+            backendPicker.model = javax.swing.DefaultComboBoxModel(backends.listAllBackendIds().toTypedArray())
+            backendPicker.selectedItem = if (unavailable == null) savedId else BackendRegistry.DEFAULT_BACKEND_ID
+        } finally {
+            syncingBackendPicker = false
+        }
+        if (unavailable == null) {
+            unavailableBackendNotice.hideNotice()
+        } else {
+            unavailableBackendNotice.setMessage(SubtleNotice.Level.INFO, unavailableBackendNoticeHtml(unavailable))
         }
     }
 
@@ -529,7 +557,9 @@ class MainTab(
     @Suppress("TooGenericExceptionCaught")
     private fun requestHealthCheck(trigger: HealthCheckTrigger) {
         val settings = settingsRepo.load()
-        if (!BackendHealthPolicy.shouldRun(trigger, settings)) return
+        // The supervisor checks the resolved backend (burp-ai for an unregistered saved id), so does the policy.
+        val backend = backends.get(backends.resolve(settings.preferredBackendId))
+        if (!BackendHealthPolicy.shouldRun(trigger, settings, backend)) return
         healthGate.submit(coalesce = trigger != HealthCheckTrigger.PERIODIC) {
             val health =
                 try {
@@ -842,20 +872,14 @@ class MainTab(
         }
     }
 
+    /**
+     * The settings error for the backend the chat will use, or `null`. Core validates its own HTTP
+     * backends; any other backend (the full build's CLI backends, drop-ins) answers through
+     * [com.six2dez.burp.aiagent.backends.AiBackend.configurationError] (Phase 29 / D-09). An unregistered
+     * saved id is validated as the burp-ai it falls back to (D-08).
+     */
     internal fun validateBackendCommand(settings: com.six2dez.burp.aiagent.config.AgentSettings): String? =
-        when (settings.preferredBackendId) {
-            "codex-cli" -> if (settings.codexCmd.isBlank()) "Codex command is empty." else null
-            "gemini-cli" -> if (settings.geminiCmd.isBlank()) "Gemini command is empty." else null
-            "opencode-cli" -> {
-                when {
-                    settings.opencodeCmd.isBlank() -> "OpenCode command is empty."
-                    isWindows() && looksLikeBareExe(settings.opencodeCmd) ->
-                        "OpenCode command looks like a bare .exe. If installed via npm, use 'opencode' (without .exe) or a full path to opencode.cmd."
-                    else -> null
-                }
-            }
-            "claude-cli" -> if (settings.claudeCmd.isBlank()) "Claude command is empty." else null
-            "copilot-cli" -> if (settings.copilotCmd.isBlank()) "Copilot command is empty." else null
+        when (val id = backends.resolve(settings.preferredBackendId)) {
             "ollama" -> if (settings.ollamaCliCmd.isBlank()) "Ollama CLI command is empty." else null
             "lmstudio" -> if (settings.lmStudioUrl.isBlank()) "LM Studio URL is empty." else null
             "openai-compatible" -> {
@@ -889,19 +913,8 @@ class MainTab(
                 }
             }
             "burp-ai" -> null
-            else -> "Unsupported backend: ${settings.preferredBackendId}"
+            else -> backends.get(id)?.configurationError(settings)
         }
-
-    private fun looksLikeBareExe(cmd: String): Boolean {
-        val trimmed = cmd.trim()
-        if (!trimmed.lowercase().endsWith(".exe")) return false
-        return !trimmed.contains("\\") && !trimmed.contains("/")
-    }
-
-    private fun isWindows(): Boolean {
-        val os = System.getProperty("os.name").lowercase()
-        return os.contains("win")
-    }
 
     internal fun showError(message: String) {
         SwingUtilities.invokeLater {

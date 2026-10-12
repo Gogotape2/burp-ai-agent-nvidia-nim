@@ -11,11 +11,17 @@ import com.six2dez.burp.aiagent.backends.ollama.OllamaBackendFactory
 import com.six2dez.burp.aiagent.backends.openai.OpenAiCompatibleBackendFactory
 import com.six2dez.burp.aiagent.backends.perplexity.PerplexityBackendFactory
 import com.six2dez.burp.aiagent.config.AgentSettings
+import com.six2dez.burp.aiagent.config.AgentSettingsRepository
+import com.six2dez.burp.aiagent.util.TokenTracker
 import java.io.File
 import java.net.URLClassLoader
 import java.util.ServiceLoader
 import java.util.concurrent.ConcurrentHashMap
 
+// TooManyFunctions: Phase 29 / D-08 added isRegistered and resolve, the registry's lookup API, which
+// took it from 10 to 12 functions; splitting the lookup off the class that owns the map would not
+// make either part simpler. Suppressed locally because ADR-17 forbids new baseline entries.
+@Suppress("TooManyFunctions")
 class BackendRegistry(
     private val api: MontoyaApi,
 ) {
@@ -93,6 +99,11 @@ class BackendRegistry(
 
         applyHttpTransport()
 
+        // Phase 29 / D-09: each backend publishes its own token ratio; core names no full-only id.
+        backends.values.forEach { backend ->
+            backend.charsPerTokenEstimate?.let { TokenTracker.registerCharsPerToken(backend.id, it) }
+        }
+
         api.logging().logToOutput("Total backends registered: ${backends.size}")
     }
 
@@ -100,10 +111,15 @@ class BackendRegistry(
 
     fun isRegistered(backendId: String): Boolean = backends.containsKey(backendId)
 
-    fun resolve(backendId: String): String = backendId
+    /**
+     * [backendId] when this build registers it, otherwise [DEFAULT_BACKEND_ID]. Phase 29 / D-08: a
+     * saved id the build does not have (a CLI id a full install left behind, in the store build) falls
+     * back to Burp AI. Callers never persist the substitute, so switching back restores the choice.
+     */
+    fun resolve(backendId: String): String = if (isRegistered(backendId)) backendId else DEFAULT_BACKEND_ID
 
     companion object {
-        const val DEFAULT_BACKEND_ID = "burp-ai"
+        const val DEFAULT_BACKEND_ID = AgentSettingsRepository.DEFAULT_PREFERRED_BACKEND_ID
     }
 
     fun listBackendIds(settings: com.six2dez.burp.aiagent.config.AgentSettings): List<String> {

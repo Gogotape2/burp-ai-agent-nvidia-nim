@@ -54,7 +54,7 @@ class CliBackend(
             )
         return BackendLaunchConfig(
             backendId = request.backendId,
-            displayName = launchDisplayName(),
+            displayName = LAUNCH_DISPLAY_NAMES[id] ?: displayName,
             command = AgentSupervisor.tokenizeCommand(configuredCommand(settings).trim()),
             sessionId = request.sessionId,
             determinismMode = request.determinismMode,
@@ -69,16 +69,6 @@ class CliBackend(
         CliTempFileRegistry.shutdown()
     }
 
-    private fun launchDisplayName(): String =
-        when (id) {
-            "codex-cli" -> "Codex CLI"
-            "gemini-cli" -> "Gemini CLI"
-            "opencode-cli" -> "OpenCode CLI"
-            "claude-cli" -> "Claude Code"
-            "copilot-cli" -> "Copilot CLI"
-            else -> displayName
-        }
-
     // Without settings (the supervisor before its first applySettings) the default command for the id.
     private fun configuredCommand(settings: AgentSettings?): String =
         when (id) {
@@ -90,10 +80,33 @@ class CliBackend(
             else -> ""
         }
 
+    /** A CLI health check is a local process probe (isAvailable), so background polling may run it. */
+    override val healthCheckIsLocal: Boolean = true
+
+    /** The 1.0.1 ratios: Claude 3.5 and Gemini 3.7 characters per token; the others use core's 4.0. */
+    override val charsPerTokenEstimate: Double?
+        get() = CHARS_PER_TOKEN[id]
+
+    /** The 1.0.1 MainTab validation messages, moved here so core names no CLI id (D-09). */
+    override fun configurationError(settings: AgentSettings): String? {
+        val isWindows = System.getProperty("os.name").lowercase().contains("win")
+        return configurationErrorFor(settings, isWindows)
+    }
+
     internal fun configurationErrorFor(
         settings: AgentSettings,
         isWindows: Boolean,
-    ): String? = null
+    ): String? {
+        val command = configuredCommand(settings)
+        if (command.isBlank()) return EMPTY_COMMAND_MESSAGES[id]
+        return if (id == "opencode-cli" && isWindows && looksLikeBareExe(command)) OPENCODE_BARE_EXE_HINT else null
+    }
+
+    private fun looksLikeBareExe(cmd: String): Boolean {
+        val trimmed = cmd.trim()
+        if (!trimmed.lowercase().endsWith(".exe")) return false
+        return !trimmed.contains("\\") && !trimmed.contains("/")
+    }
 
     override fun isAvailable(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean {
         val command =
@@ -129,6 +142,33 @@ class CliBackend(
         } else {
             HealthCheckResult.Unavailable("CLI command is not resolvable or executable.")
         }
+
+    private companion object {
+        // The display names the 1.0.1 supervisor branches gave each CLI launch.
+        val LAUNCH_DISPLAY_NAMES =
+            mapOf(
+                "codex-cli" to "Codex CLI",
+                "gemini-cli" to "Gemini CLI",
+                "opencode-cli" to "OpenCode CLI",
+                "claude-cli" to "Claude Code",
+                "copilot-cli" to "Copilot CLI",
+            )
+
+        val CHARS_PER_TOKEN = mapOf("claude-cli" to 3.5, "gemini-cli" to 3.7)
+
+        val EMPTY_COMMAND_MESSAGES =
+            mapOf(
+                "codex-cli" to "Codex command is empty.",
+                "gemini-cli" to "Gemini command is empty.",
+                "opencode-cli" to "OpenCode command is empty.",
+                "claude-cli" to "Claude command is empty.",
+                "copilot-cli" to "Copilot command is empty.",
+            )
+
+        const val OPENCODE_BARE_EXE_HINT =
+            "OpenCode command looks like a bare .exe. If installed via npm, use 'opencode' (without .exe) " +
+                "or a full path to opencode.cmd."
+    }
 
     private class NonInteractiveCliConnection(
         private val backendId: String,

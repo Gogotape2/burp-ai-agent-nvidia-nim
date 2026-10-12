@@ -229,7 +229,10 @@ internal fun SettingsPanel.initUiWiring() {
         EmptyBorder(DesignTokens.Spacing.xs, DesignTokens.Spacing.sm, DesignTokens.Spacing.xs, DesignTokens.Spacing.sm)
     saveFeedbackLabel.isOpaque = true
 
-    val backendBody =
+    val backendBody = aiBackendSectionBody
+    // UI-SPEC S8 / PC-2: the backend-unavailable notice row is the body's first element, above the
+    // Agent profile grid; the grid and the backend card keep their 1.0.1 layout inside backendContent.
+    val backendContent =
         JPanel(BorderLayout()).apply {
             background = DesignTokens.Colors.surface
         }
@@ -239,7 +242,9 @@ internal fun SettingsPanel.initUiWiring() {
             subtitle = "Select the default backend and configure its connection.",
             content = backendBody,
         ).apply {
-            backendBody.add(backendConfigPanel, BorderLayout.CENTER)
+            backendBody.add(unavailableBackendNoticeRow, BorderLayout.NORTH)
+            backendBody.add(backendContent, BorderLayout.CENTER)
+            backendContent.add(backendConfigPanel, BorderLayout.CENTER)
             val profileGrid = formGrid()
             val profileRow =
                 JPanel().apply {
@@ -255,7 +260,7 @@ internal fun SettingsPanel.initUiWiring() {
             addSpacerRow(profileGrid, DesignTokens.Spacing.xs)
             // 07-02 D-02: small-model-mode toggle (BUG-69-02 / issue #69).
             addRowFull(profileGrid, "Small model mode", chatSmallModelMode)
-            backendBody.add(profileGrid, BorderLayout.NORTH)
+            backendContent.add(profileGrid, BorderLayout.NORTH)
         }
     val privacySection = privacySection()
     val burpIntegrationBody =
@@ -389,6 +394,7 @@ internal fun SettingsPanel.initUiWiring() {
         testBackendConnection(backendId)
     }
     backendConfigPanel.setBackend(preferredBackendId())
+    syncUnavailableBackendNotice()
     updateMcpTlsState()
     updateMcpCorsWarning()
     updatePrivacyWarnings()

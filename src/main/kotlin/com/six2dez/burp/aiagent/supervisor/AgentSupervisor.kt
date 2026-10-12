@@ -64,6 +64,11 @@ class AgentSupervisor(
     private val services = java.util.concurrent.ConcurrentHashMap<String, Process>()
     private val lifecycleLock = ReentrantLock()
 
+    // UI-SPEC PC-4: saved backend ids already reported as substituted during this extension load.
+    private val substitutedBackendIds: MutableSet<String> =
+        java.util.concurrent.ConcurrentHashMap
+            .newKeySet()
+
     init {
         // BUG-69-01: HTTP backends' health checks must use Burp's HTTP stack (upstream proxy /
         // SOCKS / cert store). The registry remembers the transport and re-applies it to every
@@ -113,7 +118,9 @@ class AgentSupervisor(
     fun lastStartError(): String? = lastErrorRef.get()
 
     fun startOrAttach(backendId: String): Boolean {
-        val refusal = aiAccessRefusal(backendId)
+        // Phase 29 / D-08: an unregistered saved id runs on burp-ai, and the policy judges that backend.
+        val resolvedId = resolveBackendId(backendId)
+        val refusal = aiAccessRefusal(resolvedId)
         if (refusal != null) {
             lastErrorRef.set(refusal)
             api.logging().logToOutput(refusal)
@@ -131,7 +138,7 @@ class AgentSupervisor(
 
             // Check if already running the requested backend
             val current = stateRef.get()
-            if (current is AgentState.Running && current.backendId == backendId && current.connection.isAlive()) {
+            if (current is AgentState.Running && current.backendId == resolvedId && current.connection.isAlive()) {
                 return true
             }
 
@@ -145,9 +152,9 @@ class AgentSupervisor(
 
             stop()
 
-            val resolved = registry.get(backendId)
+            val resolved = registry.get(resolvedId)
             if (resolved == null) {
-                val msg = "Backend not found: $backendId"
+                val msg = "Backend not found: $resolvedId"
                 lastErrorRef.set(msg)
                 api.logging().logToError(msg)
                 return false
@@ -155,22 +162,22 @@ class AgentSupervisor(
             backend = resolved
 
             sessionId = "session-" + UUID.randomUUID().toString()
-            launchConfig = buildLaunchConfig(backendId, sessionId)
+            launchConfig = buildLaunchConfig(resolvedId, sessionId)
 
             // Set transitional STARTING state before releasing lock.
             // Keep a reference for the CAS below (AtomicReference uses identity comparison).
-            startingState = AgentState.Starting(backendId)
+            startingState = AgentState.Starting(resolvedId)
             stateRef.set(startingState)
         }
 
         // Phase 2: Launch backend outside lock (may block for CLI processes)
         return try {
-            api.logging().logToOutput("Launching backend $backendId with config: ${redactedConfigSummary(launchConfig)}")
+            api.logging().logToOutput("Launching backend $resolvedId with config: ${redactedConfigSummary(launchConfig)}")
             val conn = backend.launch(launchConfig)
 
             val newState =
                 AgentState.Running(
-                    backendId = backendId,
+                    backendId = resolvedId,
                     sessionId = sessionId,
                     connection = conn,
                     launchConfig = launchConfig,
@@ -183,7 +190,7 @@ class AgentSupervisor(
                 audit.logEvent(
                     "session_start",
                     mapOf(
-                        "backendId" to backendId,
+                        "backendId" to resolvedId,
                         "sessionId" to sessionId,
                         "model" to launchConfig.model,
                         "displayName" to launchConfig.displayName,
@@ -196,7 +203,7 @@ class AgentSupervisor(
                 false
             }
         } catch (e: Exception) {
-            val msg = "[AgentSupervisor] Failed to launch backend $backendId: ${e.message}"
+            val msg = "[AgentSupervisor] Failed to launch backend $resolvedId: ${e.message}"
             lastErrorRef.set(msg)
             api.logging().logToError(msg)
             // Reset to Idle if still in STARTING
@@ -229,7 +236,21 @@ class AgentSupervisor(
 
     fun isBackendHealthy(settings: AgentSettings): Boolean = backendHealth(settings).isHealthy
 
-    fun backendHealth(settings: AgentSettings): HealthCheckResult = registry.healthCheck(settings.preferredBackendId, settings)
+    fun backendHealth(settings: AgentSettings): HealthCheckResult = registry.healthCheck(resolveBackendId(settings.preferredBackendId), settings)
+
+    /**
+     * Phase 29 / D-08: [backendId] when the registry has it, otherwise the default backend (burp-ai).
+     * Logs C-N9 to the Output tab once per substituted id per extension load (UI-SPEC S24 / PC-4), as
+     * plain text: the Output pane renders no HTML. The substitution is never persisted.
+     */
+    private fun resolveBackendId(backendId: String): String {
+        if (registry.get(backendId) != null) return backendId
+        val fallback = BackendRegistry.DEFAULT_BACKEND_ID
+        if (backendId != fallback && substitutedBackendIds.add(backendId)) {
+            safeLogOutput("[AgentSupervisor] Saved backend '$backendId' is not registered in this build; using $fallback.")
+        }
+        return fallback
+    }
 
     fun stop() {
         lifecycleLock.withLock {
@@ -394,7 +415,9 @@ class AgentSupervisor(
         maxOutputTokens: Int? = null,
         launchMetadata: Map<String, String>? = null,
     ): com.six2dez.burp.aiagent.backends.AgentConnection? {
-        val refusal = aiAccessRefusal(backendId)
+        // Phase 29 / D-08: an unregistered saved id runs on burp-ai, and the policy judges that backend.
+        val resolvedId = resolveBackendId(backendId)
+        val refusal = aiAccessRefusal(resolvedId)
         if (refusal != null) {
             onComplete(IllegalStateException(refusal))
             return null
@@ -402,24 +425,24 @@ class AgentSupervisor(
 
         lastErrorRef.set(null)
         val resolvedTraceId = traceId ?: "chat-turn-" + UUID.randomUUID().toString()
-        val backend = registry.get(backendId)
+        val backend = registry.get(resolvedId)
         if (backend == null) {
-            onComplete(IllegalStateException("Backend not found: $backendId"))
+            onComplete(IllegalStateException("Backend not found: $resolvedId"))
             return null
         }
 
         // Hoisted so the audit bundle (below) can read backend config in both
         // existing-connection and new-connection paths.
-        val cliSessionId = chatSessionManager.cliSessionIdFor(chatSessionId, backendId)
+        val cliSessionId = chatSessionManager.cliSessionIdFor(chatSessionId, resolvedId)
         val launchConfig =
             buildLaunchConfig(
-                backendId,
+                resolvedId,
                 chatSessionId,
                 cliSessionId = cliSessionId,
             )
 
         // Try to reuse an existing connection (for HTTP backends with conversation history)
-        val existingConn = chatSessionManager.existingConnectionFor(chatSessionId, backendId)
+        val existingConn = chatSessionManager.existingConnectionFor(chatSessionId, resolvedId)
         val connection: AgentConnection
         if (existingConn != null) {
             connection = existingConn
@@ -427,7 +450,7 @@ class AgentSupervisor(
             try {
                 connection = backend.launch(launchConfig)
             } catch (e: Exception) {
-                val msg = "[AgentSupervisor] Failed to launch backend $backendId: ${e.message}"
+                val msg = "[AgentSupervisor] Failed to launch backend $resolvedId: ${e.message}"
                 lastErrorRef.set(msg)
                 api.logging().logToError(msg)
                 onComplete(e)
@@ -439,7 +462,7 @@ class AgentSupervisor(
             val bundle =
                 audit.buildPromptBundle(
                     sessionId = chatSessionId,
-                    backendId = backendId,
+                    backendId = resolvedId,
                     backendConfig = launchConfig,
                     promptText = text,
                     contextJson = contextJson,
@@ -454,13 +477,13 @@ class AgentSupervisor(
             audit.writePromptBundle(bundle)
         }
 
-        api.logging().logToOutput("AI chat send: backend=$backendId chatSession=$chatSessionId")
+        api.logging().logToOutput("AI chat send: backend=$resolvedId chatSession=$chatSessionId")
 
         val chatSendStartMs = System.currentTimeMillis()
         aiRequestLogger?.log(
             type = ActivityType.PROMPT_SENT,
             source = "chat",
-            backendId = backendId,
+            backendId = resolvedId,
             sessionId = chatSessionId,
             detail = "Chat prompt sent (${text.length} chars)",
             promptChars = text.length,
@@ -479,7 +502,7 @@ class AgentSupervisor(
             onChunk = { chunk ->
                 chatResponseAccumulator.append(chunk)
                 if (audit.isEnabled()) {
-                    audit.logEvent("agent_chunk", mapOf("backendId" to backendId) + audit.bodyFields("chunk", chunk))
+                    audit.logEvent("agent_chunk", mapOf("backendId" to resolvedId) + audit.bodyFields("chunk", chunk))
                 }
                 onChunk(chunk)
             },
@@ -489,14 +512,14 @@ class AgentSupervisor(
                 val durationMs = System.currentTimeMillis() - chatSendStartMs
                 audit.logEvent(
                     "prompt_complete",
-                    mapOf("backendId" to backendId, "status" to (if (err == null) "ok" else "error")) + audit.errorFields(err),
+                    mapOf("backendId" to resolvedId, "status" to (if (err == null) "ok" else "error")) + audit.errorFields(err),
                 )
                 if (err != null) {
-                    api.logging().logToError("AI backend error ($backendId): ${err.message}")
+                    api.logging().logToError("AI backend error ($resolvedId): ${err.message}")
                     aiRequestLogger?.log(
                         type = ActivityType.ERROR,
                         source = "chat",
-                        backendId = backendId,
+                        backendId = resolvedId,
                         sessionId = chatSessionId,
                         detail = "Chat error: ${err.message}",
                         durationMs = durationMs,
@@ -514,7 +537,7 @@ class AgentSupervisor(
                     aiRequestLogger?.log(
                         type = ActivityType.RESPONSE_COMPLETE,
                         source = "chat",
-                        backendId = backendId,
+                        backendId = resolvedId,
                         sessionId = chatSessionId,
                         detail = "Chat response received (${chatResponseAccumulator.length} chars)",
                         durationMs = durationMs,
@@ -529,7 +552,7 @@ class AgentSupervisor(
                     )
                 }
                 // Update session state after completion (stores cliSessionId or connection for reuse)
-                chatSessionManager.updateSession(chatSessionId, backendId, connection)
+                chatSessionManager.updateSession(chatSessionId, resolvedId, connection)
                 onComplete(err)
             },
         )

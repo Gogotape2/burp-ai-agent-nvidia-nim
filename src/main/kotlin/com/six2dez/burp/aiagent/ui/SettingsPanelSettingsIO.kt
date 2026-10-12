@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.ui
 
 import com.six2dez.burp.aiagent.agents.AgentProfileLoader
+import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.config.McpSettings
@@ -136,7 +137,7 @@ internal fun SettingsPanel.currentSettings(): AgentSettings {
         accessControlPrompt = promptAccessControl.text.trim(),
         loginSequencePrompt = promptLoginSequence.text.trim(),
         hostAnonymizationSalt = settings.hostAnonymizationSalt,
-        preferredBackendId = preferredBackendId(),
+        preferredBackendId = backendIdToStore(),
         privacyMode = privacyMode.selectedItem as? PrivacyMode ?: PrivacyMode.STRICT,
         determinismMode = determinism.isSelected,
         auditEnabled = auditEnabled.isSelected,
@@ -294,7 +295,11 @@ internal fun SettingsPanel.applySettingsToUi(
     updated: AgentSettings,
     notifyHosts: Boolean = true,
 ) {
-    preferredBackend.selectedItem = updated.preferredBackendId
+    // D-08: an unregistered saved id stays remembered (and is written back on Save) while burp-ai stands in.
+    unavailableSavedBackendId = unavailableBackendId(updated.preferredBackendId, backends)
+    preferredBackend.selectedItem =
+        if (unavailableSavedBackendId == null) updated.preferredBackendId else BackendRegistry.DEFAULT_BACKEND_ID
+    syncUnavailableBackendNotice()
     backendConfigPanel.applyState(
         BackendConfigState(
             codexCmd = updated.codexCmd,

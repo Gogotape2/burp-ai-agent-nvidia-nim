@@ -149,18 +149,38 @@ class SettingsPanel(
             isVisible = false
         }
     internal val refreshProfilesBtn = JButton("Refresh")
+
+    /**
+     * Phase 29 / D-08: the saved backend id this build does not register, kept while the picker shows
+     * the substituted burp-ai so a Save writes the stored choice back instead of the substitute. `null`
+     * once the user picks a backend, or when the saved id is registered (UI-SPEC state B0).
+     */
+    internal var unavailableSavedBackendId: String? = unavailableBackendId(settings.preferredBackendId, backends)
+
     internal val preferredBackend =
         JComboBox(backends.listAllBackendIds().toTypedArray()).apply {
-            selectedItem = settings.preferredBackendId
+            // UI-SPEC S4 state B1: never blank; burp-ai stands in for an unregistered saved id.
+            selectedItem = if (unavailableSavedBackendId == null) settings.preferredBackendId else BackendRegistry.DEFAULT_BACKEND_ID
             preferredSize = java.awt.Dimension(140, preferredSize.height)
             maximumSize = java.awt.Dimension(140, preferredSize.height)
         }
 
+    // UI-SPEC S8: the second backend-unavailable notice, first element of the AI Backend section body.
+    // Its row carries the Spacing.sm gap below it and hides with it, so a hidden notice takes no space.
     internal val unavailableBackendNotice =
         com.six2dez.burp.aiagent.ui.components
             .SubtleNotice()
-    internal val unavailableBackendNoticeRow = javax.swing.JPanel(java.awt.BorderLayout())
-    internal val aiBackendSectionBody = javax.swing.JPanel(java.awt.BorderLayout())
+    internal val unavailableBackendNoticeRow =
+        javax.swing.JPanel(java.awt.BorderLayout()).apply {
+            isOpaque = false
+            border = javax.swing.border.EmptyBorder(0, 0, DesignTokens.Spacing.sm, 0)
+            isVisible = false
+            add(unavailableBackendNotice, java.awt.BorderLayout.CENTER)
+        }
+    internal val aiBackendSectionBody =
+        javax.swing.JPanel(java.awt.BorderLayout()).apply {
+            background = DesignTokens.Colors.surface
+        }
 
     internal val privacyMode =
         JComboBox(PrivacyMode.entries.toTypedArray()).apply {

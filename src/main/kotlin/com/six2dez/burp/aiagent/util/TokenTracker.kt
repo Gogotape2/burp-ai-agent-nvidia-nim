@@ -35,10 +35,15 @@ object TokenTracker {
 
     private val counters = ConcurrentHashMap<UsageKey, UsageCounter>()
 
+    // Ratios published by backends (BackendRegistry.reload()), consulted before the core table below.
+    private val registeredCharsPerToken = ConcurrentHashMap<String, Double>()
+
+    /** Publishes [backendId]'s characters-per-token ratio; non-positive ratios are ignored. */
     fun registerCharsPerToken(
         backendId: String,
         ratio: Double,
     ) {
+        if (ratio > 0.0) registeredCharsPerToken[normalizeBackendId(backendId)] = ratio
     }
 
     fun estimateTokens(chars: Int): Int = estimateTokens(chars, null)
@@ -117,12 +122,15 @@ object TokenTracker {
                 )
             }.sortedWith(compareBy<TokenUsageSnapshot> { it.flow }.thenBy { it.backendId })
 
-    private fun charsPerTokenForBackend(backendId: String?): Double =
-        when (backendId?.trim()?.lowercase()) {
+    private fun normalizeBackendId(backendId: String): String = backendId.trim().lowercase()
+
+    private fun charsPerTokenForBackend(backendId: String?): Double {
+        val id = backendId?.let(::normalizeBackendId)
+        id?.let { registeredCharsPerToken[it] }?.let { return it }
+        return when (id) {
             "openai-compatible", "nvidia-nim" -> 3.6
             "ollama", "lmstudio" -> 3.8
-            "claude-cli" -> 3.5
-            "gemini-cli" -> 3.7
             else -> 4.0
         }
+    }
 }
