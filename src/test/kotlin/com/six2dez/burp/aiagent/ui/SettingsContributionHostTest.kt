@@ -623,21 +623,19 @@ class SettingsContributionHostTest {
     companion object {
         const val TEST_BUILD_IDENTITY = "Custom AI Agent test (host test build)"
 
-        /** The 1.0.1 backend cards, in registration order. */
+        /**
+         * The core backend cards, in registration order (UI-SPEC S6). 29-14 moved the five CLI cards to
+         * the full build's contributions, so the core panel registers these seven in both builds.
+         */
         val CORE_CARD_IDS =
             listOf(
                 "burp-ai",
-                "codex-cli",
-                "gemini-cli",
-                "opencode-cli",
-                "claude-cli",
                 "ollama",
                 "lmstudio",
                 "openai-compatible",
                 "nvidia-nim",
                 "perplexity",
                 "anthropic",
-                "copilot-cli",
             )
 
         /** The core McpConfigPanel section and the External MCP Servers section. */

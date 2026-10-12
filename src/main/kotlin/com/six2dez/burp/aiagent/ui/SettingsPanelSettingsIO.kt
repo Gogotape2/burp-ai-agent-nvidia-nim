@@ -80,12 +80,7 @@ internal fun SettingsPanel.currentSettings(): AgentSettings {
             settings.perplexityTimeoutSeconds,
         )
     return AgentSettings(
-        codexCmd = backendState.codexCmd,
-        geminiCmd = backendState.geminiCmd,
-        opencodeCmd = backendState.opencodeCmd,
-        claudeCmd = backendState.claudeCmd,
         agentProfile = profilePicker.selectedItem as? String ?: "pentester",
-        ollamaCliCmd = backendState.ollamaCliCmd,
         ollamaModel = backendState.ollamaModel,
         ollamaUrl = backendState.ollamaUrl,
         ollamaServeCmd = backendState.ollamaServeCmd,
@@ -128,7 +123,6 @@ internal fun SettingsPanel.currentSettings(): AgentSettings {
                 .trim()
                 .toIntOrNull()
                 ?.coerceAtLeast(0) ?: 0,
-        copilotCmd = backendState.copilotCmd,
         requestPromptTemplate = promptRequest.text.trim(),
         issuePromptTemplate = promptIssueFull.text.trim(),
         issueAnalyzePrompt = promptIssueAnalyze.text.trim(),
@@ -304,11 +298,6 @@ internal fun SettingsPanel.applySettingsToUi(
     syncUnavailableBackendNotice()
     backendConfigPanel.applyState(
         BackendConfigState(
-            codexCmd = updated.codexCmd,
-            geminiCmd = updated.geminiCmd,
-            opencodeCmd = updated.opencodeCmd,
-            claudeCmd = updated.claudeCmd,
-            ollamaCliCmd = updated.ollamaCliCmd,
             ollamaModel = updated.ollamaModel,
             ollamaUrl = updated.ollamaUrl,
             ollamaServeCmd = updated.ollamaServeCmd,
@@ -340,7 +329,6 @@ internal fun SettingsPanel.applySettingsToUi(
             perplexityTimeoutSeconds = updated.perplexityTimeoutSeconds.toString(),
             anthropicModel = updated.anthropicModel,
             anthropicApiKey = updated.anthropicApiKey,
-            copilotCmd = updated.copilotCmd,
         ),
     )
     profilePicker.selectedItem = updated.agentProfile

@@ -66,7 +66,11 @@ class OllamaCardLayoutTest {
 
     private fun ollamaCard(): JPanel = requireNotNull(BackendConfigPanel().cardFor("ollama")) { "no ollama card" }
 
-    private fun rowLabels(card: JPanel): List<String> = card.components.filterIsInstance<JLabel>().map { it.text }.filter { it.isNotEmpty() }
+    private fun rowLabels(card: JPanel): List<String> =
+        card.components
+            .filterIsInstance<JLabel>()
+            .map { it.text }
+            .filter { it.isNotEmpty() }
 
     private fun rowOf(
         card: JPanel,
@@ -76,8 +80,7 @@ class OllamaCardLayoutTest {
         return layout.getConstraints(card.components.filterIsInstance<JLabel>().single { it.text == label }).gridy
     }
 
-    private fun descendants(root: Component): List<Component> =
-        listOf(root) + ((root as? Container)?.components?.flatMap { descendants(it) } ?: emptyList())
+    private fun descendants(root: Component): List<Component> = listOf(root) + ((root as? Container)?.components?.flatMap { descendants(it) } ?: emptyList())
 
     private fun onEdt(block: () -> Unit) {
         var failure: Throwable? = null

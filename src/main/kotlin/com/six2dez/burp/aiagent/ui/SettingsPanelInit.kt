@@ -391,9 +391,6 @@ internal fun SettingsPanel.initUiWiring() {
             JOptionPane.INFORMATION_MESSAGE,
         )
     }
-    backendConfigPanel.onOpenCli = { backendId, command ->
-        openExternalCli(backendId, command)
-    }
     backendConfigPanel.onTestConnection = { backendId ->
         testBackendConnection(backendId)
     }

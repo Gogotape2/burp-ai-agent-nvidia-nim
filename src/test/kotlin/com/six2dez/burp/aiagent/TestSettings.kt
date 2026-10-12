@@ -10,12 +10,7 @@ import com.six2dez.burp.aiagent.scanner.ScanMode
 object TestSettings {
     fun baselineSettings(preferredBackendId: String = "codex-cli"): AgentSettings =
         AgentSettings(
-            codexCmd = "codex",
-            geminiCmd = "gemini",
-            opencodeCmd = "opencode",
-            claudeCmd = "claude",
             agentProfile = "pentester",
-            ollamaCliCmd = "ollama",
             ollamaModel = "llama3.1:8b",
             ollamaUrl = "http://127.0.0.1:11434",
             ollamaServeCmd = "ollama serve",

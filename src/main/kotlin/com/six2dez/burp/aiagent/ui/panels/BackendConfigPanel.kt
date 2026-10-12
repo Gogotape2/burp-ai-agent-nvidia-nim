@@ -24,11 +24,6 @@ import javax.swing.JTextField
 import javax.swing.border.EmptyBorder
 
 data class BackendConfigState(
-    val codexCmd: String = "",
-    val geminiCmd: String = "",
-    val opencodeCmd: String = "",
-    val claudeCmd: String = "",
-    val ollamaCliCmd: String = "",
     val ollamaModel: String = "",
     val ollamaUrl: String = "",
     val ollamaServeCmd: String = "",
@@ -61,13 +56,11 @@ data class BackendConfigState(
     // CAP-01: Anthropic backend (14-01)
     val anthropicModel: String = "",
     val anthropicApiKey: String = "",
-    val copilotCmd: String = "",
 )
 
 class BackendConfigPanel(
     initialState: BackendConfigState = BackendConfigState(),
 ) : JPanel(BorderLayout()) {
-    var onOpenCli: ((backendId: String, command: String) -> Unit)? = null
     var onTestConnection: ((backendId: String) -> Unit)? = null
     private val cardLayout = CardLayout()
     private val cards = JPanel(cardLayout)
@@ -86,11 +79,6 @@ class BackendConfigPanel(
             isVisible = false
         }
 
-    private val codexCmd = JTextField(initialState.codexCmd)
-    private val geminiCmd = JTextField(initialState.geminiCmd)
-    private val opencodeCmd = JTextField(initialState.opencodeCmd)
-    private val claudeCmd = JTextField(initialState.claudeCmd)
-    private val ollamaCliCmd = JTextField(initialState.ollamaCliCmd)
     private val ollamaModel = JTextField(initialState.ollamaModel)
     private val ollamaUrl = JTextField(initialState.ollamaUrl)
     private val ollamaServeCmd = JTextField(initialState.ollamaServeCmd)
@@ -122,17 +110,11 @@ class BackendConfigPanel(
     private val perplexityTimeout = JTextField(initialState.perplexityTimeoutSeconds)
     private val anthropicModel = JTextField(initialState.anthropicModel)
     private val anthropicApiKey = JPasswordField(initialState.anthropicApiKey)
-    private val copilotCmd = JTextField(initialState.copilotCmd)
 
     init {
         background = DesignTokens.Colors.surface
         cards.background = DesignTokens.Colors.surface
 
-        applyFieldStyle(codexCmd)
-        applyFieldStyle(geminiCmd)
-        applyFieldStyle(opencodeCmd)
-        applyFieldStyle(claudeCmd)
-        applyFieldStyle(ollamaCliCmd)
         applyFieldStyle(ollamaModel)
         applyFieldStyle(ollamaUrl)
         applyFieldStyle(ollamaServeCmd)
@@ -162,14 +144,10 @@ class BackendConfigPanel(
         applyFieldStyle(perplexityTimeout)
         applyFieldStyle(anthropicModel)
         applyFieldStyle(anthropicApiKey)
-        applyFieldStyle(copilotCmd)
 
-        codexCmd.toolTipText = "Command used to launch Codex CLI."
-        geminiCmd.toolTipText = "Command used to launch Gemini CLI."
-        opencodeCmd.toolTipText = "Command used to launch OpenCode CLI with the model (e.g., opencode --model anthropic/claude-sonnet-4-5)."
-        claudeCmd.toolTipText = "Command used to launch Claude Code CLI (e.g., claude)."
-        ollamaCliCmd.toolTipText = "Command used to launch Ollama CLI with a model."
-        ollamaModel.toolTipText = "Model name for Ollama HTTP backend. If empty, the CLI command is parsed."
+        // UI-SPEC PC-6 (C-N10): the store build has no CLI fallback; the full build explains its own on the
+        // contributed "Ollama CLI command" row.
+        ollamaModel.toolTipText = "Model name for Ollama HTTP backend. If empty, a default model is used."
         ollamaUrl.toolTipText = "Base URL for Ollama HTTP backend and health checks."
         ollamaServeCmd.toolTipText = "Command used to start the Ollama server."
         ollamaAutoStart.toolTipText = "Automatically start the Ollama server when needed."
@@ -200,20 +178,16 @@ class BackendConfigPanel(
         perplexityTimeout.toolTipText = "Request timeout in seconds."
         anthropicModel.toolTipText = "Anthropic model name (e.g., claude-sonnet-4-6, claude-opus-4-8)."
         anthropicApiKey.toolTipText = "Anthropic API key (x-api-key header). Stored encrypted at rest."
-        copilotCmd.toolTipText = "Command used to launch Copilot CLI (e.g., copilot)."
 
+        // Core cards only. Phase 29 / D-07: the full build's CLI cards and the Ollama CLI block arrive
+        // through addContribution (SettingsContribution, BACKEND_CARD slot).
         registerCard("burp-ai", buildBurpAiPanel())
-        registerCard("codex-cli", buildSingleFieldPanelWithCli("Codex CLI command", codexCmd, "codex-cli") { codexCmd.text.trim() })
-        registerCard("gemini-cli", buildSingleFieldPanelWithCli("Gemini CLI command", geminiCmd, "gemini-cli") { geminiCmd.text.trim() })
-        registerCard("opencode-cli", buildOpenCodePanel())
-        registerCard("claude-cli", buildSingleFieldPanelWithCli("Claude Code command", claudeCmd, "claude-cli") { claudeCmd.text.trim() })
         registerCard("ollama", buildOllamaPanel())
         registerCard("lmstudio", buildLmStudioPanel())
         registerCard("openai-compatible", buildOpenAiCompatPanel())
         registerCard("nvidia-nim", buildNvidiaNimPanel())
         registerCard("perplexity", buildPerplexityPanel())
         registerCard("anthropic", buildAnthropicPanel())
-        registerCard("copilot-cli", buildSingleFieldPanelWithCli("Copilot CLI command", copilotCmd, "copilot-cli") { copilotCmd.text.trim() })
 
         add(cards, BorderLayout.CENTER)
 
@@ -332,11 +306,6 @@ class BackendConfigPanel(
             ),
         )
         return BackendConfigState(
-            codexCmd = codexCmd.text.trim(),
-            geminiCmd = geminiCmd.text.trim(),
-            opencodeCmd = opencodeCmd.text.trim(),
-            claudeCmd = claudeCmd.text.trim(),
-            ollamaCliCmd = ollamaCliCmd.text.trim(),
             ollamaModel = ollamaModel.text.trim(),
             ollamaUrl = ollamaUrl.text.trim(),
             ollamaServeCmd = ollamaServeCmd.text.trim(),
@@ -368,16 +337,10 @@ class BackendConfigPanel(
             perplexityTimeoutSeconds = perplexityTimeout.text.trim(),
             anthropicModel = anthropicModel.text.trim(),
             anthropicApiKey = String(anthropicApiKey.password).trim(),
-            copilotCmd = copilotCmd.text.trim(),
         )
     }
 
     fun applyState(state: BackendConfigState) {
-        codexCmd.text = state.codexCmd
-        geminiCmd.text = state.geminiCmd
-        opencodeCmd.text = state.opencodeCmd
-        claudeCmd.text = state.claudeCmd
-        ollamaCliCmd.text = state.ollamaCliCmd
         ollamaModel.text = state.ollamaModel
         ollamaUrl.text = state.ollamaUrl
         ollamaServeCmd.text = state.ollamaServeCmd
@@ -409,7 +372,6 @@ class BackendConfigPanel(
         perplexityTimeout.text = state.perplexityTimeoutSeconds
         anthropicModel.text = state.anthropicModel
         anthropicApiKey.text = state.anthropicApiKey
-        copilotCmd.text = state.copilotCmd
         // IN-03: show the SSRF advisory immediately on load so a previously-saved private-range
         // URL is flagged without requiring the user to click Save first.
         checkAndShowSsrfWarning(
@@ -421,27 +383,6 @@ class BackendConfigPanel(
                 state.perplexityUrl,
             ),
         )
-    }
-
-    private fun buildSingleFieldPanelWithCli(
-        labelText: String,
-        field: JComponent,
-        backendId: String,
-        commandProvider: () -> String,
-    ): JPanel {
-        val panel = formGrid()
-        panel.border = EmptyBorder(DesignTokens.Spacing.sectionPad, DesignTokens.Spacing.sectionPad, 0, DesignTokens.Spacing.sectionPad)
-        addRowFull(panel, labelText, field)
-        addRowFull(
-            panel,
-            "",
-            buildButtonRowPanel(
-                buildOpenCliButton(backendId, commandProvider),
-                testConnectionButton(backendId),
-            ),
-        )
-        addSpacerRow(panel, DesignTokens.Spacing.sm)
-        return panel
     }
 
     private fun buildBurpAiPanel(): JPanel {
@@ -491,43 +432,16 @@ class BackendConfigPanel(
                 DesignTokens.Spacing.sectionPad,
                 DesignTokens.Spacing.sectionPad,
             )
-        addRowFull(panel, "Ollama CLI command", ollamaCliCmd)
-        addRowFull(
-            panel,
-            "",
-            buildButtonRowPanel(
-                buildOpenCliButton("ollama", { ollamaCliCmd.text.trim() }),
-                testConnectionButton("ollama"),
-            ),
-        )
+        // UI-SPEC S7 store order (PC-5, Q1): Test connection sits under the base URL, as on the other HTTP
+        // cards. The full build appends its contributed CLI block (UI-SPEC S7 rows 9-10) below the last row.
         addRowFull(panel, "Ollama model", ollamaModel)
         addRowFull(panel, "Ollama base URL", ollamaUrl)
+        addRowFull(panel, "", buildButtonRowPanel(testConnectionButton("ollama")))
         addRowFull(panel, "Ollama API key (Bearer)", ollamaApiKey)
         addRowFull(panel, "Ollama extra headers", JScrollPane(ollamaHeaders))
         addRowFull(panel, "Ollama timeout (seconds)", ollamaTimeout)
         addRowFull(panel, "Ollama serve command", ollamaServeCmd)
         addRowFull(panel, "Auto-start Ollama server", ollamaAutoStart)
-        return panel
-    }
-
-    private fun buildOpenCodePanel(): JPanel {
-        val panel = formGrid()
-        panel.border =
-            EmptyBorder(
-                DesignTokens.Spacing.sectionPad,
-                DesignTokens.Spacing.sectionPad,
-                DesignTokens.Spacing.sectionPad,
-                DesignTokens.Spacing.sectionPad,
-            )
-        addRowFull(panel, "OpenCode CLI command", opencodeCmd)
-        addRowFull(
-            panel,
-            "",
-            buildButtonRowPanel(
-                buildOpenCliButton("opencode-cli", { opencodeCmd.text.trim() }),
-                testConnectionButton("opencode-cli"),
-            ),
-        )
         return panel
     }
 
@@ -624,18 +538,6 @@ class BackendConfigPanel(
         addSpacerRow(panel, DesignTokens.Spacing.sm)
         return panel
     }
-
-    private fun buildOpenCliButton(
-        backendId: String,
-        commandProvider: () -> String,
-    ): JButton =
-        JButton("Open CLI").apply {
-            font = DesignTokens.Typography.body
-            toolTipText = "Open a terminal with the configured command and MCP tools access."
-            addActionListener {
-                onOpenCli?.invoke(backendId, commandProvider())
-            }
-        }
 
     /** A core card's "Test connection" button: runs the host's health check for [backendId]. */
     private fun testConnectionButton(backendId: String): JButton = buildTestConnectionButton { onTestConnection?.invoke(backendId) }

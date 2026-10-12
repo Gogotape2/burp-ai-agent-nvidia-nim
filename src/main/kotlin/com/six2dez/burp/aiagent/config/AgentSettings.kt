@@ -28,12 +28,7 @@ enum class SeverityLevel {
 }
 
 data class AgentSettings(
-    val codexCmd: String,
-    val geminiCmd: String,
-    val opencodeCmd: String,
-    val claudeCmd: String,
     val agentProfile: String,
-    val ollamaCliCmd: String,
     val ollamaModel: String,
     val ollamaUrl: String,
     val ollamaServeCmd: String,
@@ -64,12 +59,6 @@ data class AgentSettings(
     val perplexityApiKey: String = "",
     val perplexityHeaders: String = "",
     val perplexityTimeoutSeconds: Int = 60,
-    // REL-04: user-configurable CLI process timeout (issue #71). Defaulted so existing
-    // positional/named constructions keep compiling. Plaintext pref (not a secret — timeout integer).
-    // WR-02: clamped to [30, 3600] seconds on load and save; values below 30s are silently raised to
-    // the 30s floor (a sub-30s watchdog would kill slow-starting CLIs). CliBackend re-coerces to the
-    // same bounds at the consumption boundary, so the watchdog is robust even for directly-built configs.
-    val cliTimeoutSeconds: Int = Defaults.CLI_PROCESS_TIMEOUT_SECONDS,
     // CAP-01: Anthropic Messages API backend fields (14-01).
     // All four carry defaults so existing named/positional constructions keep compiling (Planner Note 3).
     val anthropicModel: String = "claude-sonnet-4-6",
@@ -79,7 +68,6 @@ data class AgentSettings(
     // NOT secrets — persisted as plain integers, never routed through SecretCipher (Pitfall 5).
     val tokenBudgetWarnThreshold: Int = 0,
     val tokenBudgetHardCap: Int = 0,
-    val copilotCmd: String = "",
     val requestPromptTemplate: String,
     val issuePromptTemplate: String,
     val issueAnalyzePrompt: String,
@@ -229,39 +217,13 @@ class AgentSettingsRepository(
         migrateIfNeeded()
         val privacy = PrivacyMode.fromString(prefs.getString(KEY_PRIVACY_MODE))
         val mcpSettings = loadMcpSettings()
-        val rawGeminiCmd = prefs.getString(KEY_GEMINI_CMD).orEmpty().trim()
         return AgentSettings(
-            codexCmd =
-                prefs
-                    .getString(KEY_CODEX_CMD)
-                    .orEmpty()
-                    .trim()
-                    .ifBlank { DEFAULT_CODEX_CMD },
-            geminiCmd = normalizeLegacyGeminiCmd(rawGeminiCmd).ifBlank { DEFAULT_GEMINI_CMD },
-            opencodeCmd =
-                prefs
-                    .getString(KEY_OPENCODE_CMD)
-                    .orEmpty()
-                    .trim()
-                    .ifBlank { DEFAULT_OPENCODE_CMD },
-            claudeCmd =
-                prefs
-                    .getString(KEY_CLAUDE_CMD)
-                    .orEmpty()
-                    .trim()
-                    .ifBlank { DEFAULT_CLAUDE_CMD },
             agentProfile =
                 prefs
                     .getString(KEY_AGENT_PROFILE)
                     .orEmpty()
                     .trim()
                     .ifBlank { DEFAULT_AGENT_PROFILE },
-            ollamaCliCmd =
-                prefs
-                    .getString(KEY_OLLAMA_CLI_CMD)
-                    .orEmpty()
-                    .trim()
-                    .ifBlank { DEFAULT_OLLAMA_CLI_CMD },
             ollamaModel =
                 prefs
                     .getString(KEY_OLLAMA_MODEL)
@@ -331,10 +293,6 @@ class AgentSettingsRepository(
             perplexityTimeoutSeconds =
                 (prefs.getInteger(KEY_PERPLEXITY_TIMEOUT) ?: defaultPerplexityTimeoutSeconds())
                     .coerceIn(30, 3600),
-            // REL-04: configurable CLI timeout — V5 input validation (coerceIn rejects negative/zero/absurd)
-            cliTimeoutSeconds =
-                (prefs.getInteger(KEY_CLI_TIMEOUT) ?: Defaults.CLI_PROCESS_TIMEOUT_SECONDS)
-                    .coerceIn(30, 3600),
             // CAP-01: Anthropic backend — decrypt key, string model (14-01)
             anthropicModel =
                 prefs
@@ -347,12 +305,6 @@ class AgentSettingsRepository(
             // CAP-04: token-budget thresholds — plain integers, never encrypted (Pitfall 5)
             tokenBudgetWarnThreshold = (prefs.getInteger(KEY_TOKEN_BUDGET_WARN) ?: 0).coerceAtLeast(0),
             tokenBudgetHardCap = (prefs.getInteger(KEY_TOKEN_BUDGET_CAP) ?: 0).coerceAtLeast(0),
-            copilotCmd =
-                prefs
-                    .getString(KEY_COPILOT_CMD)
-                    .orEmpty()
-                    .trim()
-                    .ifBlank { DEFAULT_COPILOT_CMD },
             requestPromptTemplate = prefs.getString(KEY_PROMPT_FIND_VULNS).orEmpty().ifBlank { defaultRequestPrompt() },
             issuePromptTemplate = prefs.getString(KEY_PROMPT_FULL_REPORT).orEmpty().ifBlank { defaultIssuePrompt() },
             issueAnalyzePrompt = prefs.getString(KEY_PROMPT_ISSUE_ANALYZE).orEmpty().ifBlank { defaultIssueAnalyzePrompt() },
@@ -471,12 +423,7 @@ class AgentSettingsRepository(
 
     fun defaultSettings(): AgentSettings =
         AgentSettings(
-            codexCmd = DEFAULT_CODEX_CMD,
-            geminiCmd = DEFAULT_GEMINI_CMD,
-            opencodeCmd = DEFAULT_OPENCODE_CMD,
-            claudeCmd = DEFAULT_CLAUDE_CMD,
             agentProfile = DEFAULT_AGENT_PROFILE,
-            ollamaCliCmd = DEFAULT_OLLAMA_CLI_CMD,
             ollamaModel = DEFAULT_OLLAMA_MODEL,
             ollamaUrl = "http://127.0.0.1:11434",
             ollamaServeCmd = DEFAULT_OLLAMA_SERVE_CMD,
@@ -507,12 +454,10 @@ class AgentSettingsRepository(
             perplexityApiKey = "",
             perplexityHeaders = "",
             perplexityTimeoutSeconds = defaultPerplexityTimeoutSeconds(),
-            cliTimeoutSeconds = Defaults.CLI_PROCESS_TIMEOUT_SECONDS,
             anthropicModel = "claude-sonnet-4-6",
             anthropicApiKey = "",
             tokenBudgetWarnThreshold = 0,
             tokenBudgetHardCap = 0,
-            copilotCmd = DEFAULT_COPILOT_CMD,
             requestPromptTemplate = defaultRequestPrompt(),
             issuePromptTemplate = defaultIssuePrompt(),
             issueAnalyzePrompt = defaultIssueAnalyzePrompt(),
@@ -580,12 +525,7 @@ class AgentSettingsRepository(
             // SecretCipherException mid-save does not leave the cache holding never-persisted values.
             // On exception, clear the cache so the next load() re-reads the (partial) prefs.
             try {
-                prefs.setString(KEY_CODEX_CMD, settings.codexCmd)
-                prefs.setString(KEY_GEMINI_CMD, settings.geminiCmd)
-                prefs.setString(KEY_OPENCODE_CMD, settings.opencodeCmd)
-                prefs.setString(KEY_CLAUDE_CMD, settings.claudeCmd)
                 prefs.setString(KEY_AGENT_PROFILE, settings.agentProfile)
-                prefs.setString(KEY_OLLAMA_CLI_CMD, settings.ollamaCliCmd)
                 prefs.setString(KEY_OLLAMA_MODEL, settings.ollamaModel)
                 prefs.setString(KEY_OLLAMA_URL, settings.ollamaUrl)
                 prefs.setString(KEY_OLLAMA_SERVE_CMD, settings.ollamaServeCmd)
@@ -616,15 +556,12 @@ class AgentSettingsRepository(
                 prefs.setString(KEY_PERPLEXITY_API_KEY, cipher.encrypt(settings.perplexityApiKey, KEY_PERPLEXITY_API_KEY))
                 prefs.setString(KEY_PERPLEXITY_HEADERS, settings.perplexityHeaders)
                 prefs.setInteger(KEY_PERPLEXITY_TIMEOUT, settings.perplexityTimeoutSeconds.coerceIn(30, 3600))
-                // REL-04: persist CLI timeout plaintext (not a secret — timeout integer, V5 validated)
-                prefs.setInteger(KEY_CLI_TIMEOUT, settings.cliTimeoutSeconds.coerceIn(30, 3600))
                 // CAP-01: Anthropic — model (plain string), API key (encrypted), token-budget (plain integers)
                 prefs.setString(KEY_ANTHROPIC_MODEL, settings.anthropicModel)
                 prefs.setString(KEY_ANTHROPIC_API_KEY, cipher.encrypt(settings.anthropicApiKey, KEY_ANTHROPIC_API_KEY))
                 // CAP-04: token-budget thresholds are integers, NOT secrets — never SecretCipher (Pitfall 5)
                 prefs.setInteger(KEY_TOKEN_BUDGET_WARN, settings.tokenBudgetWarnThreshold.coerceAtLeast(0))
                 prefs.setInteger(KEY_TOKEN_BUDGET_CAP, settings.tokenBudgetHardCap.coerceAtLeast(0))
-                prefs.setString(KEY_COPILOT_CMD, settings.copilotCmd)
                 prefs.setString(KEY_PROMPT_FIND_VULNS, settings.requestPromptTemplate)
                 prefs.setString(KEY_PROMPT_FULL_REPORT, settings.issuePromptTemplate)
                 prefs.setString(KEY_PROMPT_ISSUE_ANALYZE, settings.issueAnalyzePrompt)
@@ -901,12 +838,6 @@ class AgentSettingsRepository(
         if (rawOrigins != normalizedOrigins) {
             prefs.setString(KEY_MCP_ALLOWED_ORIGINS, normalizedOrigins)
         }
-
-        val rawGeminiCmd = prefs.getString(KEY_GEMINI_CMD).orEmpty().trim()
-        val legacyDefault = "gemini --output-format text --model gemini-2.5-flash"
-        if (rawGeminiCmd == legacyDefault) {
-            prefs.setString(KEY_GEMINI_CMD, DEFAULT_GEMINI_CMD)
-        }
     }
 
     companion object {
@@ -917,13 +848,8 @@ class AgentSettingsRepository(
          */
         const val DEFAULT_PREFERRED_BACKEND_ID = "burp-ai"
 
-        private const val KEY_CODEX_CMD = "codex.cmd"
-        private const val KEY_GEMINI_CMD = "gemini.cmd"
-        private const val KEY_OPENCODE_CMD = "opencode.cmd"
-        private const val KEY_CLAUDE_CMD = "claude.cmd"
         private const val KEY_AGENT_PROFILE = "agent.profile"
         private const val KEY_OLLAMA_URL = "ollama.url"
-        private const val KEY_OLLAMA_CLI_CMD = "ollama.cli.cmd"
         private const val KEY_OLLAMA_MODEL = "ollama.model"
         private const val KEY_OLLAMA_SERVE_CMD = "ollama.serve.cmd"
         private const val KEY_OLLAMA_AUTOSTART = "ollama.autostart"
@@ -954,9 +880,6 @@ class AgentSettingsRepository(
         private const val KEY_PERPLEXITY_HEADERS = "perplexity.headers"
         private const val KEY_PERPLEXITY_TIMEOUT = "perplexity.timeoutSeconds"
 
-        // REL-04: configurable CLI process timeout (issue #71) — plaintext integer pref, not a secret
-        private const val KEY_CLI_TIMEOUT = "cli.timeoutSeconds"
-
         // CAP-01: Anthropic backend (14-01)
         private const val KEY_ANTHROPIC_MODEL = "anthropic.model"
         private const val KEY_ANTHROPIC_API_KEY = "anthropic.apiKey"
@@ -964,7 +887,6 @@ class AgentSettingsRepository(
         // CAP-04: token-budget guardrails (14-01 — fields declared here; logic in 14-02)
         private const val KEY_TOKEN_BUDGET_WARN = "tokenBudget.warnThreshold"
         private const val KEY_TOKEN_BUDGET_CAP = "tokenBudget.hardCap"
-        private const val KEY_COPILOT_CMD = "copilot.cmd"
         private const val KEY_PROMPT_FIND_VULNS = "prompt.find_vulns"
         private const val KEY_PROMPT_QUICK_RECON = "prompt.quick_recon"
         private const val KEY_PROMPT_EXPLAIN_JS = "prompt.explain_js"
@@ -1069,27 +991,7 @@ class AgentSettingsRepository(
         // bearerToken encryption. Atomic with the if (effectiveVersion < 5) migration branch.
         private const val CURRENT_SETTINGS_SCHEMA_VERSION = 5
 
-        private const val DEFAULT_CODEX_CMD = "codex chat"
-
-        private const val DEFAULT_GEMINI_CMD = "gemini --output-format text --model gemini-2.5-flash --yolo"
-
-        private fun normalizeLegacyGeminiCmd(raw: String): String {
-            if (raw.isBlank()) return raw
-            val legacyDefault = "gemini --output-format text --model gemini-2.5-flash"
-            return if (raw == legacyDefault) {
-                DEFAULT_GEMINI_CMD
-            } else {
-                raw
-            }
-        }
-
-        private const val DEFAULT_OPENCODE_CMD = "opencode"
-
-        private const val DEFAULT_CLAUDE_CMD = "claude"
-
         private const val DEFAULT_AGENT_PROFILE = "pentester"
-
-        private const val DEFAULT_OLLAMA_CLI_CMD = "ollama run llama3.1"
 
         private const val DEFAULT_OLLAMA_MODEL = "llama3.1"
 
@@ -1114,8 +1016,6 @@ class AgentSettingsRepository(
         private fun defaultPerplexityTimeoutSeconds(): Int = Defaults.CLI_PROCESS_TIMEOUT_SECONDS
 
         private fun defaultNvidiaNimTimeoutSeconds(): Int = Defaults.CLI_PROCESS_TIMEOUT_SECONDS
-
-        private const val DEFAULT_COPILOT_CMD = "copilot"
 
         private fun defaultBountyPromptDir(): String =
             java.io

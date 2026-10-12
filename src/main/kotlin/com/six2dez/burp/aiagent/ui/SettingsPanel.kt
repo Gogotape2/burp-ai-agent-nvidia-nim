@@ -138,11 +138,6 @@ class SettingsPanel(
     internal val backendConfigPanel =
         BackendConfigPanel(
             BackendConfigState(
-                codexCmd = settings.codexCmd,
-                geminiCmd = settings.geminiCmd,
-                opencodeCmd = settings.opencodeCmd,
-                claudeCmd = settings.claudeCmd,
-                ollamaCliCmd = settings.ollamaCliCmd,
                 ollamaModel = settings.ollamaModel,
                 ollamaUrl = settings.ollamaUrl,
                 ollamaServeCmd = settings.ollamaServeCmd,
@@ -174,7 +169,6 @@ class SettingsPanel(
                 perplexityTimeoutSeconds = settings.perplexityTimeoutSeconds.toString(),
                 anthropicModel = settings.anthropicModel,
                 anthropicApiKey = settings.anthropicApiKey,
-                copilotCmd = settings.copilotCmd,
             ),
         )
     internal val profilePicker =

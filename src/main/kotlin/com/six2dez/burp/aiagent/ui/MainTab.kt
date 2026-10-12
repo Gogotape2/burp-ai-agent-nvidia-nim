@@ -896,7 +896,6 @@ class MainTab(
      */
     internal fun validateBackendCommand(settings: com.six2dez.burp.aiagent.config.AgentSettings): String? =
         when (val id = backends.resolve(settings.preferredBackendId)) {
-            "ollama" -> if (settings.ollamaCliCmd.isBlank()) "Ollama CLI command is empty." else null
             "lmstudio" -> if (settings.lmStudioUrl.isBlank()) "LM Studio URL is empty." else null
             "openai-compatible" -> {
                 when {

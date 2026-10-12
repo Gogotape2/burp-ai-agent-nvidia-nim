@@ -40,31 +40,35 @@ class CoreBackendNamesGuardTest {
     fun everyPatternFiresOnASyntheticLine() {
         val samples =
             mapOf(
-                "cli backend id" to listOf(
-                    "registerCard(\"codex-cli\", card)",
-                    "\"gemini-cli\" -> 3.7",
-                    "id == \"opencode-cli\"",
-                    "// claude-cli keeps its ratio",
-                    "backends.get(\"copilot-cli\")",
-                ),
-                "per-CLI setting" to listOf(
-                    "val codexCmd: String",
-                    "settings.geminiCmd",
-                    "opencodeCmd = x",
-                    "claudeCmd.text",
-                    "copilotCmd",
-                    "ollamaCliCmd.isBlank()",
-                    "val cliTimeoutSeconds: Int = 120",
-                    "cliTimeoutSeconds = settings.cliTimeoutSeconds",
-                ),
-                "backends.cli package" to listOf(
-                    "import com.six2dez.burp.aiagent.backends.cli.CliBackend",
-                    "package com.six2dez.burp.aiagent.backends.cli",
-                ),
-                "terminal launcher" to listOf(
-                    "openExternalCli(backendId, command)",
-                    "CliTerminalLauncher.openExternalCli(api, null, id, cmd)",
-                ),
+                "cli backend id" to
+                    listOf(
+                        "registerCard(\"codex-cli\", card)",
+                        "\"gemini-cli\" -> 3.7",
+                        "id == \"opencode-cli\"",
+                        "// claude-cli keeps its ratio",
+                        "backends.get(\"copilot-cli\")",
+                    ),
+                "per-CLI setting" to
+                    listOf(
+                        "val codexCmd: String",
+                        "settings.geminiCmd",
+                        "opencodeCmd = x",
+                        "claudeCmd.text",
+                        "copilotCmd",
+                        "ollamaCliCmd.isBlank()",
+                        "val cliTimeoutSeconds: Int = 120",
+                        "cliTimeoutSeconds = settings.cliTimeoutSeconds",
+                    ),
+                "backends.cli package" to
+                    listOf(
+                        "import com.six2dez.burp.aiagent.backends.cli.CliBackend",
+                        "package com.six2dez.burp.aiagent.backends.cli",
+                    ),
+                "terminal launcher" to
+                    listOf(
+                        "openExternalCli(backendId, command)",
+                        "CliTerminalLauncher.openExternalCli(api, null, id, cmd)",
+                    ),
             )
         samples.forEach { (name, lines) ->
             lines.forEach { line ->
