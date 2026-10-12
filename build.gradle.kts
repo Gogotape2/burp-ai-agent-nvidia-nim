@@ -36,7 +36,13 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
 
     // MCP Server (Ktor + MCP SDK)
-    implementation("io.modelcontextprotocol:kotlin-sdk:0.5.0")
+    // Phase 29 / NET-02 (RESEARCH Pitfall 2, OQ6): the SDK pulls both CIO engines transitively. The store
+    // MCP server runs on Netty and opens no client connection of its own, so neither CIO engine is on the
+    // store classpath; the full build gets the client engine back below, for the external MCP client.
+    implementation("io.modelcontextprotocol:kotlin-sdk:0.5.0") {
+        exclude(group = "io.ktor", module = "ktor-client-cio")
+        exclude(group = "io.ktor", module = "ktor-server-cio")
+    }
     implementation("io.ktor:ktor-server-core:3.1.3")
     implementation("io.ktor:ktor-server-netty:3.1.3")
     // Ktor 3.1.3 pulls Netty 4.1.119, which has known advisories; the BOM pins the patched 4.1.x line without a Ktor upgrade
@@ -45,9 +51,7 @@ dependencies {
     implementation("io.ktor:ktor-server-sse:3.1.3")
     implementation("io.ktor:ktor-server-content-negotiation:3.1.3")
     implementation("io.ktor:ktor-serialization-kotlinx-json:3.1.3")
-    // Phase 16: Ktor CLIENT modules (pin to 3.1.3 to match server-side Ktor family)
-    implementation("io.ktor:ktor-client-core:3.1.3")
-    implementation("io.ktor:ktor-client-cio:3.1.3")
+    // Phase 16 Ktor CLIENT modules: declared in the `full` dependencies block below (NET-02).
     // kotlin-logging: transitive via kotlin-sdk:0.5.0 StdioClientTransport; declared explicitly to pin version
     implementation("io.github.oshai:kotlin-logging-jvm:7.0.7")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
@@ -148,6 +152,16 @@ configurations["fullTestRuntimeOnly"].extendsFrom(
     configurations.testRuntimeOnly.get(),
 )
 
+val fullImplementation by configurations.getting
+
+dependencies {
+    // Phase 16: Ktor CLIENT modules (pin to 3.1.3 to match server-side Ktor family).
+    // Phase 29 / NET-02: full build only - the external MCP client (ExternalMcpClientManager). The store
+    // runtime classpath, and so the BApp Store JAR, carries no Ktor client engine.
+    fullImplementation("io.ktor:ktor-client-core:3.1.3")
+    fullImplementation("io.ktor:ktor-client-cio:3.1.3")
+}
+
 kotlin {
     // Association lets src/full see main's `internal` API (much of mcp/tools is internal) and lets
     // src/fullTest reuse the internal test helpers in src/test.
@@ -191,6 +205,10 @@ val bappJar by tasks.registering(ShadowJar::class) {
     // to src/full (backends/cli/) in build/classes. Without this the store JAR carries that empty
     // directory entry, and a content inspection of the store JAR cannot tell it from a leaked package.
     includeEmptyDirs = false
+    // Phase 29 / NET-02 (OQ6): the store build ships no MCP client. The SDK artifact carries its client
+    // package (Client, SseClientTransport, StdioClientTransport, ...) next to the server classes the store
+    // MCP server uses; the client half is stripped here, and nothing in src/main references it.
+    exclude("io/modelcontextprotocol/kotlin/sdk/client/**")
     isZip64 = true
 }
 
