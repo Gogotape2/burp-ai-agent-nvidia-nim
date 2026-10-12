@@ -24,7 +24,9 @@ class AgentSettingsMigrationTest {
         val repo = AgentSettingsRepository(apiWith(prefs.mock))
         val loaded = repo.load()
 
-        assertEquals("gemini --output-format text --model gemini-2.5-flash --yolo", loaded.geminiCmd)
+        // Phase 29 / D-08: gemini.cmd is a full-only CLI plug-in key now. The core migration no longer
+        // rewrites the legacy default; the full build's CliSettings normalizes it on read (CliSettingsTest).
+        assertEquals("gemini --output-format text --model gemini-2.5-flash", prefs.strings["gemini.cmd"])
         assertEquals(
             listOf("https://ops.example.com", "http://127.0.0.1"),
             loaded.mcpSettings.allowedOrigins,

@@ -12,9 +12,11 @@ import com.six2dez.burp.aiagent.full.FullAiAccessPolicy
 import com.six2dez.burp.aiagent.spi.BackendModelHint
 import com.six2dez.burp.aiagent.spi.PluginSettingsStore
 import com.six2dez.burp.aiagent.spi.Plugins
+import com.six2dez.burp.aiagent.spi.SettingsContribution
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Answers
 import org.mockito.kotlin.mock
@@ -120,6 +122,25 @@ class CliSettingsTest {
     }
 
     @Test
+    fun everyCliContributionOwnsOnlyKeysTheCoreNeverWrites() {
+        val coreRepo = AgentSettingsRepository(api)
+        coreRepo.save(coreRepo.load())
+        coreRepo.save(coreRepo.defaultSettings())
+        val coreKeys = prefs.writes.toSet()
+        assertTrue(coreKeys.size > MIN_CORE_KEYS, "the core save wrote only ${coreKeys.size} keys")
+        val contributions = Plugins.load(SettingsContribution::class.java)
+        contributions.forEach { contribution ->
+            val overlap = contribution.ownedKeys() intersect coreKeys
+            assertEquals(emptySet<String>(), overlap, "${contribution.sectionId}: owned keys the core also writes (D-10 amended)")
+        }
+        assertEquals(
+            CLI_IDS.mapNotNull { CliSettings.keyFor(it) }.toSet(),
+            contributions.flatMap { it.ownedKeys() }.toSet(),
+            "the six contributions own exactly the six 1.0.1 command keys",
+        )
+    }
+
+    @Test
     fun theOllamaHintIsTheOneBackendModelHintOfTheFullBuild() {
         assertEquals(
             listOf(OllamaCliModelHint::class.java.name),
@@ -152,6 +173,8 @@ class CliSettingsTest {
     }
 
     private companion object {
+        const val MIN_CORE_KEYS = 50
+
         val CLI_IDS = listOf("codex-cli", "gemini-cli", "opencode-cli", "claude-cli", "copilot-cli", "ollama")
 
         // The 1.0.1 AgentSettings defaults, verbatim.
