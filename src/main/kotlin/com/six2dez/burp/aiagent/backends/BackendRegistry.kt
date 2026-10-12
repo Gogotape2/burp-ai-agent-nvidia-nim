@@ -98,6 +98,14 @@ class BackendRegistry(
 
     fun get(id: String): AiBackend? = backends[id]
 
+    fun isRegistered(backendId: String): Boolean = backends.containsKey(backendId)
+
+    fun resolve(backendId: String): String = backendId
+
+    companion object {
+        const val DEFAULT_BACKEND_ID = "burp-ai"
+    }
+
     fun listBackendIds(settings: com.six2dez.burp.aiagent.config.AgentSettings): List<String> {
         val settingsHash = settings.hashCode()
         return backends.values

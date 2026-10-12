@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.ui
 
+import com.six2dez.burp.aiagent.backends.AiBackend
 import com.six2dez.burp.aiagent.backends.nvidia.NvidiaNimBackendFactory
 import com.six2dez.burp.aiagent.backends.perplexity.PerplexityBackendFactory
 import com.six2dez.burp.aiagent.config.AgentSettings
@@ -31,7 +32,10 @@ enum class HealthCheckTrigger { STARTUP, PERIODIC, SETTINGS_CHANGED, USER_CLICK 
  * servers on a loopback literal) are cheap to probe and may be polled.
  */
 internal object BackendHealthPolicy {
-    fun isLocal(settings: AgentSettings): Boolean {
+    fun isLocal(
+        settings: AgentSettings,
+        backend: AiBackend? = null,
+    ): Boolean {
         val id = settings.preferredBackendId
         val url =
             when (id) {
@@ -50,7 +54,8 @@ internal object BackendHealthPolicy {
     fun shouldRun(
         trigger: HealthCheckTrigger,
         settings: AgentSettings,
-    ): Boolean = trigger != HealthCheckTrigger.PERIODIC || isLocal(settings)
+        backend: AiBackend? = null,
+    ): Boolean = trigger != HealthCheckTrigger.PERIODIC || isLocal(settings, backend)
 
     fun tooltip(
         message: String,

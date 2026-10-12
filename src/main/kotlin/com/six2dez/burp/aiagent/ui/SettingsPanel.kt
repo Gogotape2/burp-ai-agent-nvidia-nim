@@ -156,6 +156,12 @@ class SettingsPanel(
             maximumSize = java.awt.Dimension(140, preferredSize.height)
         }
 
+    internal val unavailableBackendNotice =
+        com.six2dez.burp.aiagent.ui.components
+            .SubtleNotice()
+    internal val unavailableBackendNoticeRow = javax.swing.JPanel(java.awt.BorderLayout())
+    internal val aiBackendSectionBody = javax.swing.JPanel(java.awt.BorderLayout())
+
     internal val privacyMode =
         JComboBox(PrivacyMode.entries.toTypedArray()).apply {
             selectedItem = settings.privacyMode

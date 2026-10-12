@@ -90,6 +90,11 @@ class CliBackend(
             else -> ""
         }
 
+    internal fun configurationErrorFor(
+        settings: AgentSettings,
+        isWindows: Boolean,
+    ): String? = null
+
     override fun isAvailable(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean {
         val command =
             when (id) {

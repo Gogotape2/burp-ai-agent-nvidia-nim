@@ -35,6 +35,12 @@ object TokenTracker {
 
     private val counters = ConcurrentHashMap<UsageKey, UsageCounter>()
 
+    fun registerCharsPerToken(
+        backendId: String,
+        ratio: Double,
+    ) {
+    }
+
     fun estimateTokens(chars: Int): Int = estimateTokens(chars, null)
 
     fun estimateTokens(

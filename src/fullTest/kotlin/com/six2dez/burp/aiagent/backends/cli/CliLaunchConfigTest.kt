@@ -9,9 +9,11 @@ import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.full.FullAiAccessPolicy
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
+import com.six2dez.burp.aiagent.util.TokenTracker
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Answers
@@ -120,6 +122,49 @@ class CliLaunchConfigTest {
         assertFalse(file.exists(), "BackendRegistry.shutdown() must drain the CLI temp files")
         assertEquals(0, CliTempFileRegistry.sizeForTests())
         assertFalse(CliTempFileRegistry.isHookRegisteredForTests(), "the exit hook must be unregistered on unload (T-24-07)")
+    }
+
+    @Test
+    fun cliBackendsKeepTheir101HealthLocalityAndTokenRatios() {
+        val registry = BackendRegistry(api)
+        CLI_COMMANDS.keys.forEach { id ->
+            assertTrue(registry.get(id)!!.healthCheckIsLocal, "$id: a CLI health check is a local process probe")
+        }
+        assertEquals(3.5, registry.get("claude-cli")!!.charsPerTokenEstimate)
+        assertEquals(3.7, registry.get("gemini-cli")!!.charsPerTokenEstimate)
+        listOf("codex-cli", "opencode-cli", "copilot-cli").forEach { id ->
+            assertNull(registry.get(id)!!.charsPerTokenEstimate, "$id uses the core default ratio")
+        }
+        // BackendRegistry.reload() publishes the ratios to the estimator.
+        assertEquals(10, TokenTracker.estimateTokens(35, "claude-cli"))
+        assertEquals(10, TokenTracker.estimateTokens(37, "gemini-cli"))
+        assertEquals(9, TokenTracker.estimateTokens(35, "codex-cli"))
+    }
+
+    @Test
+    fun cliConfigurationErrorsAreThe101MainTabMessages() {
+        val registry = BackendRegistry(api)
+        val blank =
+            TestSettings.baselineSettings().copy(codexCmd = " ", geminiCmd = "", opencodeCmd = "", claudeCmd = "", copilotCmd = "")
+        assertEquals("Codex command is empty.", registry.get("codex-cli")!!.configurationError(blank))
+        assertEquals("Gemini command is empty.", registry.get("gemini-cli")!!.configurationError(blank))
+        assertEquals("OpenCode command is empty.", registry.get("opencode-cli")!!.configurationError(blank))
+        assertEquals("Claude command is empty.", registry.get("claude-cli")!!.configurationError(blank))
+        assertEquals("Copilot command is empty.", registry.get("copilot-cli")!!.configurationError(blank))
+
+        val configured = cliSettings(mcpEnabled = false)
+        CLI_COMMANDS.keys.forEach { id ->
+            assertNull(registry.get(id)!!.configurationError(configured), "$id: a configured command is valid")
+        }
+
+        val openCode = registry.get("opencode-cli") as CliBackend
+        val bareExe = configured.copy(opencodeCmd = "opencode.exe")
+        assertEquals(
+            "OpenCode command looks like a bare .exe. If installed via npm, use 'opencode' (without .exe) or a full path to opencode.cmd.",
+            openCode.configurationErrorFor(bareExe, isWindows = true),
+        )
+        assertNull(openCode.configurationErrorFor(bareExe, isWindows = false), "the hint is Windows-only")
+        assertNull(openCode.configurationErrorFor(configured.copy(opencodeCmd = "C:\\npm\\opencode.exe"), isWindows = true))
     }
 
     private fun supervisorLaunchConfig(

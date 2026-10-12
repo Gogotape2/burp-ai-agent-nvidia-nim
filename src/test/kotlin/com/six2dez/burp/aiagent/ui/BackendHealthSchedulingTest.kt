@@ -1,11 +1,18 @@
 package com.six2dez.burp.aiagent.ui
 
+import burp.api.montoya.MontoyaApi
 import com.six2dez.burp.aiagent.TestSettings
+import com.six2dez.burp.aiagent.backends.AgentConnection
+import com.six2dez.burp.aiagent.backends.AiBackend
+import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
+import com.six2dez.burp.aiagent.backends.burpai.BurpAiBackend
 import com.six2dez.burp.aiagent.config.AgentSettings
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import org.mockito.Answers
+import org.mockito.kotlin.mock
 import java.time.LocalTime
 import java.util.ArrayDeque
 import java.util.concurrent.Executor
@@ -19,26 +26,51 @@ class BackendHealthSchedulingTest {
         transform: (AgentSettings) -> AgentSettings = { it },
     ): AgentSettings = transform(TestSettings.baselineSettings(preferredBackendId = backendId))
 
+    /** A backend whose health check is a local probe; core names no id for it (D-09). */
+    private val localProbe = probeBackend(id = "some-external-local-probe", local = true)
+
+    /** A drop-in backend that does not declare a local health check. */
+    private val externalRemote = probeBackend(id = "some-external-backend", local = false)
+
+    private val burpAi = BurpAiBackend(mock<MontoyaApi>(defaultAnswer = Answers.RETURNS_DEEP_STUBS))
+
+    private fun probeBackend(
+        id: String,
+        local: Boolean,
+    ): AiBackend =
+        object : AiBackend {
+            override val id: String = id
+            override val displayName: String = id
+            override val healthCheckIsLocal: Boolean = local
+
+            override fun launch(config: BackendLaunchConfig): AgentConnection = throw UnsupportedOperationException()
+        }
+
+    @Test
+    fun aBackendThatDeclaresALocalHealthCheckIsLocal() {
+        assertTrue(burpAi.healthCheckIsLocal, "Burp AI's health check never leaves Burp")
+        assertTrue(BackendHealthPolicy.isLocal(settings("burp-ai"), burpAi))
+        assertTrue(BackendHealthPolicy.isLocal(settings(localProbe.id), localProbe))
+        assertFalse(BackendHealthPolicy.isLocal(settings(externalRemote.id), externalRemote))
+        assertFalse(BackendHealthPolicy.isLocal(settings("burp-ai"), null), "no backend, no local claim")
+    }
+
     @Test
     fun periodicRunsOnlyForLocalBackends() {
         val local =
             listOf(
-                settings("codex-cli"),
-                settings("gemini-cli"),
-                settings("opencode-cli"),
-                settings("claude-cli"),
-                settings("copilot-cli"),
-                settings("burp-ai"),
-                settings("ollama") { it.copy(ollamaUrl = "http://127.0.0.1:11434") },
-                settings("ollama") { it.copy(ollamaUrl = "") },
-                settings("lmstudio") { it.copy(lmStudioUrl = "http://localhost:1234") },
-                settings("openai-compatible") { it.copy(openAiCompatibleUrl = "http://127.0.0.1:8080/v1") },
-                settings("nvidia-nim") { it.copy(nvidiaNimUrl = "http://[::1]:8000") },
+                settings("burp-ai") to burpAi,
+                settings(localProbe.id) to localProbe,
+                settings("ollama") { it.copy(ollamaUrl = "http://127.0.0.1:11434") } to null,
+                settings("ollama") { it.copy(ollamaUrl = "") } to null,
+                settings("lmstudio") { it.copy(lmStudioUrl = "http://localhost:1234") } to null,
+                settings("openai-compatible") { it.copy(openAiCompatibleUrl = "http://127.0.0.1:8080/v1") } to null,
+                settings("nvidia-nim") { it.copy(nvidiaNimUrl = "http://[::1]:8000") } to null,
             )
-        local.forEach {
+        local.forEach { (s, backend) ->
             assertTrue(
-                BackendHealthPolicy.shouldRun(HealthCheckTrigger.PERIODIC, it),
-                "expected periodic poll for ${it.preferredBackendId}",
+                BackendHealthPolicy.shouldRun(HealthCheckTrigger.PERIODIC, s, backend),
+                "expected periodic poll for ${s.preferredBackendId}",
             )
         }
     }
@@ -47,20 +79,21 @@ class BackendHealthSchedulingTest {
     fun periodicNeverRunsForRemoteOrUnknownBackends() {
         val remote =
             listOf(
-                settings("nvidia-nim") { it.copy(nvidiaNimUrl = "https://integrate.api.nvidia.com") },
-                settings("nvidia-nim") { it.copy(nvidiaNimUrl = "") },
-                settings("perplexity") { it.copy(perplexityUrl = "https://api.perplexity.ai") },
-                settings("perplexity") { it.copy(perplexityUrl = "") },
-                settings("openai-compatible") { it.copy(openAiCompatibleUrl = "https://api.openai.com/v1") },
-                settings("openai-compatible") { it.copy(openAiCompatibleUrl = "http://192.168.1.50:8000") },
-                settings("openai-compatible") { it.copy(openAiCompatibleUrl = "") },
-                settings("anthropic"),
-                settings("some-external-backend"),
+                settings("nvidia-nim") { it.copy(nvidiaNimUrl = "https://integrate.api.nvidia.com") } to null,
+                settings("nvidia-nim") { it.copy(nvidiaNimUrl = "") } to null,
+                settings("perplexity") { it.copy(perplexityUrl = "https://api.perplexity.ai") } to null,
+                settings("perplexity") { it.copy(perplexityUrl = "") } to null,
+                settings("openai-compatible") { it.copy(openAiCompatibleUrl = "https://api.openai.com/v1") } to null,
+                settings("openai-compatible") { it.copy(openAiCompatibleUrl = "http://192.168.1.50:8000") } to null,
+                settings("openai-compatible") { it.copy(openAiCompatibleUrl = "") } to null,
+                settings("anthropic") to null,
+                settings(externalRemote.id) to externalRemote,
+                settings("some-unregistered-backend") to null,
             )
-        remote.forEach {
+        remote.forEach { (s, backend) ->
             assertFalse(
-                BackendHealthPolicy.shouldRun(HealthCheckTrigger.PERIODIC, it),
-                "a timer must never poll ${it.preferredBackendId}",
+                BackendHealthPolicy.shouldRun(HealthCheckTrigger.PERIODIC, s, backend),
+                "a timer must never poll ${s.preferredBackendId}",
             )
         }
     }
@@ -68,10 +101,10 @@ class BackendHealthSchedulingTest {
     @Test
     fun onDemandTriggersAlwaysRun() {
         val remote = settings("perplexity") { it.copy(perplexityUrl = "https://api.perplexity.ai") }
-        val unknown = settings("some-external-backend")
+        val unknown = settings(externalRemote.id)
         listOf(HealthCheckTrigger.STARTUP, HealthCheckTrigger.SETTINGS_CHANGED, HealthCheckTrigger.USER_CLICK).forEach { trigger ->
-            assertTrue(BackendHealthPolicy.shouldRun(trigger, remote))
-            assertTrue(BackendHealthPolicy.shouldRun(trigger, unknown))
+            assertTrue(BackendHealthPolicy.shouldRun(trigger, remote, null))
+            assertTrue(BackendHealthPolicy.shouldRun(trigger, unknown, externalRemote))
         }
     }
 

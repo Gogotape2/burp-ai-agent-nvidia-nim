@@ -15,6 +15,18 @@ class TokenTrackerTest {
     }
 
     @Test
+    fun aRegisteredRatioIsUsedAndCoreAndUnknownIdsKeepTheirs() {
+        // Phase 29 / D-09: a backend publishes its own ratio through BackendRegistry.reload(); core
+        // names no full-only id.
+        TokenTracker.registerCharsPerToken("token-test-registered-backend", 3.5)
+        assertEquals(10, TokenTracker.estimateTokens(35, "token-test-registered-backend"))
+        assertEquals(10, TokenTracker.estimateTokens(35, " Token-Test-Registered-Backend "), "ids are normalized")
+        assertEquals(10, TokenTracker.estimateTokens(38, "ollama"), "core table: ollama 3.8")
+        assertEquals(10, TokenTracker.estimateTokens(36, "nvidia-nim"), "core table: nvidia-nim 3.6")
+        assertEquals(9, TokenTracker.estimateTokens(35, "token-test-unknown-backend"), "unknown ids: 4.0")
+    }
+
+    @Test
     fun recordsAndExposesSnapshot() {
         val flow = "token-test-flow"
         val backend = "token-test-backend"
