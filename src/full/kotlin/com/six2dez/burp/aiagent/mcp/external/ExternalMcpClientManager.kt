@@ -110,7 +110,7 @@ private data class ServerConnection(
  *   (T-16-03-ZOM mitigation).
  *
  * Crypto contract: [ExternalMcpServerConfig.bearerToken] is ALWAYS plaintext on arrival — it
- * was decrypted by [com.six2dez.burp.aiagent.config.AgentSettingsRepository.loadExternalMcpServers].
+ * was decrypted by [com.six2dez.burp.aiagent.full.external.ExternalMcpSettings.load].
  * This class MUST NOT call SecretCipher.decrypt.
  *
  * @param auditLogger optional [AuditLogger] instance for guarding allocation (CR-02).

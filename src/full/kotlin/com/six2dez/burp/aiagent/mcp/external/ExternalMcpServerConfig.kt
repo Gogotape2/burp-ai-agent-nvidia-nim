@@ -12,8 +12,9 @@ enum class ExternalMcpTransport {
  * Configuration for a single external MCP server entry.
  *
  * The [bearerToken] field holds the PLAINTEXT token in memory — encryption lives ONLY at the
- * AgentSettings persistence boundary (Plan 16-02). Callers of [AgentSettingsRepository.load]
- * receive [bearerToken] as plaintext and MUST NOT call [SecretCipher.decrypt] on it again.
+ * persistence boundary, [com.six2dez.burp.aiagent.full.external.ExternalMcpSettings] (Plan 16-02;
+ * the full build's external-MCP plug-in since Phase 29). Callers of its `load()` receive
+ * [bearerToken] as plaintext and MUST NOT call SecretCipher.decrypt on it again.
  *
  * Named [bearerToken] (not `encryptedToken`) to make the plaintext-in-memory contract explicit.
  */
@@ -32,7 +33,7 @@ data class ExternalMcpServerConfig(
     val envVars: Map<String, String> = emptyMap(),
     /**
      * SSE bearer token; holds PLAINTEXT in memory.
-     * Encryption boundary is AgentSettings (see Plan 16-02).
+     * Encryption boundary is ExternalMcpSettings (see Plan 16-02).
      * Stored as ENC1:-prefixed ciphertext at rest; decrypted to plaintext on load.
      */
     val bearerToken: String = "",

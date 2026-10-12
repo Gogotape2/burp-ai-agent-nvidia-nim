@@ -10,19 +10,12 @@ import com.six2dez.burp.aiagent.spi.ToolHandler
 import io.modelcontextprotocol.kotlin.sdk.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.TextContent
 import io.modelcontextprotocol.kotlin.sdk.Tool
-import kotlinx.coroutines.runBlocking
-import kotlinx.serialization.json.Json
-import kotlinx.serialization.json.JsonObject
-import kotlinx.serialization.json.JsonPrimitive
-import kotlinx.serialization.json.boolean
-import kotlinx.serialization.json.booleanOrNull
 import javax.swing.SwingUtilities
 
 object McpToolExecutor {
-    private val decodeJson = Json { ignoreUnknownKeys = true }
-
-    // Phase 16 (CAP-02): expected part count for ext:<server>:<tool> tool names.
-    private const val EXT_TOOL_NAME_PARTS = 3
+    // Phase 16 (CAP-02 / D-04): the namespace of external tools. Phase 29 (D-14): a provider's dynamic
+    // namespace answers for these names; ToolApprovalGate derives CONFIRM_EACH from the same prefix.
+    private const val DYNAMIC_TOOL_PREFIX = "ext:"
 
     fun describeTools(
         context: McpToolContext,
@@ -48,22 +41,10 @@ object McpToolExecutor {
                 )
             }
 
-        // Phase 16 (CAP-02): fan-out external tool descriptors from ExternalMcpClientManager.
-        // External tools are appended after built-in tools with the ext:<server>:<tool> prefix
-        // (D-04 disambiguation). orEmpty() ensures null manager behaves identically to no manager.
-        val externalSpecs =
-            context.externalClientManager
-                ?.availableTools()
-                ?.map { ext ->
-                    ToolSpec(
-                        id = ext.name,
-                        description = ext.description,
-                        enabled = true,
-                        unsafeOnly = false,
-                        proOnly = false,
-                        argsSchema = null,
-                    )
-                }.orEmpty()
+        // Phase 16 (CAP-02) / Phase 29 (D-14): the dynamic tools every provider can run now (the full
+        // build's ext:<server>:<tool> external tools), appended after the built-in tools. None in the
+        // store build, where no provider has a dynamic namespace.
+        val externalSpecs = registry.providers().flatMap { it.describeDynamic(context) }
 
         return buildToolPreamble(specs, externalSpecs, includeDisabled)
     }
@@ -121,9 +102,9 @@ object McpToolExecutor {
         // Guarded here rather than at the [executeTool] wrapper below, because the wrapper only extracts
         // text from this function's result: the MCP-server path (`McpToolHandlers.kt:129`) calls THIS
         // function directly, so a guard one level up would hold for the chat half and for nothing else.
-        // It also precedes `canonicalToolId` and the external-tool early return underneath, because that
-        // return leads to a call that blocks its own thread waiting on a coroutine — one line lower and
-        // the external path would be the single place the UI could still freeze.
+        // It also precedes `canonicalToolId` and the dynamic-namespace early return underneath, because in
+        // the full build that return leads to a call that blocks its own thread waiting on a coroutine — one
+        // line lower and the external path would be the single place the UI could still freeze.
         //
         // A Swing import in a file under `mcp/` is a deliberate trade rather than a layering slip. The
         // query below is a comparison against the AWT event queue's thread and initialises no AWT state,
@@ -140,11 +121,15 @@ object McpToolExecutor {
         }
         val resolvedName = canonicalToolId(name)
 
-        // Phase 16 (CAP-02 / D-04): route ext:-prefixed tool calls to ExternalMcpClientManager.
-        // Built-in Burp tools ALWAYS win when name does not start with "ext:" — the early return
-        // below is the sole path for external tools (T-16-04-COL mitigation).
-        if (resolvedName.startsWith("ext:")) {
-            return routeExternalToolCall(name, resolvedName, argsJson, context)
+        // Phase 16 (CAP-02 / D-04), Phase 29 (D-14): an ext:-prefixed name is offered to each provider's
+        // dynamic namespace in registry order, and the first non-null result is returned. Built-in Burp
+        // tools ALWAYS win: a name without the prefix never reaches a provider, so this early return is the
+        // sole path for external tools (T-16-04-COL mitigation). No provider claims it in the store build.
+        if (resolvedName.startsWith(DYNAMIC_TOOL_PREFIX)) {
+            return context.toolRegistry
+                .providers()
+                .firstNotNullOfOrNull { it.resolveDynamic(resolvedName, argsJson, context) }
+                ?: errorResult("Unknown tool: $name")
         }
 
         val handler =
@@ -222,50 +207,6 @@ object McpToolExecutor {
         )
 
     /**
-     * Routes an `ext:<server>:<tool>` call to [ExternalMcpClientManager].
-     *
-     * Phase 16 (CAP-02 / D-04): separation into a private function keeps the main
-     * [executeToolResult] body clean and allows suppressing detekt rules locally.
-     *
-     * D-03 outbound privacy: [argsJson] is redacted via [McpToolContext.redactIfNeeded] before
-     * being forwarded to the external server.
-     *
-     * SC2 / T-16-04-PI: the trust-boundary wrap is applied by [ExternalMcpClientManager.callTool]
-     * (Plan 16-03 contract) — NOT here. The wrapped text flows unchanged into the returned
-     * [CallToolResult].
-     */
-    @Suppress("TooGenericExceptionCaught", "ReturnCount")
-    private fun routeExternalToolCall(
-        originalName: String,
-        resolvedName: String,
-        argsJson: String?,
-        context: McpToolContext,
-    ): CallToolResult {
-        val parts = resolvedName.split(":", limit = EXT_TOOL_NAME_PARTS)
-        if (parts.size < EXT_TOOL_NAME_PARTS) {
-            return errorResult("Invalid external tool name (expected ext:<server>:<tool>): $originalName")
-        }
-        val serverName = parts[1]
-        val remoteName = parts[2]
-
-        val manager =
-            context.externalClientManager
-                ?: return errorResult("External MCP client not available")
-
-        // D-03 (outbound privacy): redact args before sending to the third-party external server.
-        val redactedArgs = context.redactIfNeeded(argsJson.orEmpty())
-        val argsMap = parseArgsMapOrEmpty(redactedArgs)
-
-        return try {
-            val resultText = runBlocking { manager.callTool(serverName, remoteName, argsMap) }
-            // Trust-boundary wrap is already in resultText (Plan 16-03) — preserve as-is.
-            CallToolResult(content = listOf(TextContent(resultText)), isError = false)
-        } catch (e: Exception) {
-            errorResult("External tool call failed ($serverName/$remoteName): ${e.message.orEmpty()}")
-        }
-    }
-
-    /**
      * SEC-06: the SINGLE canonicalisation seam. Public — not private — because [ToolApprovalGate.tierFor]
      * and this executor's own routing both consume it, so the tier shown on the approval card, the
      * `toolName` written to the audit record and the tool that actually executes cannot disagree.
@@ -287,41 +228,6 @@ object McpToolExecutor {
      * injected prompt a target map. ADR-15 records that omission as deliberate.
      */
     fun canonicalToolId(toolName: String): String = McpToolCatalog.registry.canonicalId(toolName)
-
-    /**
-     * Parses a JSON string into `Map<String, Any?>` for forwarding to an external MCP server.
-     *
-     * Phase 16 (CAP-02): used by the `ext:` routing branch in [executeToolResult] to convert the
-     * redacted arguments JSON into the `args` map accepted by [ExternalMcpClientManager.callTool].
-     * Returns [emptyMap] on blank input or parse failure — safe degradation.
-     */
-    @Suppress("UNCHECKED_CAST", "ReturnCount")
-    internal fun parseArgsMapOrEmpty(json: String): Map<String, Any?> {
-        val text = json.trim()
-        if (text.isBlank() || text == "{}") return emptyMap()
-        return try {
-            val element = decodeJson.parseToJsonElement(text)
-            val obj = element as? JsonObject ?: return emptyMap()
-            // Convert JsonObject entries to Map<String, Any?> via kotlinx-serialization primitives.
-            // The MCP SDK callTool() accepts Any? values; primitives coerce cleanly.
-            obj.entries.associate { (k, v) ->
-                k to
-                    when (v) {
-                        is JsonPrimitive ->
-                            when {
-                                v.isString -> v.content
-                                v.booleanOrNull != null -> v.boolean
-                                v.content.toLongOrNull() != null -> v.content.toLong()
-                                v.content.toDoubleOrNull() != null -> v.content.toDouble()
-                                else -> v.content
-                            }
-                        else -> v.toString()
-                    }
-            }
-        } catch (_: Exception) {
-            emptyMap()
-        }
-    }
 
     /** The schema the registry's handler for [toolName] publishes, or an empty schema for an unknown tool. */
     fun inputSchema(

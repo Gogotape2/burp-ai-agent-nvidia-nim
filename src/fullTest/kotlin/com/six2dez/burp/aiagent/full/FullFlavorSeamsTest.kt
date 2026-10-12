@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.full
 
 import com.six2dez.burp.aiagent.backends.AiBackendFactory
+import com.six2dez.burp.aiagent.full.external.ExternalToolProvider
 import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.mcp.ToolApprovalGate
 import com.six2dez.burp.aiagent.mcp.tools.GenericToolProvider
@@ -37,10 +38,19 @@ class FullFlavorSeamsTest {
     }
 
     @Test
-    fun genericToolProviderIsTheOneToolProvider() {
+    fun genericAndExternalAreTheFullBuildToolProviders() {
         val providers = Plugins.load(ToolProvider::class.java)
-        assertEquals(listOf(GenericToolProvider::class.java.name), providers.map { it.javaClass.name })
-        assertEquals(FULL_TOOL_COUNT - NATIVE_IDS.size, providers.single().handlers().size, "generic tool count")
+        // 29-15: ExternalToolProvider supplies the ext: dynamic namespace and no catalog tool.
+        assertEquals(
+            listOf(ExternalToolProvider::class.java.name, GenericToolProvider::class.java.name),
+            providers.map { it.javaClass.name },
+        )
+        assertEquals(
+            FULL_TOOL_COUNT - NATIVE_IDS.size,
+            providers.single { it is GenericToolProvider }.handlers().size,
+            "generic tool count",
+        )
+        assertEquals(0, providers.single { it is ExternalToolProvider }.handlers().size, "no static external tool")
     }
 
     @Test

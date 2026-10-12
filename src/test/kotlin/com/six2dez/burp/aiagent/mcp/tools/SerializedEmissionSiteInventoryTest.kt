@@ -420,10 +420,14 @@ class SerializedEmissionSiteInventoryTest {
         // ── handler bodies ──────────────────────────────────────────────────────────────────
         const val HANDLER_FACTORY = "toolHandler("
 
-        /** Floors, not counts. Measured at plan 29-08 task 1: 338 / 71 / 281 / 156 / 375. */
+        /**
+         * Floors, not counts. Measured at plan 29-08 task 1: 338 / 71 / 281 / 156 / 375. Plan 29-15 moved the
+         * executor's ext: routing (routeExternalToolCall, parseArgsMapOrEmpty) to the full build's
+         * ExternalToolProvider, leaving the executor at 245 lines, so its floor is 200.
+         */
         val MIN_EXPECTED_LINES =
             mapOf(
-                MODERN_EXECUTOR to 250,
+                MODERN_EXECUTOR to 200,
                 DELEGATING_REGISTRAR to 50,
                 GENERIC_HISTORY to 200,
                 GENERIC_SITE_MAP to 100,
