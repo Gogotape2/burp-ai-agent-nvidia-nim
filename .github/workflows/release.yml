@@ -26,28 +26,70 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: ktlint check
-        run: ./gradlew ktlintCheck --no-daemon
+      - name: ktlint and detekt
+        run: ./gradlew ktlintCheck detekt --no-daemon
 
-      - name: Run full test suite (fast + heavy)
-        run: ./gradlew test nightlyRegressionTest --no-daemon
+      # The full asset ships the CLI backends, whose heavy suites live in the full flavor, so the
+      # release runs both flavors' fast and heavy suites, not only the store ones.
+      - name: Run both flavors' test suites (fast + heavy)
+        run: ./gradlew test fullTest nightlyRegressionTest nightlyRegressionFullTest edtGuardWithoutAssertionsTest --no-daemon
 
-      # The GitHub release ships the full JAR. The `Custom-AI-Agent-*.jar` globs below match it and
-      # not the lowercase store JAR; Phase 30 adds the store JAR and its checksum to the release.
-      - name: Build full JAR
-        run: ./gradlew fullJar --no-daemon
+      # This is the same task PRs run. A failing step stops the job before anything is staged or
+      # published, so a tag on a commit that never ran PR CI cannot publish an unchecked store JAR (D-02).
+      - name: Build both JARs and inspect the BApp Store JAR (CI-01 / D-02)
+        run: ./gradlew bappJar fullJar storeJarContentTest --no-daemon
 
       - name: Generate SBOM (CycloneDX)
         # --no-configuration-cache: cyclonedx-gradle-plugin 1.10.0 uses Task.project
         # at execution time, which is incompatible with Gradle's configuration cache.
         run: ./gradlew cyclonedxBom --no-daemon --no-configuration-cache
 
-      - name: Compute SHA-256 checksum
+      # The Gradle output keeps the name BappManifest.bmf pins; only the release asset is versioned
+      # (D-01). Staging in an emptied directory keeps stale JARs from earlier builds out of the release
+      # and keeps the publish globs exact. The tag is read from GITHUB_REF in the environment, never
+      # through a workflow expression in the script.
+      - name: Stage release assets (D-01)
         run: |
-          cd build/libs
-          for f in Custom-AI-Agent-*.jar; do
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          full="build/libs/Custom-AI-Agent-full-${VERSION}.jar"
+          storeJar="build/libs/custom-ai-agent-bapp.jar"
+          bappAsset="Custom-AI-Agent-bapp-${VERSION}.jar"
+          if [ ! -f "$full" ]; then
+            echo "::error::Tag ${TAG} does not match the Gradle version: expected ${full}."
+            ls -l build/libs || true
+            exit 1
+          fi
+          if [ ! -f "$storeJar" ]; then
+            echo "::error::BApp Store JAR ${storeJar} was not built."
+            exit 1
+          fi
+          rm -rf build/release
+          mkdir -p build/release
+          cp "$full" build/release/
+          cp "$storeJar" "build/release/${bappAsset}"
+          cmp "$storeJar" "build/release/${bappAsset}"
+          staged=$(find build/release -maxdepth 1 -type f -name '*.jar' | wc -l | tr -d ' ')
+          if [ "$staged" != "2" ]; then
+            echo "::error::Expected exactly 2 JARs in build/release, found ${staged}."
+            ls -l build/release
+            exit 1
+          fi
+
+      # Computed after the rename and from inside the staging directory, so the file name inside each
+      # checksum is the published asset name. The sha256sum format is unchanged from 1.0.x (D-03).
+      - name: Compute SHA-256 checksums (D-03)
+        run: |
+          cd build/release
+          for f in *.jar; do
             sha256sum "$f" > "$f.sha256"
+            lines=$(wc -l < "$f.sha256" | tr -d ' ')
+            if [ "$lines" != "1" ]; then
+              echo "::error::${f}.sha256 holds ${lines} lines, expected exactly 1."
+              exit 1
+            fi
           done
+          sha256sum -c ./*.sha256
 
       - name: Extract release notes from CHANGELOG
         id: extract_notes
@@ -71,7 +113,12 @@ jobs:
           body_path: ${{ steps.extract_notes.outputs.notes_file }}
           generate_release_notes: true
           append_body: true
+          fail_on_unmatched_files: true
+          # One glob per asset kind, so a missing store asset fails the step instead of passing on the
+          # full asset's match.
           files: |
-            build/libs/Custom-AI-Agent-*.jar
-            build/libs/Custom-AI-Agent-*.jar.sha256
+            build/release/Custom-AI-Agent-full-*.jar
+            build/release/Custom-AI-Agent-full-*.jar.sha256
+            build/release/Custom-AI-Agent-bapp-*.jar
+            build/release/Custom-AI-Agent-bapp-*.jar.sha256
             build/reports/sbom/bom.json
