@@ -10,6 +10,7 @@ import javax.swing.border.EmptyBorder
 
 class HelpConfigPanel(
     private val dialogParentProvider: () -> javax.swing.JComponent?,
+    private val buildIdentity: String,
 ) : ConfigPanel {
     override fun build(): JPanel {
         val helpHtml =

@@ -43,6 +43,11 @@ class SettingsPanel(
     internal val passiveAiScanner: com.six2dez.burp.aiagent.scanner.PassiveAiScanner,
     internal val activeAiScanner: com.six2dez.burp.aiagent.scanner.ActiveAiScanner,
     /**
+     * UI-SPEC PC-15: the build identity line App resolved once, shown as the Help tab caption. No
+     * default on purpose: a default would let a missed wire silently show the wrong build.
+     */
+    internal val buildIdentity: String,
+    /**
      * Phase 29 / D-07: the settings contributions to host. Production loads them with the extension's
      * classloader; the store build ships no provider, so the list is empty there. Tests pass a list
      * directly and never register a test provider through `META-INF/services`.

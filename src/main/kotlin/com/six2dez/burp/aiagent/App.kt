@@ -176,7 +176,18 @@ object App {
         activeAiScanner.useCollaborator = settings.activeAiUseCollaborator
         activeAiScanner.setEnabled(settings.activeAiEnabled)
 
-        val ui = MainTab(api, settingsRepo, backendRegistry, supervisor, auditLogger, mcpSupervisor, passiveAiScanner, activeAiScanner, aiRequestLogger)
+        val ui = MainTab(
+                api,
+                settingsRepo,
+                backendRegistry,
+                supervisor,
+                auditLogger,
+                mcpSupervisor,
+                passiveAiScanner,
+                activeAiScanner,
+                aiRequestLogger,
+                buildIdentity = "",
+            )
         mainTab = ui
         api.userInterface().registerSuiteTab(EXTENSION_NAME, ui.root)
 
@@ -358,6 +369,9 @@ internal fun registerExtensionIdentity(
     api.extension().setName(EXTENSION_NAME)
     api.logging().logToOutput("$EXTENSION_NAME ${BuildFlags.VERSION} (${profile.label})")
 }
+
+/** Phase 29 / UI-SPEC PC-15 (S3, S25, C-N12): the one string that names the running build. */
+internal fun buildIdentityLine(profile: FlavorProfile): String = ""
 
 /**
  * Quick 261008-n0c — makes [AgentSupervisor]'s settings copy a mirror of the one [settingsRepo].

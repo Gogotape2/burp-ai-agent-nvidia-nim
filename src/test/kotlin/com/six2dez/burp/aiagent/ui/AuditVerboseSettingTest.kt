@@ -320,6 +320,7 @@ class AuditVerboseSettingTest {
                 mcpSupervisor = mock<McpSupervisor>(defaultAnswer = Answers.RETURNS_DEEP_STUBS),
                 passiveAiScanner = mock<PassiveAiScanner>(defaultAnswer = Answers.RETURNS_DEEP_STUBS),
                 activeAiScanner = mock<ActiveAiScanner>(defaultAnswer = Answers.RETURNS_DEEP_STUBS),
+                buildIdentity = "Custom AI Agent test (test build)",
             )
         panels.add(panel)
         return panel

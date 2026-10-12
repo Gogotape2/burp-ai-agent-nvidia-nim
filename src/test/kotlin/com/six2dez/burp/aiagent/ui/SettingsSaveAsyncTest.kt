@@ -858,6 +858,7 @@ class SettingsSaveAsyncTest {
                 mcpSupervisor = mcpSupervisor,
                 passiveAiScanner = passiveAiScanner,
                 activeAiScanner = activeAiScanner,
+                buildIdentity = "Custom AI Agent test (test build)",
             )
         panels.add(panel)
         return Fixture(panel, api, supervisor, mcpSupervisor, passiveAiScanner, activeAiScanner)

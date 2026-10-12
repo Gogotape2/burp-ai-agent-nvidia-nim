@@ -227,6 +227,7 @@ internal fun SettingsPanel.dialogParentComponent(): JComponent? = dialogParent
 internal fun SettingsPanel.helpSection(): JPanel =
     HelpConfigPanel(
         dialogParentProvider = ::dialogParentComponent,
+        buildIdentity = "",
     ).build()
 
 internal fun SettingsPanel.privacySection(): JPanel =

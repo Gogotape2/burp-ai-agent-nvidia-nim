@@ -18,23 +18,31 @@ import com.six2dez.burp.aiagent.spi.SettingsSlot
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.components.AccordionPanel
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
+import com.six2dez.burp.aiagent.redact.PrivacyMode
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
+import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertTimeoutPreemptively
 import org.mockito.Answers
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.atLeastOnce
+import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import java.awt.Component
 import java.awt.Container
+import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import javax.swing.Box
 import javax.swing.BoxLayout
 import javax.swing.JComponent
@@ -52,9 +60,17 @@ import javax.swing.SwingUtilities
  */
 class SettingsContributionHostTest {
     private val panels = CopyOnWriteArrayList<SettingsPanel>()
+    private lateinit var settledSignal: CountDownLatch
+
+    @BeforeEach
+    fun installSettleObserver() {
+        settledSignal = CountDownLatch(1)
+        OffEdtDispatch.registerSettledObserver { settledSignal.countDown() }
+    }
 
     @AfterEach
     fun shutdownPanels() {
+        OffEdtDispatch.registerSettledObserver(null)
         panels.forEach { it.shutdown() }
         panels.clear()
     }
@@ -251,6 +267,134 @@ class SettingsContributionHostTest {
         }
     }
 
+    @Test
+    fun aSaveCollectsOnTheEdtAndPersistsOnTheSaveWorkerAfterTheCoreSave() {
+        assertTimeoutPreemptively(Duration.ofSeconds(30)) {
+            val contribution = RecordingContribution("test.save", SettingsSlot.MCP_TAB)
+            val fixture = newFixture(listOf(contribution))
+            val order = CopyOnWriteArrayList<String>()
+            val coreModeAtPersist = AtomicReference<PrivacyMode>()
+            contribution.onPersist = {
+                order.add("persist")
+                coreModeAtPersist.set(fixture.repo.load().privacyMode)
+            }
+            doAnswer { order.add("backends.reload") }.whenever(fixture.backends).reload()
+
+            onEdt {
+                contribution.field.text = "edited"
+                fixture.panel.privacyMode.selectedItem = PrivacyMode.OFF
+                fixture.panel.saveSettings()
+            }
+            awaitSettled()
+
+            val collect = contribution.callsOf("collect").single()
+            assertTrue(collect.onEdt, "UI-SPEC H-2: collect() reads Swing state on the EDT.")
+            val persist = contribution.callsOf("persist").single()
+            assertFalse(persist.onEdt, "T-29-28: persist() never runs on the EDT.")
+            assertEquals("burp-ai-settings-save", persist.thread, "persist() runs on the settings-save worker.")
+            assertEquals(
+                PrivacyMode.OFF,
+                coreModeAtPersist.get(),
+                "persist() runs strictly after settingsRepo.save: the core snapshot is already stored.",
+            )
+            assertEquals(
+                listOf("persist", "backends.reload"),
+                order.toList(),
+                "Contribution values are stored before the backends reload, so a reload reads them.",
+            )
+            assertEquals("edited", fixture.panel.pluginSettings.getString(contribution.key), "The value persisted.")
+            assertEquals("Saved and applied.", onEdtValue { fixture.panel.saveFeedbackLabel.text })
+        }
+    }
+
+    @Test
+    fun aThrowingPersistReachesTheFailureLineAndKeepsTheCoreApplyStepsAndTheOtherContributions() {
+        assertTimeoutPreemptively(Duration.ofSeconds(30)) {
+            val failing = RecordingContribution("test.failing", SettingsSlot.MCP_TAB)
+            failing.persistFailure = IllegalStateException("plug-in store refused")
+            val other = RecordingContribution("test.other", SettingsSlot.ACTIVE_SCANNER_TAB)
+            val fixture = newFixture(listOf(failing, other))
+
+            onEdt {
+                other.field.text = "kept"
+                fixture.panel.privacyMode.selectedItem = PrivacyMode.STRICT
+                fixture.panel.saveSettings()
+            }
+            awaitSettled()
+
+            assertEquals(
+                "Save failed: plug-in store refused",
+                onEdtValue { fixture.panel.saveFeedbackLabel.text },
+                "UI-SPEC H-2: a throwing persist() reaches the existing onFailure line.",
+            )
+            assertEquals(PrivacyMode.STRICT, fixture.repo.load().privacyMode, "The core save stays applied.")
+            verify(fixture.mcpSupervisor).applySettings(any(), any(), any(), any())
+            verify(fixture.activeAiScanner).setEnabled(any())
+            assertEquals("kept", fixture.panel.pluginSettings.getString(other.key), "The other one persisted.")
+        }
+    }
+
+    @Test
+    fun restoreDefaultsAppliesEachContributionsDefaultsOnTheEdtAndPersistsThemOnTheWorker() {
+        assertTimeoutPreemptively(Duration.ofSeconds(30)) {
+            val contribution = RecordingContribution("test.restore", SettingsSlot.ACTIVE_SCANNER_TAB)
+            val fixture = newFixture(listOf(contribution))
+            onEdt {
+                contribution.field.text = "edited"
+                fixture.panel.restoreDefaultsConfirmed()
+                assertEquals("default", contribution.field.text, "applyToUi(defaults()) ran before the dispatch.")
+            }
+            awaitSettled()
+
+            assertTrue(contribution.callsOf("applyToUi").single().onEdt, "applyToUi runs on the EDT.")
+            val persist = contribution.callsOf("persist").single()
+            assertEquals("burp-ai-settings-save", persist.thread, "Restore persists on the settings-save worker.")
+            assertEquals("default", fixture.panel.pluginSettings.getString(contribution.key), "Defaults stored.")
+            assertTrue(contribution.callsOf("collect").isEmpty(), "Restore persists defaults(), not the screen.")
+        }
+    }
+
+    @Test
+    fun applySettingsToUiNotifiesEveryContributionOnTheEdt() {
+        val backend = RecordingContribution("test.card", SettingsSlot.BACKEND_CARD, backendId = "ollama")
+        val mcp = RecordingContribution("test.mcp", SettingsSlot.MCP_TAB)
+        val fixture = newFixture(listOf(backend, mcp))
+        onEdt { fixture.panel.applySettingsToUi(fixture.repo.load(), notifyHosts = false) }
+        listOf(backend, mcp).forEach {
+            val calls = it.callsOf("onCoreSettingsApplied")
+            assertEquals(1, calls.size, "Every contribution hears about the core apply: ${it.members}")
+            assertTrue(calls.single().onEdt, "onCoreSettingsApplied runs on the EDT.")
+        }
+    }
+
+    @Test
+    fun aSaveNeverReachesAContributionWhoseCreateComponentThrew() {
+        assertTimeoutPreemptively(Duration.ofSeconds(30)) {
+            val throwing = ThrowingContribution()
+            val working = RecordingContribution("test.working", SettingsSlot.MCP_TAB)
+            val fixture = newFixture(listOf(throwing, working))
+            onEdt { fixture.panel.saveSettings() }
+            awaitSettled()
+            settledSignal = CountDownLatch(1)
+            onEdt { fixture.panel.restoreDefaultsConfirmed() }
+            awaitSettled()
+
+            assertEquals(listOf("create"), throwing.calls, "UI-SPEC PC-10: no collect, persist or defaults.")
+            assertEquals(2, working.callsOf("persist").size, "The working one is saved and restored.")
+        }
+    }
+
+    private fun awaitSettled() {
+        assertTrue(settledSignal.await(25, TimeUnit.SECONDS), "The settings-save worker never settled.")
+        SwingUtilities.invokeAndWait { }
+    }
+
+    private fun <T> onEdtValue(read: () -> T): T {
+        val value = AtomicReference<T>()
+        SwingUtilities.invokeAndWait { value.set(read()) }
+        return value.get()
+    }
+
     // ------------------------------------------------------------------------------------------------
     // Fixture
     // ------------------------------------------------------------------------------------------------
@@ -291,6 +435,7 @@ class SettingsContributionHostTest {
                     mcpSupervisor = mcpSupervisor,
                     passiveAiScanner = passiveAiScanner,
                     activeAiScanner = activeAiScanner,
+                    buildIdentity = TEST_BUILD_IDENTITY,
                 )
             } else {
                 SettingsPanel(
@@ -302,6 +447,7 @@ class SettingsContributionHostTest {
                     mcpSupervisor = mcpSupervisor,
                     passiveAiScanner = passiveAiScanner,
                     activeAiScanner = activeAiScanner,
+                    buildIdentity = TEST_BUILD_IDENTITY,
                     contributions = contributions,
                 )
             }
@@ -475,6 +621,8 @@ class SettingsContributionHostTest {
     }
 
     companion object {
+        const val TEST_BUILD_IDENTITY = "Custom AI Agent test (host test build)"
+
         /** The 1.0.1 backend cards, in registration order. */
         val CORE_CARD_IDS =
             listOf(

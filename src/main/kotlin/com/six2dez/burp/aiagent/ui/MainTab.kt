@@ -62,6 +62,8 @@ class MainTab(
     private val passiveAiScanner: com.six2dez.burp.aiagent.scanner.PassiveAiScanner,
     private val activeAiScanner: com.six2dez.burp.aiagent.scanner.ActiveAiScanner,
     private val aiRequestLogger: AiRequestLogger? = null,
+    /** UI-SPEC PC-15: the build identity line App resolved once; shown as the Help tab caption. */
+    private val buildIdentity: String,
 ) {
     val root: JComponent = JPanel(BorderLayout())
     private lateinit var settingsPanel: SettingsPanel
@@ -130,7 +132,18 @@ class MainTab(
     private var lastProjectId: String? = null
 
     init {
-        settingsPanel = SettingsPanel(api, settingsRepo, backends, supervisor, audit, mcpSupervisor, passiveAiScanner, activeAiScanner)
+        settingsPanel =
+            SettingsPanel(
+                api,
+                settingsRepo,
+                backends,
+                supervisor,
+                audit,
+                mcpSupervisor,
+                passiveAiScanner,
+                activeAiScanner,
+                buildIdentity = buildIdentity,
+            )
         if (aiRequestLogger != null) {
             aiLoggerPanel = AiLoggerPanel(aiRequestLogger)
         }
