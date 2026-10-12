@@ -73,14 +73,12 @@ internal fun SettingsPanel.mcpSection(): JPanel {
             quickActionsFactory = ::mcpQuickActions,
         ).build()
 
-    // Phase 16-05: append ExternalServersPanel accordion below the McpConfigPanel section.
-    val externalPanel = externalServersPanel.buildPanel()
     return JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         background = DesignTokens.Colors.surface
         add(mcpPanel)
-        add(externalPanel)
         // UI-SPEC PC-9: MCP_TAB contributions close the stack with no host gap; none in the store build.
+        // The full build's External MCP Servers section arrives here (ExternalMcpContribution, 29-15).
         contributedComponents(SettingsSlot.MCP_TAB).forEach { add(it) }
     }
 }

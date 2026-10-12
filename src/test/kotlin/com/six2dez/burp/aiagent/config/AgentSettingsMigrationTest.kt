@@ -47,6 +47,22 @@ class AgentSettingsMigrationTest {
         assertEquals(5, prefs.integers["settings.schema.version"])
     }
 
+    /**
+     * Carried over from the retired ExternalMcpSettingsMigrationTest (29-15): a v4 install is stamped v5.
+     * The v5 branch only stamps the version; the external server blob it was added for belongs to the
+     * full build's external-MCP plug-in since 1.1.0, and the core never touches that key.
+     */
+    @Test
+    fun load_v4InstallIsStampedV5WithoutTouchingTheExternalServerKey() {
+        val prefs = InMemoryPrefs()
+        prefs.integers["settings.schema.version"] = 4
+
+        AgentSettingsRepository(apiWith(prefs.mock)).load()
+
+        assertEquals(5, prefs.integers["settings.schema.version"])
+        assertFalse(prefs.strings.containsKey("mcp.external.servers.v1"), "core creates no external server key")
+    }
+
     @Test
     fun load_v2InstallLoadsEmptyCustomPromptLibraryAndStampsV3() {
         val prefs = InMemoryPrefs()

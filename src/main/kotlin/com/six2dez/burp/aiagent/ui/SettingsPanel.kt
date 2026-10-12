@@ -18,7 +18,6 @@ import com.six2dez.burp.aiagent.ui.design.DesignTokens
 import com.six2dez.burp.aiagent.ui.design.applyAreaStyle
 import com.six2dez.burp.aiagent.ui.panels.BackendConfigPanel
 import com.six2dez.burp.aiagent.ui.panels.BackendConfigState
-import com.six2dez.burp.aiagent.ui.panels.ExternalServersPanel
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.JButton
 import javax.swing.JCheckBox
@@ -281,13 +280,6 @@ class SettingsPanel(
             it.isVisible = false
         }
 
-    // Phase 16-05: External MCP server CRUD panel. Receives plaintext bearerToken values from
-    // AgentSettings.loadExternalMcpServers(); returns plaintext on getServers() for persistence.
-    internal val externalServersPanel =
-        ExternalServersPanel(
-            initialServers = settings.mcpSettings.externalMcpServers,
-            stdioEnabled = settings.mcpSettings.stdioEnabled,
-        )
     internal val mcpEnabled = ToggleSwitch(settings.mcpSettings.enabled)
     internal val mcpHost =
         JTextField(settings.mcpSettings.host, 15).apply {

@@ -54,13 +54,19 @@ import javax.swing.table.TableCellRenderer
  *
  * Crypto contract: bearer tokens are held as PLAINTEXT in [JPasswordField] and in
  * [ExternalMcpServerConfig.bearerToken]. Encryption happens in
- * [AgentSettingsRepository.saveExternalMcpServers] at the persistence boundary — this panel
+ * [com.six2dez.burp.aiagent.full.external.ExternalMcpSettings] at the persistence boundary — this panel
  * never calls SecretCipher and never stores ENC1:-prefixed ciphertext.
+ *
+ * Phase 29 (NET-02, D-07): full build only. It reaches the MCP tab through
+ * [com.six2dez.burp.aiagent.full.external.ExternalMcpContribution].
  */
 class ExternalServersPanel(
     private val initialServers: List<ExternalMcpServerConfig> = emptyList(),
-    private val stdioEnabled: Boolean = false,
+    stdioEnabled: Boolean = false,
 ) {
+    // Declared first: the transport combo below is built from it during construction.
+    private var stdioEnabled: Boolean = stdioEnabled
+
     // ── Internal list of configured servers ─────────────────────────────────────────────────────
     private val servers: MutableList<ExternalMcpServerConfig> = initialServers.toMutableList()
 
@@ -249,13 +255,13 @@ class ExternalServersPanel(
 
     /**
      * Returns the current list for persistence. Each item has a PLAINTEXT [bearerToken] —
-     * encryption happens in [AgentSettingsRepository.saveExternalMcpServers].
+     * encryption happens in [com.six2dez.burp.aiagent.full.external.ExternalMcpSettings.save].
      */
     fun getServers(): List<ExternalMcpServerConfig> = servers.toList()
 
     /**
      * Replaces the internal list and refreshes the table. Items carry PLAINTEXT [bearerToken]
-     * values (decrypted by [AgentSettingsRepository.loadExternalMcpServers]).
+     * values (decrypted by [com.six2dez.burp.aiagent.full.external.ExternalMcpSettings.load]).
      */
     fun setServers(newServers: List<ExternalMcpServerConfig>) {
         servers.clear()
@@ -263,6 +269,18 @@ class ExternalServersPanel(
         tableModel.fireTableDataChanged()
         refreshEmptyState()
         updateServerCountLabel()
+    }
+
+    /**
+     * Phase 29 / 29-15: the MCP server's "Enable stdio" switch, forwarded after every core settings apply
+     * (ExternalMcpContribution.onCoreSettingsApplied). Rebuilds the transport choices, so stdio is offered
+     * only while it is enabled, and lets the open form re-evaluate which sub-panel it shows.
+     */
+    fun setStdioEnabled(enabled: Boolean) {
+        if (enabled == stdioEnabled) return
+        stdioEnabled = enabled
+        transportCombo.model = DefaultComboBoxModel(transportItems())
+        if (this::formCard.isInitialized) onTransportChanged()
     }
 
     // ── Table construction ───────────────────────────────────────────────────────────────────────
@@ -425,12 +443,12 @@ class ExternalServersPanel(
         }
     }
 
-    private fun buildTransportCombo(): JComboBox<String> {
-        val items = if (stdioEnabled) arrayOf("SSE", "stdio") else arrayOf("SSE")
-        return JComboBox<String>(DefaultComboBoxModel(items)).apply {
+    private fun buildTransportCombo(): JComboBox<String> =
+        JComboBox<String>(DefaultComboBoxModel(transportItems())).apply {
             font = DesignTokens.Typography.body
         }
-    }
+
+    private fun transportItems(): Array<String> = if (stdioEnabled) arrayOf("SSE", "stdio") else arrayOf("SSE")
 
     // ── Form logic ───────────────────────────────────────────────────────────────────────────────
 
@@ -603,7 +621,7 @@ class ExternalServersPanel(
                 }.toMap()
 
         // Bearer token is read as PLAINTEXT from the JPasswordField —
-        // encryption happens in AgentSettingsRepository.saveExternalMcpServers() at persist time.
+        // encryption happens in ExternalMcpSettings.save() at persist time.
         val bearerToken = String(tokenField.password).trim()
 
         val newConfig =

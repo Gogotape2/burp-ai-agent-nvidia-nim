@@ -103,7 +103,11 @@ class ExternalMcpSettingsTest {
     @Test
     fun blankAndTheEmptyArraySentinelLoadEmptyWithoutInvokingJackson() {
         var parses = 0
-        val counting = ExternalMcpSettings(store, { errors += it }) { parses++; listOf(SSE_SERVER) }
+        val counting =
+            ExternalMcpSettings(store, { errors += it }) {
+                parses++
+                listOf(SSE_SERVER)
+            }
 
         listOf(null, "", "   ", "[]", " [] ").forEach { stored ->
             if (stored == null) prefs.strings.remove(KEY) else prefs.strings[KEY] = stored
@@ -231,8 +235,7 @@ class ExternalMcpSettingsTest {
         }
     }
 
-    private fun SettingsContributionContext.copyWith(core: () -> com.six2dez.burp.aiagent.config.AgentSettings) =
-        SettingsContributionContext(api, store, core, dialogParent, testConnection)
+    private fun SettingsContributionContext.copyWith(core: () -> com.six2dez.burp.aiagent.config.AgentSettings) = SettingsContributionContext(api, store, core, dialogParent, testConnection)
 
     private fun transportCombo(root: Component): JComboBox<*> =
         descendants(root).filterIsInstance<JComboBox<*>>().single { combo ->
@@ -241,8 +244,7 @@ class ExternalMcpSettingsTest {
 
     private fun items(combo: JComboBox<*>): List<Any?> = (0 until combo.itemCount).map { combo.getItemAt(it) }
 
-    private fun descendants(root: Component): List<Component> =
-        listOf(root) + ((root as? Container)?.components?.flatMap { descendants(it) } ?: emptyList())
+    private fun descendants(root: Component): List<Component> = listOf(root) + ((root as? Container)?.components?.flatMap { descendants(it) } ?: emptyList())
 
     private fun onEdt(body: () -> Unit) = SwingUtilities.invokeAndWait(body)
 

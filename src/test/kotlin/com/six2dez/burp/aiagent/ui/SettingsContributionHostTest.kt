@@ -638,8 +638,11 @@ class SettingsContributionHostTest {
                 "anthropic",
             )
 
-        /** The core McpConfigPanel section and the External MCP Servers section. */
-        const val MCP_STACK_CORE_CHILDREN = 2
+        /**
+         * The core McpConfigPanel section. Since 29-15 the External MCP Servers section is the full build's
+         * MCP_TAB contribution (ExternalMcpContribution), so the store stack has one core child.
+         */
+        const val MCP_STACK_CORE_CHILDREN = 1
 
         /** "Scanner control", the Spacing.sm rigid area and "Scan parameters". */
         const val ACTIVE_BODY_CORE_CHILDREN = 3

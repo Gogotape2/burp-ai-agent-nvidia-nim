@@ -49,9 +49,6 @@ internal fun SettingsPanel.currentSettings(): AgentSettings {
             unsafeEnabled = mcpUnsafe.isSelected,
             // 07-03 D-03: persist the global MCP scope toggle on the McpSettings sub-object.
             scopeOnly = mcpScopeOnly.isSelected,
-            // Phase 16-05: external server list; bearerToken values are PLAINTEXT here —
-            // AgentSettingsRepository.saveExternalMcpServers() encrypts per-field at persist time.
-            externalMcpServers = externalServersPanel.getServers(),
         )
     val backendState = backendConfigPanel.currentBackendSettings()
     val ollamaTimeoutSeconds =
@@ -380,9 +377,6 @@ internal fun SettingsPanel.applySettingsToUi(
     mcpUnsafe.isSelected = updated.mcpSettings.unsafeEnabled
     // 07-03 D-03: keep the scope-only toggle in sync with persisted state.
     mcpScopeOnly.isSelected = updated.mcpSettings.scopeOnly
-    // Phase 16-05: refresh external server list; bearerToken values are PLAINTEXT (decrypted
-    // by AgentSettingsRepository.loadExternalMcpServers() before reaching here).
-    externalServersPanel.setServers(updated.mcpSettings.externalMcpServers)
     preprocessProxyHistory.isSelected = updated.preprocessProxyHistory
     preprocessMaxResponseSizeKb.value = updated.preprocessMaxResponseSizeKb
     preprocessFilterBinaryContent.isSelected = updated.preprocessFilterBinaryContent

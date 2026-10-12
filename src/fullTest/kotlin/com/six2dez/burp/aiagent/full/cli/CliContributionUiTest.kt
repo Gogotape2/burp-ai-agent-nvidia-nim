@@ -57,9 +57,9 @@ class CliContributionUiTest {
 
     @Test
     fun theFullBuildContributesSixBackendCardBlocks() {
-        val contributions = Plugins.load(SettingsContribution::class.java)
+        // 29-15 adds the External MCP Servers section on the MCP tab; the backend-card blocks are counted alone.
+        val contributions = Plugins.load(SettingsContribution::class.java).filter { it.slot == SettingsSlot.BACKEND_CARD }
         assertEquals(6, contributions.size, "5 CLI cards plus the Ollama CLI block, got ${contributions.map { it.javaClass.name }}")
-        assertTrue(contributions.all { it.slot == SettingsSlot.BACKEND_CARD })
         assertEquals(
             setOf("codex-cli", "gemini-cli", "opencode-cli", "claude-cli", "copilot-cli", "ollama"),
             contributions.mapNotNull { it.backendId }.toSet(),

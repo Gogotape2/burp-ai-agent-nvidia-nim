@@ -13,6 +13,7 @@ import com.six2dez.burp.aiagent.spi.BackendModelHint
 import com.six2dez.burp.aiagent.spi.PluginSettingsStore
 import com.six2dez.burp.aiagent.spi.Plugins
 import com.six2dez.burp.aiagent.spi.SettingsContribution
+import com.six2dez.burp.aiagent.spi.SettingsSlot
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
@@ -135,8 +136,8 @@ class CliSettingsTest {
         }
         assertEquals(
             CLI_IDS.mapNotNull { CliSettings.keyFor(it) }.toSet(),
-            contributions.flatMap { it.ownedKeys() }.toSet(),
-            "the six contributions own exactly the six 1.0.1 command keys",
+            contributions.filter { it.slot == SettingsSlot.BACKEND_CARD }.flatMap { it.ownedKeys() }.toSet(),
+            "the six CLI contributions own exactly the six 1.0.1 command keys",
         )
     }
 
