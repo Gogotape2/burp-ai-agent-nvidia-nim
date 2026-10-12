@@ -101,8 +101,10 @@ class McpToolTogglesPreservationTest {
         return defaults.copy(mcpSettings = defaults.mcpSettings.copy(toolToggles = toggles, enabledUnsafeTools = unsafe))
     }
 
-    private fun newRepository(prefs: InMemoryPreferences = InMemoryPreferences()): Pair<AgentSettingsRepository, InMemoryPreferences> =
-        AgentSettingsRepository(apiFor(prefs)) to prefs
+    private fun newRepository(): Pair<AgentSettingsRepository, InMemoryPreferences> {
+        val prefs = InMemoryPreferences()
+        return AgentSettingsRepository(apiFor(prefs)) to prefs
+    }
 
     private fun apiFor(prefs: InMemoryPreferences): MontoyaApi {
         val api = mock<MontoyaApi>(defaultAnswer = Answers.RETURNS_DEEP_STUBS)

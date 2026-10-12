@@ -6,6 +6,7 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.databind.json.JsonMapper
 import com.fasterxml.jackson.module.kotlin.KotlinModule
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
+import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.mcp.external.ExternalMcpServerConfig
 import com.six2dez.burp.aiagent.mcp.tools.ResponsePreprocessorSettings
 import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptCatalog
@@ -1442,8 +1443,18 @@ Response Language: English.
         )
         prefs.setBoolean(KEY_MCP_PROXY_HISTORY_NEWEST_FIRST, settings.proxyHistoryNewestFirst)
         prefs.setBoolean(KEY_MCP_ALLOW_UNPREPROCESSED_PROXY_HISTORY, settings.allowUnpreprocessedProxyHistory)
-        prefs.setString(KEY_MCP_TOOL_TOGGLES, McpSettings.serializeToolToggles(settings.toolToggles))
-        prefs.setString(KEY_MCP_UNSAFE_TOOLS, McpSettings.serializeUnsafeToolSet(settings.enabledUnsafeTools))
+        // Phase 29 (RESEARCH Pitfall 13, D-08): both flavors share this preferences node, and the settings UI
+        // only collects the tools of this build's catalog. Stored entries for ids the catalog does not have
+        // (the full build's generic tools, seen from the store build) are carried over unchanged, so a store
+        // save never destroys the full build's per-tool settings. Catalog ids take the new value. In the full
+        // build every tool id is in the catalog, so nothing changes there.
+        val catalogIds = McpToolCatalog.all().mapTo(HashSet()) { it.id }
+        val storedToggles = McpSettings.parseToolToggles(prefs.getString(KEY_MCP_TOOL_TOGGLES))
+        val toolToggles = settings.toolToggles + storedToggles.filterKeys { it !in catalogIds }
+        val storedUnsafeTools = McpSettings.parseUnsafeToolSet(prefs.getString(KEY_MCP_UNSAFE_TOOLS))
+        val unsafeTools = settings.enabledUnsafeTools + storedUnsafeTools.filterNot { it in catalogIds }
+        prefs.setString(KEY_MCP_TOOL_TOGGLES, McpSettings.serializeToolToggles(toolToggles))
+        prefs.setString(KEY_MCP_UNSAFE_TOOLS, McpSettings.serializeUnsafeToolSet(unsafeTools))
         prefs.setBoolean(KEY_MCP_UNSAFE, settings.unsafeEnabled)
         // 07-03 D-03: persist the global MCP scope toggle.
         prefs.setBoolean(KEY_MCP_SCOPE_ONLY, settings.scopeOnly)
