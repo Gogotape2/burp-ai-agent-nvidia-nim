@@ -1,126 +1,13 @@
 package com.six2dez.burp.aiagent.backends.http
 
-import com.six2dez.burp.aiagent.backends.HealthCheckResult
 import com.six2dez.burp.aiagent.config.Defaults
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import java.io.EOFException
-import java.net.ProxySelector
-import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedDeque
 
 object HttpBackendSupport {
     const val CIRCUIT_FAILURE_THRESHOLD: Int = 5
     const val CIRCUIT_RESET_TIMEOUT_MS: Long = 30_000
     const val CIRCUIT_HALF_OPEN_MAX_ATTEMPTS: Int = 1
-
-    /** Max idle time before a cached client is eligible for eviction */
-    private const val CLIENT_EVICTION_AGE_MS: Long = 10 * 60 * 1000 // 10 minutes
-
-    private data class ClientKey(
-        val baseUrl: String,
-        val timeoutSeconds: Long,
-    )
-
-    private data class ClientEntry(
-        val client: OkHttpClient,
-        @Volatile var lastUsedAt: Long = System.currentTimeMillis(),
-    )
-
-    private val sharedClients = ConcurrentHashMap<ClientKey, ClientEntry>()
-
-    /**
-     * OkHttp client for unit tests only; does NOT honor Burp's upstream proxy config.
-     *
-     * Production code MUST go through [MontoyaHttpTransport] (constructed by
-     * `AgentSupervisor.httpTransport` and injected via `BackendLaunchConfig.transport`).
-     * Tests construct backends with `transport = null`, which is the path that reaches this
-     * client. The `ProxySelector.getDefault()` line only reads JVM system properties — Burp's
-     * own upstream proxy lives in Burp state and is only honored by `MontoyaHttpTransport`,
-     * so reaching this client from a real Burp session would silently bypass the user's proxy
-     * chain (the exact bug closed by issue #69).
-     */
-    fun buildClient(timeoutSeconds: Long): OkHttpClient =
-        OkHttpClient
-            .Builder()
-            .connectTimeout(java.time.Duration.ofSeconds(10))
-            .writeTimeout(java.time.Duration.ofSeconds(30))
-            .readTimeout(java.time.Duration.ofSeconds(timeoutSeconds))
-            .callTimeout(java.time.Duration.ofSeconds(timeoutSeconds))
-            .proxySelector(ProxySelector.getDefault() ?: ProxySelector.of(null))
-            .build()
-
-    fun sharedClient(
-        baseUrl: String?,
-        timeoutSeconds: Long,
-    ): OkHttpClient {
-        val safeTimeout = timeoutSeconds.coerceIn(5L, 3600L)
-        val key =
-            ClientKey(
-                baseUrl = baseUrl.orEmpty().trim().lowercase(),
-                timeoutSeconds = safeTimeout,
-            )
-        val entry = sharedClients.computeIfAbsent(key) { ClientEntry(buildClient(safeTimeout)) }
-        entry.lastUsedAt = System.currentTimeMillis()
-        // Opportunistic eviction of stale clients
-        evictStaleClients()
-        return entry.client
-    }
-
-    fun shutdownSharedClients() {
-        val entries = sharedClients.values.toList()
-        sharedClients.clear()
-        entries.forEach { entry ->
-            entry.client.dispatcher.executorService
-                .shutdown()
-            entry.client.connectionPool.evictAll()
-            entry.client.cache?.close()
-        }
-    }
-
-    /** Evict clients not used in the last CLIENT_EVICTION_AGE_MS */
-    private fun evictStaleClients() {
-        val now = System.currentTimeMillis()
-        val iterator = sharedClients.entries.iterator()
-        while (iterator.hasNext()) {
-            val (_, entry) = iterator.next()
-            if (now - entry.lastUsedAt > CLIENT_EVICTION_AGE_MS) {
-                iterator.remove()
-                try {
-                    entry.client.connectionPool.evictAll()
-                    entry.client.dispatcher.executorService
-                        .shutdown()
-                } catch (_: Exception) {
-                }
-            }
-        }
-    }
-
-    fun healthCheckGet(
-        url: String,
-        headers: Map<String, String>,
-        timeoutSeconds: Long = 3L,
-    ): HealthCheckResult =
-        try {
-            val client = sharedClient(url, timeoutSeconds.coerceAtLeast(1L))
-            val request =
-                Request
-                    .Builder()
-                    .url(url)
-                    .apply { headers.forEach { (name, value) -> header(name, value) } }
-                    .get()
-                    .build()
-            client.newCall(request).execute().use { response ->
-                when {
-                    response.isSuccessful -> HealthCheckResult.Healthy
-                    response.code == 401 || response.code == 403 ->
-                        HealthCheckResult.Degraded("Endpoint reachable but authentication failed (HTTP ${response.code}).")
-                    else -> HealthCheckResult.Unavailable("HTTP ${response.code}.")
-                }
-            }
-        } catch (e: Exception) {
-            HealthCheckResult.Unavailable(e.message ?: "Request failed")
-        }
 
     fun isRetryableConnectionError(e: Exception): Boolean {
         // Phase 31 / GATE-01 (Pitfall 3): a refusal is a policy outcome; a message that happens to say

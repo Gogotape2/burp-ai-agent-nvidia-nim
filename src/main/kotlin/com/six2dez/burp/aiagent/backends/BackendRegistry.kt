@@ -3,7 +3,6 @@ package com.six2dez.burp.aiagent.backends
 import burp.api.montoya.MontoyaApi
 import com.six2dez.burp.aiagent.backends.anthropic.AnthropicBackendFactory
 import com.six2dez.burp.aiagent.backends.burpai.BurpAiBackend
-import com.six2dez.burp.aiagent.backends.http.HttpBackendSupport
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
 import com.six2dez.burp.aiagent.backends.lmstudio.LmStudioBackendFactory
 import com.six2dez.burp.aiagent.backends.nvidia.NvidiaNimBackendFactory
@@ -226,7 +225,6 @@ class BackendRegistry(
         backends.clear()
         availabilityCache.clear()
         externalSources.forEach { source -> guardedSource(source) { source.close() } }
-        HttpBackendSupport.shutdownSharedClients()
     }
 
     private fun applyHttpTransport() {

@@ -42,8 +42,9 @@ import java.util.concurrent.atomic.AtomicReference
  *   (d) Phase 31 / NET-01: healthCheck() with no transport in OpenAi-compatible / LmStudio / Ollama
  *       returns Unavailable([MontoyaHttpTransport.TRANSPORT_UNAVAILABLE]) and opens no socket: there is
  *       no direct-client fallback, so tests go through MontoyaHttpTransport like production does;
- *   (e) HttpBackendSupport.buildClient KDoc declares the unit-test-only fact and removes the
- *       misleading "respects Burp/JVM proxy config" claim — source-string guard.
+ *   (e) Phase 31 / NET-01: HttpBackendSupport holds no HTTP client: it declares no healthCheckGet and
+ *       imports no OkHttp, so MontoyaHttpTransport is the only way a backend reaches the network —
+ *       source-string guard.
  */
 class HttpBackendTransportRoutingTest {
     @Test
@@ -220,19 +221,22 @@ class HttpBackendTransportRoutingTest {
     }
 
     @Test
-    fun `buildClient KDoc declares test-only and does not claim proxy honoring`() {
-        // Source-string guard: read the .kt file directly from the project tree. This is the
-        // simplest, most direct way to enforce the comment fix per the plan's behavior block.
-        // SourceRoots.file walks up from user.dir to the project and fails naming both production roots
-        // when the file is in neither or in both.
+    fun httpBackendSupportHoldsNoHttpClient() {
+        // Source-string guard: read the .kt file directly from the project tree. SourceRoots.file walks up
+        // from user.dir to the project and fails naming both production roots when the file is in neither
+        // or in both.
         val source = SourceRoots.file("com/six2dez/burp/aiagent/backends/http/HttpBackendSupport.kt").readText()
         assertTrue(
-            source.contains("OkHttp client for unit tests only"),
-            "Expected truthful KDoc 'OkHttp client for unit tests only' in HttpBackendSupport.kt",
+            source.contains("object HttpBackendSupport"),
+            "Expected HttpBackendSupport.kt to declare object HttpBackendSupport; the guard would read the wrong file",
         )
         assertFalse(
-            source.contains("respects Burp/JVM proxy config"),
-            "Expected misleading KDoc 'respects Burp/JVM proxy config' to be removed",
+            Regex("""\bfun\s+healthCheckGet\b""").containsMatchIn(source),
+            "HttpBackendSupport must not declare healthCheckGet: health checks go through MontoyaHttpTransport",
+        )
+        assertFalse(
+            Regex("""^\s*import\s+(okhttp3|okio)\.""", RegexOption.MULTILINE).containsMatchIn(source),
+            "HttpBackendSupport must not import OkHttp or Okio (Phase 31 / NET-01)",
         )
     }
 
