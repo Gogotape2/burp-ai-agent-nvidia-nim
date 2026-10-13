@@ -123,6 +123,9 @@ object HttpBackendSupport {
         }
 
     fun isRetryableConnectionError(e: Exception): Boolean {
+        // Phase 31 / GATE-01 (Pitfall 3): a refusal is a policy outcome; a message that happens to say
+        // "timeout" must never be retried six times or trip the circuit breaker.
+        if (e is AiAccessRefusedException) return false
         if (e is EOFException) return true
         if (e is java.net.ConnectException || e is java.net.SocketTimeoutException) return true
         if (e is java.net.SocketException) return true
