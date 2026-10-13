@@ -40,19 +40,36 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   runtime dependencies, which include every dependency of the BApp Store build at the version the
   BApp Store JAR packages, plus libraries only the full build ships. CI and the release fail if the
   two builds resolve a shared dependency to different versions.
+- **The AI scanners start OFF at every load, in both builds** - the passive and active AI scanners
+  no longer resume at load; switching one on lasts until Burp unloads the extension. The values a
+  1.0.1 install saved are left untouched, so a downgrade still reads them. This is a deliberate
+  change for full-build users too.
+- **The BApp Store build checks Burp's "Use AI" on every request** - one check in Burp's networking
+  layer refuses any AI request, Burp AI included, while "Use AI" is off. The refusal is shown in the
+  chat, on the status pill ("AI disabled in Burp"), in the scanner panel ("Paused: Use AI is off")
+  and as an MCP tool error.
+- **Health checks on demand in the BApp Store build** - no startup check and no timer. The pill
+  reads "Not checked · click to test" until Save, a backend change, a click on the pill, Test
+  connection or the first chat message checks it. The full build keeps its startup check and local
+  polling.
+- **MCP `ai_analyze` and `ai_passive_scan`** return an MCP tool error with the reason while "Use AI"
+  is off, in both builds, and stay in the tool list.
+- **Unsafe mode** is shown disabled with "No unsafe tools in this build" when the build has no
+  unsafe tools.
+- **Drop-in backend JARs** in `~/.burp-ai-agent/backends` load in the full build only. The BApp
+  Store build never creates, lists or loads that directory.
+- **OkHttp removed** - every AI request goes through Burp's networking in both builds, and neither
+  JAR ships OkHttp.
+- **Ollama** asks for the model's context window on the first message instead of at backend start.
+- **Bundled agent profiles** name only the built-in tools and point the model at the session's tool
+  catalog. Profiles an earlier version installed in `~/.burp-ai-agent/AGENTS` are kept as they are,
+  so an existing install keeps its old copies until you delete them.
 
 ### Removed
 
 - Dead code with no caller: the legacy MCP tool registrar and its helpers, the unwired `Alerting`
   webhook client, the interactive PTY CLI connection, and the auto-restart health monitor with its
   "auto-restart" setting.
-
-### Known limitations
-
-- Both builds still load drop-in backend JARs from `~/.burp-ai-agent/backends`, so the store build
-  can run backend code that is not part of its JAR.
-- The bundled agent profiles still mention generic MCP tools that the BApp Store build does not
-  offer; calls to them are refused as unknown tools.
 
 ## [1.0.1] - 2026-10-09
 
