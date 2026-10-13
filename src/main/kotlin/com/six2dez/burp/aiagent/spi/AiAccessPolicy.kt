@@ -22,6 +22,14 @@ interface AiAccessPolicy {
         backendId: String,
         burpAiEnabled: Boolean,
     ): String?
+
+    /**
+     * Phase 31 / D-09, D-11 — whether health checks nobody asked for may run: the startup check and
+     * the local-backend timer. The default is the strict answer, which is what the BApp Store build
+     * and a missing or duplicate provider get: every check then follows a user action (Save, a
+     * backend change, a pill click, Test connection).
+     */
+    fun allowsUnpromptedHealthChecks(): Boolean = false
 }
 
 /**

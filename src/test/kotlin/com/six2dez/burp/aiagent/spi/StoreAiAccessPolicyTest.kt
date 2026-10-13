@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.spi
 
+import com.six2dez.burp.aiagent.resolveAiAccessPolicy
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
@@ -36,6 +37,32 @@ class StoreAiAccessPolicyTest {
     fun refusalTellsTheUserToTurnOnBurpsUseAiSetting() {
         val refusal = policy.refusal("ollama", burpAiEnabled = false).orEmpty()
         assertTrue(refusal.contains("'Use AI'"), "the refusal must name the setting to change: $refusal")
+    }
+
+    /** Phase 31 / D-09, D-11, T-31-12 — unprompted health checks are strict by default. */
+    @Test
+    fun theStorePolicyForbidsUnpromptedHealthChecks() {
+        assertFalse(policy.allowsUnpromptedHealthChecks())
+    }
+
+    @Test
+    fun aPolicyThatDoesNotAnswerForbidsUnpromptedHealthChecks() {
+        val silent =
+            object : AiAccessPolicy {
+                override fun refusal(
+                    backendId: String,
+                    burpAiEnabled: Boolean,
+                ): String? = null
+            }
+        assertFalse(silent.allowsUnpromptedHealthChecks(), "the interface default must be the strict answer")
+    }
+
+    @Test
+    fun theStoreClasspathResolvesAPolicyThatForbidsUnpromptedHealthChecks() {
+        val conflicts = mutableListOf<List<String>>()
+        val resolved = resolveAiAccessPolicy { conflicts += it }
+        assertTrue(conflicts.isEmpty(), "no provider is registered on the store classpath: $conflicts")
+        assertFalse(resolved.allowsUnpromptedHealthChecks(), "got ${resolved.javaClass.name}")
     }
 
     private companion object {

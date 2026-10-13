@@ -93,6 +93,15 @@ class BurpAiGateScopingTest {
         assertEquals(false, newSupervisor(burpAiEnabled = false).isAiEnabled())
     }
 
+    /** Phase 31 / D-11 — the full build keeps its startup check and local-backend polling. */
+    @Test
+    fun theFullPolicyAllowsUnpromptedHealthChecks() {
+        assertTrue(FullAiAccessPolicy().allowsUnpromptedHealthChecks())
+        assertTrue(resolveAiAccessPolicy().allowsUnpromptedHealthChecks(), "the ServiceLoader-resolved policy")
+        assertTrue(newSupervisor(burpAiEnabled = false).allowsUnpromptedHealthChecks(), "the supervisor delegates")
+        assertTrue(newSupervisor(burpAiEnabled = true).allowsUnpromptedHealthChecks())
+    }
+
     private fun newSupervisor(burpAiEnabled: Boolean): AgentSupervisor {
         val api = mock<MontoyaApi>(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
         whenever(api.ai().isEnabled()).thenReturn(burpAiEnabled)

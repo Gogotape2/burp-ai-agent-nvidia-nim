@@ -123,6 +123,13 @@ class AgentSupervisor(
     fun aiAccessRefusal(backendId: String): String? = aiAccessPolicy.refusal(backendId, isAiEnabled())
 
     /**
+     * Phase 31 / D-09, D-11 — whether the injected [AiAccessPolicy] lets the status pill run checks
+     * nobody asked for (the startup check and the local-backend timer). MainTab creates its health
+     * timer only when this is true.
+     */
+    fun allowsUnpromptedHealthChecks(): Boolean = aiAccessPolicy.allowsUnpromptedHealthChecks()
+
+    /**
      * `true` iff a backend is running AND the [AiAccessPolicy] currently refuses it. Returns false
      * when no backend is running. Background scanners use this to skip work that would fail at send
      * time.

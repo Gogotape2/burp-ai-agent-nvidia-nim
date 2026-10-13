@@ -497,6 +497,49 @@ class SettingsPersistQueueTest {
         )
     }
 
+    /**
+     * Phase 31 / D-09, D-11, T-31-11 — the status-pill health timer exists only when the injected
+     * policy allows unprompted checks, so an idle BApp Store build has no timer and no health tick.
+     *
+     * Structural for the reason above (a real `MainTab` cannot be built headlessly). On MainTab's
+     * comment-stripped code: the timer is constructed exactly once, inside
+     * `startUnpromptedHealthTimerIfAllowed`, whose first statement is the policy guard, and the two
+     * unprompted trigger names occur nowhere else, so no other path can start a STARTUP or PERIODIC
+     * check.
+     */
+    @Test
+    fun theHealthTimerExistsOnlyWhenThePolicyAllowsUnpromptedChecks() {
+        val code = codeLinesOf(MAIN_TAB_SOURCE)
+        val source = code.joinToString("\n")
+        val body = functionBodyOf(source, "private fun startUnpromptedHealthTimerIfAllowed(")
+
+        val timerToken = "Timer(Defaults.LOCAL_BACKEND_HEALTH_POLL_INTERVAL_MS"
+        assertEquals(1, code.count { it.contains(timerToken) }, "MainTab must construct the health timer exactly once.")
+        assertTrue(body.contains(timerToken), "The health timer must be constructed inside startUnpromptedHealthTimerIfAllowed.")
+        assertTrue(
+            body.removePrefix("{").trimStart().startsWith("if (!supervisor.allowsUnpromptedHealthChecks()) return"),
+            "startUnpromptedHealthTimerIfAllowed must start with the allowsUnpromptedHealthChecks guard; body:\n$body",
+        )
+        listOf("HealthCheckTrigger.STARTUP", "HealthCheckTrigger.PERIODIC").forEach { trigger ->
+            assertEquals(
+                occurrencesOf(body, trigger),
+                occurrencesOf(source, trigger),
+                "$trigger may occur only inside startUnpromptedHealthTimerIfAllowed.",
+            )
+            assertTrue(body.contains(trigger), "$trigger must still be raised by the timer body.")
+        }
+        assertEquals(
+            1,
+            code.count { it.contains("startUnpromptedHealthTimerIfAllowed()") && !it.contains("private fun") },
+            "startUnpromptedHealthTimerIfAllowed must be called exactly once, where the timer used to be created.",
+        )
+        val request = functionBodyOf(source, "private fun requestHealthCheck(")
+        assertTrue(
+            request.contains("supervisor.allowsUnpromptedHealthChecks()"),
+            "requestHealthCheck must pass the policy's answer to BackendHealthPolicy.shouldRun.",
+        )
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Fixture
     // ---------------------------------------------------------------------------------------------
@@ -556,6 +599,20 @@ class SettingsPersistQueueTest {
             index++
         }
         error("Unbalanced braces after `$signature`.")
+    }
+
+    /** How many times [needle] occurs in [haystack] (non-overlapping). */
+    private fun occurrencesOf(
+        haystack: String,
+        needle: String,
+    ): Int {
+        var count = 0
+        var index = haystack.indexOf(needle)
+        while (index >= 0) {
+            count++
+            index = haystack.indexOf(needle, index + needle.length)
+        }
+        return count
     }
 
     private companion object {

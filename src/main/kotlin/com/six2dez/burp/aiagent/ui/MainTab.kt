@@ -81,7 +81,7 @@ class MainTab(
     private val backendLabel = JLabel("Backend")
     private val mcpLabel = JLabel("MCP")
     private val mcpStatusLabel = JLabel("MCP: -")
-    private val backendStatusLabel = JLabel("AI: ?")
+    private val backendStatusLabel = JLabel(BackendPill.idleText(supervisor.allowsUnpromptedHealthChecks()))
     private val activeScanStatsLabel = JLabel("Scans: 0 | Vulns: 0")
     private val safetyIndicator =
         com.six2dez.burp.aiagent.ui.components
@@ -129,7 +129,8 @@ class MainTab(
             SwingUtilities.invokeLater { requestHealthCheck(HealthCheckTrigger.SETTINGS_CHANGED) }
         }
 
-    // EDT-confined: the first timer tick is the startup check (remote providers included).
+    // EDT-confined: the first timer tick is the startup check (remote providers included). The timer
+    // exists only when the injected policy allows unprompted checks (D-09/D-11).
     private var startupHealthCheckDone = false
     private var sessionPersistTimer: Timer? = null
     private var lastProjectId: String? = null
@@ -236,14 +237,7 @@ class MainTab(
                 }
             },
         )
-        // First tick = startup check for every backend; later ticks poll local backends only.
-        healthTimer =
-            Timer(Defaults.LOCAL_BACKEND_HEALTH_POLL_INTERVAL_MS.toInt()) {
-                val trigger = if (startupHealthCheckDone) HealthCheckTrigger.PERIODIC else HealthCheckTrigger.STARTUP
-                startupHealthCheckDone = true
-                requestHealthCheck(trigger)
-            }.apply { initialDelay = Defaults.BACKEND_HEALTH_STARTUP_CHECK_DELAY_MS.toInt() }
-        healthTimer?.start()
+        startUnpromptedHealthTimerIfAllowed()
 
         val passiveLabel = JLabel("Passive")
         passiveLabel.font = UiTheme.Typography.body
@@ -575,8 +569,8 @@ class MainTab(
         val settings = settingsRepo.load()
         // The supervisor checks the resolved backend (burp-ai for an unregistered saved id), so does the policy.
         val backend = backends.get(backends.resolve(settings.preferredBackendId))
-        if (!BackendHealthPolicy.shouldRun(trigger, settings, backend)) return
-        healthGate.submit(coalesce = trigger != HealthCheckTrigger.PERIODIC) {
+        if (!BackendHealthPolicy.shouldRun(trigger, settings, backend, supervisor.allowsUnpromptedHealthChecks())) return
+        healthGate.submit(coalesce = BackendHealthPolicy.coalesces(trigger)) {
             val health =
                 try {
                     supervisor.backendHealth(settings)
@@ -586,6 +580,24 @@ class MainTab(
             val checkedAt = LocalTime.now()
             SwingUtilities.invokeLater { renderBackendHealth(health, checkedAt) }
         }
+    }
+
+    /**
+     * EDT only. Phase 31 / D-09, D-11 — creates and starts the status-pill health timer, but only when
+     * the injected policy allows checks nobody asked for. The BApp Store build therefore has no health
+     * timer and no health tick while idle; its checks run on Save, a backend change, a pill click and
+     * Test connection. In the full build the first tick is the startup check for every backend and
+     * later ticks poll local backends only (the 1.0.1 behaviour).
+     */
+    private fun startUnpromptedHealthTimerIfAllowed() {
+        if (!supervisor.allowsUnpromptedHealthChecks()) return
+        healthTimer =
+            Timer(Defaults.LOCAL_BACKEND_HEALTH_POLL_INTERVAL_MS.toInt()) {
+                val trigger = if (startupHealthCheckDone) HealthCheckTrigger.PERIODIC else HealthCheckTrigger.STARTUP
+                startupHealthCheckDone = true
+                requestHealthCheck(trigger)
+            }.apply { initialDelay = Defaults.BACKEND_HEALTH_STARTUP_CHECK_DELAY_MS.toInt() }
+        healthTimer?.start()
     }
 
     private fun renderBackendHealth(

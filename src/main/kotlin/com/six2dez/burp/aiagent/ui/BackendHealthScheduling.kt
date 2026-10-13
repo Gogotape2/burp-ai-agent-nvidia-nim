@@ -26,7 +26,8 @@ enum class HealthCheckTrigger { STARTUP, PERIODIC, SETTINGS_CHANGED, USER_CLICK 
  * (and used to be a billable completion), so they are checked only at startup, after a settings or
  * backend change, and when the user clicks the pill. Local backends (a backend whose health check
  * is local, such as Burp AI or a CLI process probe, and HTTP servers on a loopback literal) are cheap
- * to probe and may be polled.
+ * to probe and may be polled. Both the startup check and the timer exist only when the injected
+ * policy allows unprompted checks (Phase 31 / D-09, D-11); otherwise every check follows a user action.
  */
 internal object BackendHealthPolicy {
     /**
@@ -52,16 +53,54 @@ internal object BackendHealthPolicy {
         return url.isNotBlank() && LoopbackHost.isLoopbackUrl(url)
     }
 
+    /**
+     * Whether [trigger] may run a check against [backend].
+     *
+     * [unpromptedAllowed] is the injected policy's answer to "may checks nobody asked for run?"
+     * (`AiAccessPolicy.allowsUnpromptedHealthChecks`). When it is false (the BApp Store build, D-09),
+     * STARTUP and PERIODIC never run, loopback backends included, so an idle build sends no health
+     * request. SETTINGS_CHANGED and USER_CLICK follow a user action and always run. When it is true
+     * (the full build, D-11), STARTUP runs for every backend and PERIODIC only for local ones.
+     */
     fun shouldRun(
         trigger: HealthCheckTrigger,
         settings: AgentSettings,
         backend: AiBackend?,
-    ): Boolean = trigger != HealthCheckTrigger.PERIODIC || isLocal(settings, backend)
+        unpromptedAllowed: Boolean,
+    ): Boolean =
+        when (trigger) {
+            HealthCheckTrigger.STARTUP -> unpromptedAllowed
+            HealthCheckTrigger.PERIODIC -> unpromptedAllowed && isLocal(settings, backend)
+            HealthCheckTrigger.SETTINGS_CHANGED, HealthCheckTrigger.USER_CLICK -> true
+        }
+
+    /**
+     * Whether a [trigger] that lands while a check is in flight asks [SingleFlightGate] for one re-run.
+     * A timer tick does not (the next tick is the re-run); every other trigger does, so a Save or a
+     * click mid-check still produces a fresh result.
+     */
+    fun coalesces(trigger: HealthCheckTrigger): Boolean = trigger != HealthCheckTrigger.PERIODIC
 
     fun tooltip(
         message: String,
         checkedAt: LocalTime,
     ): String = "$message Last checked ${checkedAt.format(checkedAtFormatter)}. Click to re-check."
+}
+
+/**
+ * Phase 31 / D-10 — the AI status pill's texts that no health check produced.
+ *
+ * Before any check runs the pill shows [idleText]: "Not checked · click to test" when the injected
+ * policy forbids unprompted checks (nothing will check until the user acts), otherwise the legacy
+ * "AI: ?" (the startup check is about to replace it). [AI_DISABLED] is painted from a local policy
+ * read when the selected backend is refused, with no request.
+ */
+internal object BackendPill {
+    const val NOT_CHECKED = "Not checked · click to test"
+    const val AI_DISABLED = "AI disabled in Burp"
+    const val UNCHECKED_LEGACY = "AI: ?"
+
+    fun idleText(unpromptedAllowed: Boolean): String = if (unpromptedAllowed) UNCHECKED_LEGACY else NOT_CHECKED
 }
 
 /**
