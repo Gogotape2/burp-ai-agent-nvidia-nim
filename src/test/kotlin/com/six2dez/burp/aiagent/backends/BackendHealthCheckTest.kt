@@ -2,6 +2,8 @@ package com.six2dez.burp.aiagent.backends
 
 import burp.api.montoya.MontoyaApi
 import burp.api.montoya.logging.Logging
+import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
+import com.six2dez.burp.aiagent.backends.http.TestTransports
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.McpSettings
 import com.six2dez.burp.aiagent.config.SeverityLevel
@@ -60,6 +62,40 @@ class BackendHealthCheckTest {
     }
 
     @Test
+    fun anUnknownHealthIsTheGateRefusalWhenTheTransportRefuses() {
+        // Phase 31 / GATE-01 (Pitfall 4): Anthropic-style Unknown must not read "Connection OK."
+        // while the egress gate refuses.
+        val registry = createRegistry { api -> TestTransports.refusing(api, REFUSAL) }
+        val map = backendsField(registry)
+        map.clear()
+        map["ok"] = FakeBackend(id = "ok", health = HealthCheckResult.Unknown, available = true)
+
+        assertEquals(HealthCheckResult.Unavailable(REFUSAL), registry.healthCheck("ok", baselineSettings()))
+    }
+
+    @Test
+    fun anUnknownHealthIsUnavailableWhenNoTransportWasEverSet() {
+        val registry = createRegistry { null }
+        val map = backendsField(registry)
+        map.clear()
+        map["ok"] = FakeBackend(id = "ok", health = HealthCheckResult.Unknown, available = true)
+
+        val result = registry.healthCheck("ok", baselineSettings())
+        assertTrue(result is HealthCheckResult.Unavailable, "expected Unavailable, got $result")
+        assertTrue((result as HealthCheckResult.Unavailable).message.contains("MontoyaHttpTransport unavailable"))
+    }
+
+    @Test
+    fun aRefusingTransportLeavesNonUnknownResultsUntouched() {
+        val registry = createRegistry { api -> TestTransports.refusing(api, REFUSAL) }
+        val map = backendsField(registry)
+        map.clear()
+        map["degraded"] = FakeBackend(id = "degraded", health = HealthCheckResult.Degraded("Auth token rejected."), available = true)
+
+        assertEquals(HealthCheckResult.Degraded("Auth token rejected."), registry.healthCheck("degraded", baselineSettings()))
+    }
+
+    @Test
     fun healthCheckReturnsUnavailableForMissingBackend() {
         val registry = createRegistry()
         val result = registry.healthCheck("does-not-exist", baselineSettings())
@@ -67,11 +103,14 @@ class BackendHealthCheckTest {
         assertTrue((result as HealthCheckResult.Unavailable).message.contains("does-not-exist"))
     }
 
-    private fun createRegistry(): BackendRegistry {
+    // Defaults to an allowing transport, so the Unknown mapping tests keep their pre-Phase-31 meaning.
+    private fun createRegistry(transport: (MontoyaApi) -> MontoyaHttpTransport? = { TestTransports.open(it) }): BackendRegistry {
         val api = mock<MontoyaApi>()
         val logging = mock<Logging>()
         whenever(api.logging()).thenReturn(logging)
-        return BackendRegistry(api)
+        val registry = BackendRegistry(api)
+        transport(api)?.let { registry.setHttpTransport(it) }
+        return registry
     }
 
     @Suppress("UNCHECKED_CAST")
@@ -157,6 +196,10 @@ class BackendHealthCheckTest {
             bountyPromptIssueConfidenceThreshold = 90,
             bountyPromptEnabledPromptIds = emptySet(),
         )
+
+    private companion object {
+        const val REFUSAL = "refused by the test gate"
+    }
 
     private class FakeBackend(
         override val id: String,
