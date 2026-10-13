@@ -1,0 +1,2 @@
+# The BApp Store manifest must stay LF on every OS (BappManifestTest checks the bytes).
+BappManifest.bmf text eol=lf
