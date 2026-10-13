@@ -173,7 +173,7 @@ object ChatPanelTestHarness {
                 ensureBackendReady = { true },
                 showError = { message -> shownErrors.add(message) },
                 onStatusChanged = { },
-                onResponseReady = { },
+                onTurnSettled = { backendId, error -> turnOutcomes.add(backendId to error) },
                 passiveScanner = null,
             )
         panel.createNewSession()

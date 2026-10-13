@@ -166,7 +166,7 @@ class MainTab(
                 ensureBackendReady = { ensureBackendReady(it) },
                 showError = { showError(it) },
                 onStatusChanged = { refreshStatus() },
-                onResponseReady = { notifyResponseReady() },
+                onTurnSettled = { backendId, error -> onChatTurnSettled(backendId, error) },
                 // CAP-04: thread scanner reference so ChatPanel can call setBudgetPaused(true) on hard cap
                 passiveScanner = passiveAiScanner,
             )
@@ -424,6 +424,28 @@ class MainTab(
                 settingsPanel.updateUsageSummary(chatPanel.usageStats())
             }
         sessionPersistTimer?.start()
+    }
+
+    /**
+     * EDT only. Phase 31 / D-09 — paints the status pill from a chat turn that already happened, so the
+     * first send is also the first health signal and no extra request is made. Only a turn on the
+     * selected (resolved) backend repaints the pill (T-31-37): a refusal shows "AI disabled in Burp"
+     * with the policy's own text, otherwise the turn's outcome ("AI: OK" or "AI: Offline" with the
+     * error). A delivered turn also refreshes the usage summary and the tab attention.
+     */
+    private fun onChatTurnSettled(
+        backendId: String,
+        error: Throwable?,
+    ) {
+        // Both sides resolved: a saved id the registry does not know (a CLI id from a full install) runs as burp-ai.
+        if (backends.resolve(backendId) == backends.resolve(settingsRepo.load().preferredBackendId)) {
+            if (BackendPill.isRefusal(error)) {
+                renderAiDisabled(error?.message.orEmpty())
+            } else {
+                renderBackendHealth(BackendPill.healthOfTurn(error), LocalTime.now())
+            }
+        }
+        if (error == null) notifyResponseReady()
     }
 
     private fun notifyResponseReady() {

@@ -7,6 +7,7 @@ import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.backends.AgentConnection
 import com.six2dez.burp.aiagent.backends.ChatMessage
 import com.six2dez.burp.aiagent.backends.UsageAwareConnection
+import com.six2dez.burp.aiagent.backends.http.AiAccessRefusedException
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.context.ContextCapture
@@ -121,7 +122,12 @@ class ChatPanel(
     private val ensureBackendReady: (AgentSettings) -> Boolean,
     private val showError: (String) -> Unit,
     private val onStatusChanged: () -> Unit,
-    private val onResponseReady: () -> Unit,
+    /**
+     * Phase 31 / D-09: called on the EDT once per settled chat turn with the turn's backend id and its
+     * outcome (null when the backend answered, the error otherwise, an [AiAccessRefusedException] when
+     * the policy refused the send). MainTab paints the status pill from it, so no extra request is made.
+     */
+    private val onTurnSettled: (backendId: String, error: Throwable?) -> Unit,
     // CAP-04: injected to call setBudgetPaused(true) when hard cap is reached
     private val passiveScanner: PassiveAiScanner? = null,
 ) {
@@ -623,7 +629,9 @@ class ChatPanel(
         updatePrivacyPill()
         val accessRefusal = supervisor.aiAccessRefusal(settings.preferredBackendId)
         if (accessRefusal != null) {
-            showError(accessRefusal)
+            // Phase 31 / D-01 (b): the refusal is explained inline with the policy's own text, not in a dialog.
+            sessionPanels[sessionId]?.addMessage("AI", accessRefusal)
+            onTurnSettled(settings.preferredBackendId, AiAccessRefusedException(accessRefusal))
             return
         }
         if (!ensureBackendReady(settings)) return
@@ -799,7 +807,10 @@ class ChatPanel(
                         session.totalTokensOut += tokOut
                     }
                     if (err != null) {
-                        SwingUtilities.invokeLater { assistant.finish("\n[Error] ${err.message}") }
+                        SwingUtilities.invokeLater {
+                            assistant.finish("\n[Error] ${err.message}")
+                            onTurnSettled(backendId, err)
+                        }
                         onCompleted?.invoke(responseBuffer.toString(), err)
                     } else {
                         val finalResp = responseBuffer.toString()
@@ -810,7 +821,7 @@ class ChatPanel(
                         SwingUtilities.invokeLater {
                             assistant.append("\n")
                             refreshSessionList()
-                            onResponseReady()
+                            onTurnSettled(backendId, null)
                         }
                         // REL-01: maybeExecuteToolCall reads sessionPanels/sessionsById and calls
                         // panel.addMessage — all EDT-confined map/Swing operations.  This callback
