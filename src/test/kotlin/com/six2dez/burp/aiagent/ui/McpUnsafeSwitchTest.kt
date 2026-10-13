@@ -24,12 +24,15 @@ import org.mockito.Answers
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
+import java.awt.Component
+import java.awt.Container
 import java.lang.reflect.InvocationTargetException
 import java.nio.file.Path
 import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import javax.swing.JTextPane
 import javax.swing.SwingUtilities
 
 /**
@@ -90,6 +93,27 @@ class McpUnsafeSwitchTest {
         assertSaveKeeps(saved = false)
     }
 
+    /** Pitfall 8: a carried-over Unsafe true with external access on raises no unsafe RISK item. */
+    @Test
+    fun externalAccessWithACarriedOverUnsafeTrueShowsNoUnsafeNotice() {
+        val store = PrefsStore().apply { booleans[KEY_MCP_UNSAFE] = true }
+        val panel = newPanel(AgentSettingsRepository(newApi(store)))
+        onEdt {
+            panel.mcpEnabled.isSelected = true
+            panel.mcpExternal.isSelected = true
+            panel.mcpAllowedOrigins.text = ""
+            panel.refreshMcpNotice()
+            assertTrue(panel.mcpUnsafe.isSelected, "Anti-vacuity: the carried-over true is still selected.")
+            assertTrue(panel.mcpNotice.isVisible, "Anti-vacuity: external access still raises its own notice.")
+            val text = noticeText(panel)
+            assertTrue(text.contains("no allowed origins"), "Anti-vacuity: the notice body is read: $text")
+            assertFalse(
+                text.contains("External MCP + Unsafe mode"),
+                "No unsafe RISK item in a build without unsafe tools: $text",
+            )
+        }
+    }
+
     // ── Helpers ──────────────────────────────────────────────────────────────────────────
 
     private fun assertSaveKeeps(saved: Boolean) {
@@ -114,6 +138,18 @@ class McpUnsafeSwitchTest {
             assertFalse(panel.mcpUnsafe.isEnabled, "The switch stays disabled after the Save.")
         }
     }
+
+    /** EDT only: the MCP advisory's HTML body with whitespace collapsed, so a wrapped phrase still matches. */
+    private fun noticeText(panel: SettingsPanel): String =
+        descendants(panel.mcpNotice)
+            .filterIsInstance<JTextPane>()
+            .joinToString(" ") { it.text }
+            .replace(Regex("\\s+"), " ")
+
+    private fun descendants(container: Container): List<Component> =
+        container.components.flatMap { child ->
+            listOf(child) + if (child is Container) descendants(child) else emptyList()
+        }
 
     /** Runs [block] on the EDT and rethrows its own failure rather than the invocation wrapper. */
     private fun onEdt(block: () -> Unit) {
