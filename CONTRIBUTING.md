@@ -14,9 +14,10 @@ Thanks for your interest in contributing! Here's how to get started.
 
 3. **Build**:
    ```bash
-   ./gradlew clean shadowJar
+   ./gradlew clean fullJar
    ```
-   Output JAR: `build/libs/Custom-AI-Agent-<version>.jar`
+   Output JAR: `build/libs/Custom-AI-Agent-full-<version>.jar` (the GitHub full build).
+   For the BApp Store build run `./gradlew clean bappJar`; its output is `build/libs/custom-ai-agent-bapp.jar`.
 
 4. **Run tests**:
    ```bash

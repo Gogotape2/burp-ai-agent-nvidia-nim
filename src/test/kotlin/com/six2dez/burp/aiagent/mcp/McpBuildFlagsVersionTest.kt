@@ -1,7 +1,6 @@
 package com.six2dez.burp.aiagent.mcp
 
 import com.six2dez.burp.aiagent.BuildFlags
-import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -32,27 +31,6 @@ class McpBuildFlagsVersionTest {
             "0.6.0",
             BuildFlags.VERSION,
             "BuildFlags.VERSION is still the stale hardcoded MCP placeholder",
-        )
-    }
-
-    @Test
-    fun storeBuild_flagStillGenerated() {
-        // Proves the added version Property did not disturb the pre-existing store-build flag, by
-        // asserting the SEAM rather than a fixed value: the generated constant must agree with the
-        // -PstoreBuild value the build actually resolved. `build.gradle.kts`'s `tasks.test` block
-        // carries that resolved Boolean in as `storeBuild.expected`, because the generated
-        // `BuildFlags.STORE_BUILD` offers no other seam a test can compare against. Asserting a
-        // literal `false` made `./gradlew test -PstoreBuild=true` fail — and that is the BApp Store
-        // artifact build path, so the store artifact could not be validated before submission.
-        //
-        // An absent property (running this class outside Gradle, e.g. from an IDE) maps to false,
-        // which matches the no-flag build. That default is deliberate, not an oversight.
-        val expected = System.getProperty("storeBuild.expected")?.toBooleanStrictOrNull() == true
-        assertEquals(
-            expected,
-            BuildFlags.STORE_BUILD,
-            "generated BuildFlags.STORE_BUILD must track the -PstoreBuild Gradle property " +
-                "(storeBuild.expected=$expected): flipping one without the other is the regression guarded here",
         )
     }
 }

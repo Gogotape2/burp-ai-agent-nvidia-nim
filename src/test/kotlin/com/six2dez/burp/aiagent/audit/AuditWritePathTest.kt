@@ -8,6 +8,7 @@ import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.backends.ChatMessage
 import com.six2dez.burp.aiagent.redact.PrivacyMode
+import com.six2dez.burp.aiagent.spi.AiAccessPolicy
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -25,7 +26,6 @@ import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.PosixFilePermissions
 import java.util.concurrent.CountDownLatch
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 
 /**
@@ -398,8 +398,9 @@ class AuditWritePathTest {
         logger.verbose = verbose
         val registry = mock<BackendRegistry>()
         whenever(registry.get(BACKEND_ID)).thenReturn(FakeBackend())
-        val pool = Executors.newSingleThreadExecutor { r -> Thread(r, "audit-test-worker").apply { isDaemon = true } }
-        val supervisor = AgentSupervisor(api = api, registry = registry, audit = logger, workerPool = pool)
+        // This suite is about what the audit log records, not about AI access: the policy allows
+        // every backend so the send paths reach the audit writes whatever api.ai().isEnabled() says.
+        val supervisor = AgentSupervisor(api = api, registry = registry, audit = logger, aiAccessPolicy = ALLOW_EVERY_BACKEND)
         try {
             val baseline = TestSettings.baselineSettings(BACKEND_ID)
             supervisor.applySettings(
@@ -414,7 +415,6 @@ class AuditWritePathTest {
             block(supervisor)
         } finally {
             supervisor.shutdown()
-            pool.shutdownNow()
         }
     }
 
@@ -469,5 +469,14 @@ class AuditWritePathTest {
         val CREDENTIAL_SENTINELS =
             listOf(TOKEN, API_KEY, CUSTOM_AUTH, APIKEY_HEADER, URL_PASSWORD, URL_QUERY, CLI_ARG, CLI_SESSION)
         val BODY_SENTINELS = listOf(PROMPT_MARK, CONTEXT_MARK, CHUNK_MARK, ERROR_MARK)
+
+        /** Test-local access policy: allows every backend (this suite tests audit, not access). */
+        val ALLOW_EVERY_BACKEND =
+            object : AiAccessPolicy {
+                override fun refusal(
+                    backendId: String,
+                    burpAiEnabled: Boolean,
+                ): String? = null
+            }
     }
 }

@@ -4,10 +4,10 @@ import burp.api.montoya.http.message.HttpHeader
 import burp.api.montoya.http.message.HttpRequestResponse
 import burp.api.montoya.http.message.requests.HttpRequest
 import burp.api.montoya.http.message.responses.HttpResponse
+import com.six2dez.burp.aiagent.SourceRoots
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
-import java.io.File
 import kotlin.test.assertEquals
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
@@ -166,7 +166,8 @@ class EvidenceTailReachTest {
      * while building an evidence string.
      */
     private fun measureEvidenceConstructionSites(): List<EvidenceSite> =
-        sourceFile(RESPONSE_ANALYZER_PATH)
+        SourceRoots
+            .file(RESPONSE_ANALYZER_PATH)
             .readLines()
             .mapIndexed { index, raw -> (index + 1) to raw }
             .filterNot { (_, raw) ->
@@ -208,26 +209,7 @@ class EvidenceTailReachTest {
         return reqResp
     }
 
-    private fun sourceFile(relativePath: String): File = File(mainSourceRoot(), relativePath)
-
-    // Resolved from the Gradle test working directory, then by walking up. If it cannot be found the
-    // test FAILS — it is never weakened into a skip.
-    private fun mainSourceRoot(): File {
-        var candidate: File? = File(System.getProperty("user.dir")).absoluteFile
-        while (candidate != null) {
-            val root = File(candidate, MAIN_SOURCE_ROOT)
-            if (root.isDirectory) return root
-            candidate = candidate.parentFile
-        }
-        throw AssertionError(
-            "could not resolve $MAIN_SOURCE_ROOT from user.dir=${System.getProperty("user.dir")}. " +
-                "Resolve the path rather than weakening this test into a skip.",
-        )
-    }
-
     private companion object {
-        const val MAIN_SOURCE_ROOT = "src/main/kotlin"
-
         // Never appears in the matched-against text; it exists only so ActiveScanTarget.id can be
         // built. Deliberately free of the SQLI false-positive indicators ("example", ...).
         const val FIXTURE_URL = "https://app.test.invalid/login"

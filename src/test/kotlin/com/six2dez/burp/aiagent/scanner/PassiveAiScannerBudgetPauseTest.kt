@@ -40,7 +40,7 @@ class PassiveAiScannerBudgetPauseTest {
             api = mock<MontoyaApi>(defaultAnswer = Answers.RETURNS_DEEP_STUBS),
             supervisor =
                 mock<AgentSupervisor>().also { sup ->
-                    whenever(sup.isBlockedByBurpAiGate()).thenReturn(false)
+                    whenever(sup.isBlockedByAiAccessPolicy()).thenReturn(false)
                 },
             audit = mock<AuditLogger>(),
         ) { TestSettings.baselineSettings() }

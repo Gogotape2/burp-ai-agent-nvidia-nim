@@ -1,15 +1,24 @@
 package com.six2dez.burp.aiagent.ui.panels
 
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
+import com.six2dez.burp.aiagent.ui.design.helpLabel
 import com.six2dez.burp.aiagent.ui.design.sectionPanel
+import java.awt.BorderLayout
 import java.awt.Desktop
 import javax.swing.JEditorPane
 import javax.swing.JOptionPane
 import javax.swing.JPanel
 import javax.swing.border.EmptyBorder
 
+/**
+ * Settings › Help: the quick-start pane and, in its footer, the build caption (UI-SPEC S25, C-N12).
+ *
+ * [buildIdentity] is the same line the Output banner shows, resolved once by App and passed down; this
+ * panel only displays it as plain caption text.
+ */
 class HelpConfigPanel(
     private val dialogParentProvider: () -> javax.swing.JComponent?,
+    private val buildIdentity: String,
 ) : ConfigPanel {
     override fun build(): JPanel {
         val helpHtml =
@@ -60,10 +69,28 @@ class HelpConfigPanel(
                 )
             }
         }
+        // UI-SPEC S25: the caption's left edge lines up with the help text inside the pane's 8 px inset.
+        val content =
+            JPanel(BorderLayout()).apply {
+                background = DesignTokens.Colors.surface
+                add(helpPane, BorderLayout.CENTER)
+                add(
+                    helpLabel(buildIdentity).apply {
+                        border =
+                            EmptyBorder(
+                                0,
+                                DesignTokens.Spacing.sectionPad,
+                                DesignTokens.Spacing.sectionPad,
+                                DesignTokens.Spacing.sectionPad,
+                            )
+                    },
+                    BorderLayout.SOUTH,
+                )
+            }
         return sectionPanel(
             "Help",
             "Quick start and documentation links.",
-            helpPane,
+            content,
         )
     }
 }

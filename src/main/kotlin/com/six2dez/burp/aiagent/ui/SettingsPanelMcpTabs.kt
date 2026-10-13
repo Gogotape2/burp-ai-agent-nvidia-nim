@@ -4,6 +4,7 @@ import burp.api.montoya.core.BurpSuiteEdition
 import com.six2dez.burp.aiagent.config.McpSettings
 import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.redact.PrivacyMode
+import com.six2dez.burp.aiagent.spi.SettingsSlot
 import com.six2dez.burp.aiagent.ui.components.AccordionPanel
 import com.six2dez.burp.aiagent.ui.components.SubtleNotice
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
@@ -72,13 +73,13 @@ internal fun SettingsPanel.mcpSection(): JPanel {
             quickActionsFactory = ::mcpQuickActions,
         ).build()
 
-    // Phase 16-05: append ExternalServersPanel accordion below the McpConfigPanel section.
-    val externalPanel = externalServersPanel.buildPanel()
     return JPanel().apply {
         layout = BoxLayout(this, BoxLayout.Y_AXIS)
         background = DesignTokens.Colors.surface
         add(mcpPanel)
-        add(externalPanel)
+        // UI-SPEC PC-9: MCP_TAB contributions close the stack with no host gap; none in the store build.
+        // The full build's External MCP Servers section arrives here (ExternalMcpContribution, 29-15).
+        contributedComponents(SettingsSlot.MCP_TAB).forEach { add(it) }
     }
 }
 
@@ -153,7 +154,9 @@ internal fun SettingsPanel.buildMcpToolsPanel(): JScrollPane {
     val edition = api.burpSuite().version().edition()
     val unsafeEnabled = mcpUnsafe.isSelected
     val unsafeAllowlist = settings.mcpSettings.enabledUnsafeTools
-    val grouping = McpToolTabModel.groupTools(McpToolCatalog.available())
+    // Provenance from the registry (BUILD-04): core ids are compiled into every build.
+    val coreToolIds = McpToolCatalog.coreToolIds()
+    val grouping = McpToolTabModel.groupTools(McpToolCatalog.available(), coreToolIds)
 
     // STEP 2 — Search bar panel (full-width, above both sections)
     val searchField = JTextField()
@@ -200,8 +203,8 @@ internal fun SettingsPanel.buildMcpToolsPanel(): JScrollPane {
         // North sub-row: checkbox + gap + badge + glue + optional indicator
         val badge =
             toolBadge(
-                if (tool.nativeTool) "Store + Full" else "Full only",
-                McpToolTabModel.badgeStyle(tool),
+                if (tool.id in coreToolIds) "Store + Full" else "Full only",
+                McpToolTabModel.badgeStyle(tool, coreToolIds),
             )
         val northRow =
             JPanel().apply {
@@ -281,7 +284,7 @@ internal fun SettingsPanel.buildMcpToolsPanel(): JScrollPane {
             isOpaque = false
             add(aiBulkBar)
         }
-    for (tool in grouping.native) {
+    for (tool in grouping.core) {
         val row = buildToolRow(tool)
         aiToolRows.add(tool to row)
         aiListPanel.add(row)
@@ -289,11 +292,11 @@ internal fun SettingsPanel.buildMcpToolsPanel(): JScrollPane {
     aiListPanel.add(aiEmptyLabel)
 
     aiEnableAll.addActionListener {
-        val targets = McpToolTabModel.bulkToggleTargets(grouping.native, searchField.text, disabledCheckboxIds())
+        val targets = McpToolTabModel.bulkToggleTargets(grouping.core, searchField.text, disabledCheckboxIds())
         for (target in targets) mcpToolCheckboxes[target.id]?.isSelected = true
     }
     aiDisableAll.addActionListener {
-        val targets = McpToolTabModel.bulkToggleTargets(grouping.native, searchField.text, disabledCheckboxIds())
+        val targets = McpToolTabModel.bulkToggleTargets(grouping.core, searchField.text, disabledCheckboxIds())
         for (target in targets) mcpToolCheckboxes[target.id]?.isSelected = false
     }
 
@@ -326,8 +329,8 @@ internal fun SettingsPanel.buildMcpToolsPanel(): JScrollPane {
             isOpaque = false
         }
 
-    val categoryMap = McpToolTabModel.categoryGroups(grouping.generic)
-    if (grouping.generic.isEmpty()) {
+    val categoryMap = McpToolTabModel.categoryGroups(grouping.provided)
+    if (grouping.provided.isEmpty()) {
         montoyaBulkBar.isVisible = false
         montoyaListPanel.add(helpLabel("No Montoya tools available in this build."))
     } else {
@@ -351,11 +354,11 @@ internal fun SettingsPanel.buildMcpToolsPanel(): JScrollPane {
     montoyaListPanel.add(montoyaEmptyLabel)
 
     montoyaEnableAll.addActionListener {
-        val targets = McpToolTabModel.bulkToggleTargets(grouping.generic, searchField.text, disabledCheckboxIds())
+        val targets = McpToolTabModel.bulkToggleTargets(grouping.provided, searchField.text, disabledCheckboxIds())
         for (target in targets) mcpToolCheckboxes[target.id]?.isSelected = true
     }
     montoyaDisableAll.addActionListener {
-        val targets = McpToolTabModel.bulkToggleTargets(grouping.generic, searchField.text, disabledCheckboxIds())
+        val targets = McpToolTabModel.bulkToggleTargets(grouping.provided, searchField.text, disabledCheckboxIds())
         for (target in targets) mcpToolCheckboxes[target.id]?.isSelected = false
     }
 
@@ -438,8 +441,8 @@ internal fun SettingsPanel.buildMcpToolsPanel(): JScrollPane {
         }
         aiEmptyLabel.isVisible = visibleAiCount == 0 && query.isNotBlank()
         aiBulkBar.isVisible = visibleAiCount > 0
-        montoyaEmptyLabel.isVisible = visibleMontoyaCount == 0 && query.isNotBlank() && grouping.generic.isNotEmpty()
-        montoyaBulkBar.isVisible = visibleMontoyaCount > 0 && grouping.generic.isNotEmpty()
+        montoyaEmptyLabel.isVisible = visibleMontoyaCount == 0 && query.isNotBlank() && grouping.provided.isNotEmpty()
+        montoyaBulkBar.isVisible = visibleMontoyaCount > 0 && grouping.provided.isNotEmpty()
         val totalVisible = visibleAiCount + visibleMontoyaCount
         resultCountLabel.text = if (query.isBlank()) "$totalTools tools" else "$totalVisible of $totalTools tools"
         aiListPanel.revalidate()

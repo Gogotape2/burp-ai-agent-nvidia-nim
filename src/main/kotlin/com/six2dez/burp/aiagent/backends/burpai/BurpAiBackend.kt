@@ -20,6 +20,9 @@ class BurpAiBackend(
     override val displayName: String = "Burp AI (built-in)"
     override val supportsSystemRole: Boolean = true
 
+    // The check asks Burp's own AI toggle; it never leaves Burp, so background polling may run it.
+    override val healthCheckIsLocal: Boolean = true
+
     override fun launch(config: BackendLaunchConfig): AgentConnection = BurpAiConnection(api, config)
 
     override fun isAvailable(settings: AgentSettings): Boolean =

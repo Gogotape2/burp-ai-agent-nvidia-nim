@@ -78,12 +78,7 @@ class AiPassiveScanCheckTest {
 
     private fun testSettings(): AgentSettings =
         AgentSettings(
-            codexCmd = "codex",
-            geminiCmd = "gemini",
-            opencodeCmd = "opencode",
-            claudeCmd = "claude",
             agentProfile = "pentester",
-            ollamaCliCmd = "ollama",
             ollamaModel = "llama3.1:8b",
             ollamaUrl = "http://127.0.0.1:11434",
             ollamaServeCmd = "ollama serve",
@@ -117,7 +112,6 @@ class AiPassiveScanCheckTest {
             preferredBackendId = "codex-cli",
             privacyMode = PrivacyMode.STRICT,
             determinismMode = false,
-            autoRestart = true,
             auditEnabled = true,
             mcpSettings =
                 McpSettings(
@@ -132,8 +126,6 @@ class AiPassiveScanCheckTest {
                     tlsAutoGenerate = true,
                     tlsKeystorePath = "",
                     tlsKeystorePassword = "",
-                    scanTaskTtlMinutes = 120,
-                    collaboratorClientTtlMinutes = 60,
                     maxConcurrentRequests = 4,
                     maxBodyBytes = 262_144,
                     toolToggles = emptyMap(),
@@ -153,7 +145,6 @@ class AiPassiveScanCheckTest {
             activeAiRequestDelayMs = 100,
             activeAiMaxRiskLevel = PayloadRisk.SAFE,
             activeAiScopeOnly = true,
-            activeAiAutoFromPassive = true,
             activeAiScanMode = ScanMode.FULL,
             activeAiUseCollaborator = false,
             bountyPromptEnabled = false,

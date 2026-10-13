@@ -12,7 +12,6 @@
     <ID>CyclomaticComplexMethod:AgentProfileLoader.kt$AgentProfileLoader$private fun sectionKeyForAction(actionName: String?): String</ID>
     <ID>CyclomaticComplexMethod:AgentSettings.kt$AgentSettingsRepository$fun load(): AgentSettings</ID>
     <ID>CyclomaticComplexMethod:AgentSettings.kt$AgentSettingsRepository$private fun loadMcpSettings(): McpSettings</ID>
-    <ID>CyclomaticComplexMethod:AgentSupervisor.kt$AgentSupervisor$private fun buildLaunchConfig( backendId: String, sessionId: String, embeddedMode: Boolean, cliSessionId: String? = null, ): BackendLaunchConfig</ID>
     <ID>CyclomaticComplexMethod:AgentSupervisor.kt$AgentSupervisor.Companion$internal fun tokenizeCommand( command: String, isWindows: Boolean = System.getProperty("os.name").lowercase(java.util.Locale.ROOT).contains("win"), ): List&lt;String></ID>
     <ID>CyclomaticComplexMethod:AiLoggerPanel.kt$AiLoggerPanel$private fun applyFilter()</ID>
     <ID>CyclomaticComplexMethod:AiLoggerPanel.kt$AiLoggerPanel.AiLogTableModel$override fun getValueAt( rowIndex: Int, columnIndex: Int, ): Any</ID>
@@ -23,7 +22,6 @@
     <ID>CyclomaticComplexMethod:ChatPanel.kt$ChatPanel$fun restoreSessions()</ID>
     <ID>CyclomaticComplexMethod:ChatPanel.kt$ChatPanel$private fun maybeMigrateGlobalToProject(projectStore: burp.api.montoya.persistence.PersistedObject)</ID>
     <ID>CyclomaticComplexMethod:ChatPanel.kt$ChatPanel$private fun sendMessage( sessionId: String, userText: String, contextJson: String?, allowToolCalls: Boolean, actionName: String? = null, onCompleted: ((String, Throwable?) -> Unit)? = null, toolIterationsLeft: Int = MAX_AUTO_TOOL_ITERATIONS, traceId: String = "chat-turn-" + UUID.randomUUID().toString(), )</ID>
-    <ID>CyclomaticComplexMethod:CliBackend.kt$CliBackend.CliConnection$private fun readEmbeddedResponse( text: String, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, )</ID>
     <ID>CyclomaticComplexMethod:CliBackend.kt$CliBackend.NonInteractiveCliConnection$override fun send( text: String, history: List&lt;ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
     <ID>CyclomaticComplexMethod:CustomPromptDialog.kt$CustomPromptDialog$fun ask( parent: Component?, targetLabel: String, relevantSaved: List&lt;CustomPromptDefinition>, ): String?</ID>
     <ID>CyclomaticComplexMethod:CustomPromptLibraryEditor.kt$CustomPromptEditDialog$fun show( parent: JComponent, existing: CustomPromptDefinition?, ): CustomPromptDefinition?</ID>
@@ -36,10 +34,7 @@
     <ID>CyclomaticComplexMethod:LmStudioBackend.kt$LmStudioBackend.LmStudioConnection$override fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
     <ID>CyclomaticComplexMethod:MainTab.kt$MainTab$internal fun validateBackendCommand(settings: com.six2dez.burp.aiagent.config.AgentSettings): String?</ID>
     <ID>CyclomaticComplexMethod:MainTab.kt$MainTab$private fun updateSafetySummary()</ID>
-    <ID>CyclomaticComplexMethod:McpToolExecutorImpl.kt$McpToolExecutor$fun executeToolResult( name: String, argsJson: String?, context: McpToolContext, ): CallToolResult</ID>
-    <ID>CyclomaticComplexMethod:McpToolExecutorImpl.kt$McpToolExecutor$fun inputSchema( toolName: String, context: McpToolContext? = null, ): Tool.Input</ID>
     <ID>CyclomaticComplexMethod:McpToolHandlers.kt$internal fun Server.registerToolHandler( toolId: String, context: McpToolContext, )</ID>
-    <ID>CyclomaticComplexMethod:McpToolLegacy.kt$@Suppress("unused") internal fun Server.registerToolsLegacy( api: MontoyaApi, context: McpToolContext, )</ID>
     <ID>CyclomaticComplexMethod:NvidiaNimBackendFactory.kt$NvidiaNimBackendFactory.Companion$private fun nimHealthCheck( settings: AgentSettings, transport: MontoyaHttpTransport?, ): HealthCheckResult</ID>
     <ID>CyclomaticComplexMethod:OllamaBackend.kt$OllamaBackend$private fun detectContextWindow( baseUrl: String, model: String, headers: Map&lt;String, String>, fallback: Int?, transport: MontoyaHttpTransport? = null, ): Int?</ID>
     <ID>CyclomaticComplexMethod:OllamaBackend.kt$OllamaBackend.OllamaConnection$override fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
@@ -66,7 +61,6 @@
     <ID>LargeClass:AgentSupervisor.kt$AgentSupervisor</ID>
     <ID>LargeClass:ChatPanel.kt$ChatPanel</ID>
     <ID>LargeClass:MainTab.kt$MainTab</ID>
-    <ID>LargeClass:McpToolExecutorImpl.kt$McpToolExecutor</ID>
     <ID>LargeClass:PayloadGenerator.kt$PayloadGenerator</ID>
     <ID>LargeClass:ResponseAnalyzer.kt$ResponseAnalyzer</ID>
     <ID>LargeClass:UiActions.kt$UiActions</ID>
@@ -75,18 +69,13 @@
     <ID>LongMethod:ActiveAiScanner.kt$ActiveAiScanner$private fun executeScan(target: ActiveScanTarget): ActiveScanResult</ID>
     <ID>LongMethod:ActiveAiScanner.kt$ActiveAiScanner$private fun injectPayload( request: HttpRequest, point: InjectionPoint, payload: String, ): HttpRequest</ID>
     <ID>LongMethod:ActiveScanConfigPanel.kt$ActiveScanConfigPanel$override fun build(): JPanel</ID>
-    <ID>LongMethod:ActiveScannerQueueModelTest.kt$ActiveScannerQueueModelTest$private fun baselineSettings(): AgentSettings</ID>
     <ID>LongMethod:AgentSettings.kt$AgentSettingsRepository$fun defaultSettings(): AgentSettings</ID>
     <ID>LongMethod:AgentSettings.kt$AgentSettingsRepository$fun load(): AgentSettings</ID>
     <ID>LongMethod:AgentSettings.kt$AgentSettingsRepository$fun save(settings: AgentSettings)</ID>
     <ID>LongMethod:AgentSupervisor.kt$AgentSupervisor$fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>? = null, contextJson: String?, privacyMode: PrivacyMode, determinismMode: Boolean, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, traceId: String? = null, systemPrompt: String? = null, jsonMode: Boolean = false, maxOutputTokens: Int? = null, )</ID>
     <ID>LongMethod:AgentSupervisor.kt$AgentSupervisor$fun sendChat( chatSessionId: String, backendId: String, text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>? = null, contextJson: String?, privacyMode: PrivacyMode, determinismMode: Boolean, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, traceId: String? = null, systemPrompt: String? = null, maxOutputTokens: Int? = null, launchMetadata: Map&lt;String, String>? = null, ): com.six2dez.burp.aiagent.backends.AgentConnection?</ID>
-    <ID>LongMethod:AgentSupervisor.kt$AgentSupervisor$private fun buildLaunchConfig( backendId: String, sessionId: String, embeddedMode: Boolean, cliSessionId: String? = null, ): BackendLaunchConfig</ID>
-    <ID>LongMethod:AiPassiveScanCheckTest.kt$AiPassiveScanCheckTest$private fun testSettings(): AgentSettings</ID>
     <ID>LongMethod:AnthropicBackend.kt$AnthropicBackend.AnthropicConnection$override fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
     <ID>LongMethod:App.kt$App$fun initialize(montoyaApi: MontoyaApi)</ID>
-    <ID>LongMethod:BackendHealthCheckTest.kt$BackendHealthCheckTest$private fun baselineSettings(): AgentSettings</ID>
-    <ID>LongMethod:BackendRegistryTest.kt$BackendRegistryTest$private fun baselineSettings(): AgentSettings</ID>
     <ID>LongMethod:ChatPanel.kt$ChatPanel$fun restoreSessions()</ID>
     <ID>LongMethod:ChatPanel.kt$ChatPanel$private fun sendMessage( sessionId: String, userText: String, contextJson: String?, allowToolCalls: Boolean, actionName: String? = null, onCompleted: ((String, Throwable?) -> Unit)? = null, toolIterationsLeft: Int = MAX_AUTO_TOOL_ITERATIONS, traceId: String = "chat-turn-" + UUID.randomUUID().toString(), )</ID>
     <ID>LongMethod:CliBackend.kt$CliBackend.NonInteractiveCliConnection$override fun send( text: String, history: List&lt;ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
@@ -95,22 +84,17 @@
     <ID>LongMethod:KtorMcpServerManager.kt$KtorMcpServerManager$override fun start( settings: McpSettings, privacyMode: PrivacyMode, determinismMode: Boolean, preprocessSettings: ResponsePreprocessorSettings, callback: (McpServerState) -> Unit, )</ID>
     <ID>LongMethod:LmStudioBackend.kt$LmStudioBackend.LmStudioConnection$override fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
     <ID>LongMethod:McpTool.kt$@PublishedApi internal fun runTool( context: McpToolContext, name: String, argsJson: String? = null, execute: () -> String, ): CallToolResult</ID>
-    <ID>LongMethod:McpToolExecutorImpl.kt$McpToolExecutor$fun executeToolResult( name: String, argsJson: String?, context: McpToolContext, ): CallToolResult</ID>
-    <ID>LongMethod:McpToolLegacy.kt$@Suppress("unused") internal fun Server.registerToolsLegacy( api: MontoyaApi, context: McpToolContext, )</ID>
     <ID>LongMethod:OllamaBackend.kt$OllamaBackend.OllamaConnection$override fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
     <ID>LongMethod:OpenAiCompatibleBackend.kt$OpenAiCompatibleBackend.OpenAiCompatibleConnection$override fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>?, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, systemPrompt: String?, jsonMode: Boolean, maxOutputTokens: Int?, )</ID>
-    <ID>LongMethod:PassiveAiScannerConfidenceTest.kt$PassiveAiScannerConfidenceTest$private fun baselineSettings(): AgentSettings</ID>
     <ID>LongMethod:PassiveAiScannerFinding.kt$internal fun PassiveAiScanner.handleFinding( requestResponse: HttpRequestResponse, title: String, rawSeverity: String, detail: String, confidence: Int, minSeverity: String, settings: AgentSettings, source: String, )</ID>
     <ID>LongMethod:PassiveAiScannerFinding.kt$internal fun PassiveAiScanner.mapTitleToVulnClass(title: String): VulnClass?</ID>
     <ID>LongMethod:PassiveScanConfigPanel.kt$PassiveScanConfigPanel$override fun build(): JPanel</ID>
     <ID>LongMethod:SettingsPanelScannerTabs.kt$internal fun SettingsPanel.showScannerTriageDialog()</ID>
     <ID>LongMethod:SettingsPanelSettingsIO.kt$internal fun SettingsPanel.currentSettings(): AgentSettings</ID>
-    <ID>LongMethod:TestSettings.kt$TestSettings$fun baselineSettings(preferredBackendId: String = "codex-cli"): AgentSettings</ID>
     <ID>LongMethod:UiActions.kt$UiActions$fun requestResponseMenuItems( api: MontoyaApi, event: ContextMenuEvent, tab: MainTab, mcpSupervisor: McpSupervisor, passiveAiScanner: PassiveAiScanner, activeAiScanner: ActiveAiScanner? = null, audit: AuditLogger? = null, ): List&lt;JMenuItem></ID>
     <ID>LongMethod:UiActions.kt$UiActions$private fun buildBountyPromptMenu( api: MontoyaApi, tab: MainTab, mcpSupervisor: McpSupervisor, targets: Lazy&lt;List&lt;HttpRequestResponse>>, audit: AuditLogger?, ): JMenu</ID>
     <ID>LongMethod:UiActions.kt$UiActions$private fun buildTargetedTestsMenu( tab: MainTab, targets: Lazy&lt;List&lt;HttpRequestResponse>>, activeAiScanner: ActiveAiScanner?, targetLabel: String = "", ): JMenu</ID>
     <ID>LongMethod:UiActions.kt$UiActions$private fun handleBountyPromptCompletion( api: MontoyaApi, tab: MainTab, definition: BountyPromptDefinition, responseText: String, targets: List&lt;HttpRequestResponse>, audit: AuditLogger?, )</ID>
-    <ID>LongParameterList:ActiveScanConfigPanel.kt$ActiveScanConfigPanel$( private val activeAiEnabled: JComponent, private val activeAiScopeOnly: JCheckBox, private val activeAiAutoFromPassive: JCheckBox, private val activeAiMaxConcurrentSpinner: JSpinner, private val activeAiMaxPayloadsSpinner: JSpinner, private val activeAiTimeoutSpinner: JSpinner, private val activeAiDelaySpinner: JSpinner, private val activeAiRiskLevelCombo: JComboBox&lt;*>, private val activeAiScanModeCombo: JComboBox&lt;*>, private val activeAiUseCollaborator: JCheckBox, private val activeAiAdaptivePayloads: JCheckBox, private val activeAiRiskDescription: JLabel, private val activeAiStatusLabel: JLabel, private val activeAiViewFindings: JButton, private val activeAiViewQueue: JButton, private val activeAiClearQueue: JButton, private val activeAiResetStats: JButton, )</ID>
     <ID>LongParameterList:AgentSupervisor.kt$AgentSupervisor$( chatSessionId: String, backendId: String, text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>? = null, contextJson: String?, privacyMode: PrivacyMode, determinismMode: Boolean, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, traceId: String? = null, systemPrompt: String? = null, maxOutputTokens: Int? = null, launchMetadata: Map&lt;String, String>? = null, )</ID>
     <ID>LongParameterList:AgentSupervisor.kt$AgentSupervisor$( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>? = null, contextJson: String?, privacyMode: PrivacyMode, determinismMode: Boolean, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, traceId: String? = null, systemPrompt: String? = null, jsonMode: Boolean = false, maxOutputTokens: Int? = null, )</ID>
     <ID>LongParameterList:AiRequestLogger.kt$AiRequestLogger$( type: ActivityType, source: String, backendId: String, detail: String, sessionId: String? = null, durationMs: Long? = null, promptChars: Int? = null, responseChars: Int? = null, tokenUsage: TokenUsage? = null, metadata: Map&lt;String, String> = emptyMap(), )</ID>
@@ -123,21 +107,17 @@
     <ID>LongParameterList:OpenAiCompatibleBackend.kt$OpenAiCompatibleBackend$( override val id: String = "openai-compatible", override val displayName: String = "Generic (OpenAI-compatible)", private val defaultBaseUrl: String = "", private val baseUrlSelector: (AgentSettings) -> String = { it.openAiCompatibleUrl.trim() }, private val modelSelector: (AgentSettings) -> String = { it.openAiCompatibleModel.trim() }, private val apiKeySelector: (AgentSettings) -> String = { it.openAiCompatibleApiKey }, private val headersSelector: (AgentSettings) -> String = { it.openAiCompatibleHeaders }, private val timeoutSelector: (AgentSettings) -> Int = { it.openAiCompatibleTimeoutSeconds }, private val streaming: Boolean = false, private val defaultHeaders: Map&lt;String, String> = emptyMap(), private val payloadCustomizer: ((MutableMap&lt;String, Any?>) -> Unit)? = null, private val healthCheckProvider: ((AgentSettings) -> HealthCheckResult)? = null, // Path appended to a bare-host base URL (no /v\d+ and no /chat/completions). Defaults to the // OpenAI shape; Perplexity overrides to "/chat/completions" because its API has no /v1 prefix. private val chatCompletionsBasePath: String = "/v1/chat/completions", // OpenAI-style {"type":"json_object"} response_format. Perplexity's Sonar API rejects this // field, so set false there; the scanner prompts still ask the model for JSON in plain text. private val supportsJsonObjectResponseFormat: Boolean = true, )</ID>
     <ID>LongParameterList:OpenAiCompatibleBackend.kt$OpenAiCompatibleBackend.OpenAiCompatibleConnection$( private val mapper: ObjectMapper, private val backendId: String, private val backendDisplayName: String, private val baseUrl: String, private val model: String, private val headers: Map&lt;String, String>, private val determinismMode: Boolean, private val sessionId: String?, private val circuitBreaker: CircuitBreaker, private val streaming: Boolean, private val payloadCustomizer: ((MutableMap&lt;String, Any?>) -> Unit)?, private val transport: MontoyaHttpTransport?, private val timeoutSeconds: Long, private val chatCompletionsBasePath: String, private val supportsJsonObjectResponseFormat: Boolean, private val debugLog: (String) -> Unit, private val errorLog: (String) -> Unit, )</ID>
     <ID>LongParameterList:PassiveScanConfigPanel.kt$PassiveScanConfigPanel$( private val passiveAiEnabled: JComponent, private val passiveAiScopeOnly: JCheckBox, private val passiveAiRateSpinner: JSpinner, private val passiveAiMaxSizeSpinner: JSpinner, private val passiveAiMinSeverityCombo: JComboBox&lt;*>, private val passiveAiEndpointDedupSpinner: JSpinner, private val passiveAiFingerprintDedupSpinner: JSpinner, private val passiveAiPromptCacheTtlSpinner: JSpinner, private val passiveAiEndpointCacheEntriesSpinner: JSpinner, private val passiveAiFingerprintCacheEntriesSpinner: JSpinner, private val passiveAiPromptCacheEntriesSpinner: JSpinner, private val passiveAiRequestBodyMaxCharsSpinner: JSpinner, private val passiveAiResponseBodyMaxCharsSpinner: JSpinner, private val passiveAiHeaderMaxCountSpinner: JSpinner, private val passiveAiParamMaxCountSpinner: JSpinner, private val passiveAiExcludedExtensionsField: JTextField, private val passiveAiBatchSizeSpinner: JSpinner, private val passiveAiPersistentCacheEnabled: JCheckBox, private val passiveAiPersistentCacheTtlSpinner: JSpinner, private val passiveAiPersistentCacheMaxMbSpinner: JSpinner, private val contextRequestBodyMaxCharsSpinner: JSpinner, private val contextResponseBodyMaxCharsSpinner: JSpinner, private val contextCompactJson: JCheckBox, private val passiveAiStatusLabel: JLabel, private val passiveAiViewFindings: JButton, private val scannerTriageButton: JButton, private val passiveAiResetStats: JButton, // CAP-04: token-budget threshold fields (0 = unlimited / off) private val tokenBudgetWarnField: JTextField, private val tokenBudgetHardCapField: JTextField, )</ID>
-    <ID>LongParameterList:PrivacyConfigPanel.kt$PrivacyConfigPanel$( private val privacyMode: JComponent, private val auditEnabled: JComponent, private val autoRestart: JComponent, private val determinism: JComponent, private val rotateSaltBtn: JComponent, // Single advisory replaces the previous trio of stacked red labels. Caller manages level // + visibility via `SubtleNotice.setMessage` / `hideNotice` from `refreshPrivacyNotice()`. private val privacyNotice: JComponent, private val saveFeedback: JComponent, private val aiLoggerEnabled: JComponent? = null, private val aiLoggerMaxEntries: JComponent? = null, // PRIV-02: custom-pattern text area + inline validation-feedback label (injected by SettingsPanel). private val customPatternsArea: JComponent? = null, private val patternsFeedback: JComponent? = null, )</ID>
     <ID>LoopWithTooManyJumpStatements:ActiveAiScanner.kt$ActiveAiScanner$for</ID>
     <ID>LoopWithTooManyJumpStatements:AgentProfileLoader.kt$AgentProfileLoader$for</ID>
     <ID>LoopWithTooManyJumpStatements:BountyPromptLoader.kt$BountyPromptLoader$for</ID>
     <ID>LoopWithTooManyJumpStatements:BountyPromptOutputParser.kt$BountyPromptOutputParser$for</ID>
     <ID>LoopWithTooManyJumpStatements:ChatPanel.kt$ChatPanel$for</ID>
-    <ID>LoopWithTooManyJumpStatements:CliBackend.kt$CliBackend.CliConnection$while</ID>
     <ID>LoopWithTooManyJumpStatements:CliBackend.kt$CliBackend.NonInteractiveCliConnection$for</ID>
     <ID>LoopWithTooManyJumpStatements:CliBackend.kt$CliBackend.NonInteractiveCliConnection$while</ID>
     <ID>LoopWithTooManyJumpStatements:CliBackend.kt$for</ID>
     <ID>LoopWithTooManyJumpStatements:Entropy.kt$Entropy$for</ID>
     <ID>LoopWithTooManyJumpStatements:InjectionPointExtractor.kt$InjectionPointExtractor$for</ID>
     <ID>LoopWithTooManyJumpStatements:McpToolContext.kt$McpToolContext$for</ID>
-    <ID>LoopWithTooManyJumpStatements:McpToolExecutorImpl.kt$McpToolExecutor$for</ID>
-    <ID>LoopWithTooManyJumpStatements:McpToolLegacy.kt$for</ID>
     <ID>LoopWithTooManyJumpStatements:PassiveAiScannerParsing.kt$for</ID>
     <ID>LoopWithTooManyJumpStatements:ResponseAnalyzer.kt$ResponseAnalyzer$for</ID>
     <ID>LoopWithTooManyJumpStatements:SecurityExcerpts.kt$SecurityExcerpts$for</ID>
@@ -219,12 +199,6 @@
     <ID>MagicNumber:AgentSettings.kt$AgentSettingsRepository$64</ID>
     <ID>MagicNumber:AgentSettings.kt$AgentSettingsRepository$65535</ID>
     <ID>MagicNumber:AgentSettings.kt$AgentSettingsRepository$80_000</ID>
-    <ID>MagicNumber:AgentSupervisor.kt$AgentSupervisor$1000L</ID>
-    <ID>MagicNumber:AgentSupervisor.kt$AgentSupervisor$3</ID>
-    <ID>MagicNumber:AgentSupervisor.kt$AgentSupervisor$30_000L</ID>
-    <ID>MagicNumber:AgentSupervisor.kt$AgentSupervisor$5</ID>
-    <ID>MagicNumber:AgentSupervisor.kt$AgentSupervisor$5_000</ID>
-    <ID>MagicNumber:AgentSupervisor.kt$AgentSupervisor.Companion$5</ID>
     <ID>MagicNumber:AiLoggerPanel.kt$AiLoggerPanel$0.7</ID>
     <ID>MagicNumber:AiLoggerPanel.kt$AiLoggerPanel$10</ID>
     <ID>MagicNumber:AiLoggerPanel.kt$AiLoggerPanel$100</ID>
@@ -261,7 +235,6 @@
     <ID>MagicNumber:AiScanCheck.kt$AiScanCheck$100</ID>
     <ID>MagicNumber:AiScanCheck.kt$AiScanCheck$3000</ID>
     <ID>MagicNumber:AiScanCheck.kt$AiScanCheck$500</ID>
-    <ID>MagicNumber:Alerting.kt$Alerting$10_000</ID>
     <ID>MagicNumber:AnthropicBackend.kt$AnthropicBackend$120L</ID>
     <ID>MagicNumber:AnthropicBackend.kt$AnthropicBackend$30L</ID>
     <ID>MagicNumber:AnthropicBackend.kt$AnthropicBackend$3600L</ID>
@@ -274,7 +247,6 @@
     <ID>MagicNumber:AnthropicBackend.kt$AnthropicBackend.AnthropicConnection$500</ID>
     <ID>MagicNumber:AnthropicBackend.kt$AnthropicBackend.AnthropicConnection$6</ID>
     <ID>MagicNumber:AnthropicBackend.kt$AnthropicBackend.AnthropicConnection$800</ID>
-    <ID>MagicNumber:App.kt$App$5</ID>
     <ID>MagicNumber:AuditLogger.kt$AuditLogger$8</ID>
     <ID>MagicNumber:BackendConfigPanel.kt$BackendConfigPanel$20</ID>
     <ID>MagicNumber:BackendConfigPanel.kt$BackendConfigPanel$3</ID>
@@ -349,16 +321,6 @@
     <ID>MagicNumber:ChatPanel.kt$ChatPanel.TokenBar$7</ID>
     <ID>MagicNumber:ChatPanel.kt$ChatPanel.TokenBar$76</ID>
     <ID>MagicNumber:ChatPanel.kt$ChatPanel.TokenBar$80</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend$30</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend$3600</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$1000L</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$1500</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$200</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$2000</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$250</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$3</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$50</ID>
-    <ID>MagicNumber:CliBackend.kt$CliBackend.CliConnection$60_000</ID>
     <ID>MagicNumber:CliBackend.kt$CliBackend.NonInteractiveCliConnection$1000L</ID>
     <ID>MagicNumber:CliBackend.kt$CliBackend.NonInteractiveCliConnection$120</ID>
     <ID>MagicNumber:CliBackend.kt$CliBackend.NonInteractiveCliConnection$200</ID>
@@ -516,12 +478,8 @@
     <ID>MagicNumber:McpSupervisor.kt$McpSupervisor$500</ID>
     <ID>MagicNumber:McpSupervisor.kt$McpSupervisor$800</ID>
     <ID>MagicNumber:McpTool.kt$1_000_000L</ID>
-    <ID>MagicNumber:McpToolExecutorImpl.kt$McpToolExecutor$120_000L</ID>
-    <ID>MagicNumber:McpToolExecutorImpl.kt$McpToolExecutor$5</ID>
-    <ID>MagicNumber:McpToolExecutorImpl.kt$McpToolExecutor$500</ID>
     <ID>MagicNumber:McpToolHandlers.kt$120</ID>
     <ID>MagicNumber:McpToolHelpers.kt$4</ID>
-    <ID>MagicNumber:McpToolLegacy.kt$500</ID>
     <ID>MagicNumber:MontoyaHttpTransport.kt$MontoyaHttpTransport$401</ID>
     <ID>MagicNumber:MontoyaHttpTransport.kt$MontoyaHttpTransport$403</ID>
     <ID>MagicNumber:NvidiaNimBackendFactory.kt$NvidiaNimBackendFactory.Companion$16</ID>
@@ -728,9 +686,7 @@
     <ID>MagicNumber:ToggleSwitch.kt$ToggleSwitch$22</ID>
     <ID>MagicNumber:ToggleSwitch.kt$ToggleSwitch$255</ID>
     <ID>MagicNumber:ToggleSwitch.kt$ToggleSwitch$44</ID>
-    <ID>MagicNumber:TokenTracker.kt$TokenTracker$3.5</ID>
     <ID>MagicNumber:TokenTracker.kt$TokenTracker$3.6</ID>
-    <ID>MagicNumber:TokenTracker.kt$TokenTracker$3.7</ID>
     <ID>MagicNumber:TokenTracker.kt$TokenTracker$3.8</ID>
     <ID>MagicNumber:TokenTracker.kt$TokenTracker$4.0</ID>
     <ID>MagicNumber:ToolInvocationDialog.kt$ToolInvocationDialog$10</ID>
@@ -796,7 +752,6 @@
     <ID>MagicNumber:UiTheme.kt$UiTheme.Typography$14</ID>
     <ID>MatchingDeclarationName:Components.kt$BadgeStyle</ID>
     <ID>MatchingDeclarationName:McpToolExecutorImpl.kt$McpToolExecutor</ID>
-    <ID>MatchingDeclarationName:McpToolHandlers.kt$McpToolRegistrations</ID>
     <ID>MayBeConst:DesignTokens.kt$DesignTokens.Spacing$/** 12 px — label-to-field insets inside form grid rows (horizontal). */ val md = 12</ID>
     <ID>MayBeConst:DesignTokens.kt$DesignTokens.Spacing$/** 16 px — tab content outer padding (horizontal); section header bottom gap. */ val lg = 16</ID>
     <ID>MayBeConst:DesignTokens.kt$DesignTokens.Spacing$/** 24 px — major section break between accordion panels. */ val xl = 24</ID>
@@ -845,12 +800,7 @@
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$fun send( text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>? = null, contextJson: String?, privacyMode: PrivacyMode, determinismMode: Boolean, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, traceId: String? = null, systemPrompt: String? = null, jsonMode: Boolean = false, maxOutputTokens: Int? = null, )</ID>
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$fun sendChat( chatSessionId: String, backendId: String, text: String, history: List&lt;com.six2dez.burp.aiagent.backends.ChatMessage>? = null, contextJson: String?, privacyMode: PrivacyMode, determinismMode: Boolean, onChunk: (String) -> Unit, onComplete: (Throwable?) -> Unit, traceId: String? = null, systemPrompt: String? = null, maxOutputTokens: Int? = null, launchMetadata: Map&lt;String, String>? = null, ): com.six2dez.burp.aiagent.backends.AgentConnection?</ID>
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$fun startOrAttach(backendId: String): Boolean</ID>
-    <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$private fun checkHealth()</ID>
-    <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$private fun parseOllamaModelFromCli(cmd: String): String?</ID>
     <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor$private fun startService( name: String, cmd: String, ): Boolean</ID>
-    <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor.Companion$fun buildCliPathStatic(): String</ID>
-    <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor.Companion$private fun capturePathFromShells(): String?</ID>
-    <ID>ReturnCount:AgentSupervisor.kt$AgentSupervisor.Companion$private fun tryCapture( shellPath: String, args: List&lt;String>, ): String?</ID>
     <ID>ReturnCount:AiScanCheck.kt$AiScanCheck$override fun doCheck( baseRequestResponse: HttpRequestResponse, insertionPoint: AuditInsertionPoint, http: Http, ): AuditResult</ID>
     <ID>ReturnCount:AiScanCheck.kt$AiScanCheck$private fun testPayload( baseRequestResponse: HttpRequestResponse, insertionPoint: AuditInsertionPoint, payload: Payload, vulnClass: VulnClass, ): AuditIssue?</ID>
     <ID>ReturnCount:BatchAnalysisQueue.kt$BatchAnalysisQueue$fun shouldFlush(): Boolean</ID>
@@ -896,11 +846,8 @@
     <ID>ReturnCount:McpTool.kt$@PublishedApi internal fun runTool( context: McpToolContext, name: String, argsJson: String? = null, execute: () -> String, ): CallToolResult</ID>
     <ID>ReturnCount:McpToolContext.kt$McpToolContext$fun isUnsafeToolAllowed(name: String): Boolean</ID>
     <ID>ReturnCount:McpToolExecutorImpl.kt$McpToolExecutor$fun executeToolResult( name: String, argsJson: String?, context: McpToolContext, ): CallToolResult</ID>
-    <ID>ReturnCount:McpToolExecutorImpl.kt$McpToolExecutor$private fun parseArgsObject(rawArgs: String?): Map&lt;String, JsonElement></ID>
-    <ID>ReturnCount:McpToolHelpers.kt$internal fun executeIssueCreate( input: CreateAuditIssue, api: MontoyaApi, context: McpToolContext, ): String</ID>
     <ID>ReturnCount:McpToolHelpers.kt$internal fun maybeAnonymizeUrl( rawUrl: String, context: McpToolContext, ): String</ID>
     <ID>ReturnCount:McpToolHelpers.kt$internal fun normalizeHttpRequest(content: String): String</ID>
-    <ID>ReturnCount:McpToolHelpers.kt$internal fun withAiIssuePrefix(rawName: String): String</ID>
     <ID>ReturnCount:NvidiaNimBackendFactory.kt$NvidiaNimBackendFactory.Companion$private fun buildChatCompletionsUrl(baseUrl: String): String</ID>
     <ID>ReturnCount:NvidiaNimBackendFactory.kt$NvidiaNimBackendFactory.Companion$private fun nimHealthCheck( settings: AgentSettings, transport: MontoyaHttpTransport?, ): HealthCheckResult</ID>
     <ID>ReturnCount:OllamaBackend.kt$OllamaBackend$private fun detectContextWindow( baseUrl: String, model: String, headers: Map&lt;String, String>, fallback: Int?, transport: MontoyaHttpTransport? = null, ): Int?</ID>
@@ -918,7 +865,6 @@
     <ID>ReturnCount:PassiveAiScannerFilters.kt$internal fun PassiveAiScanner.shouldSkipAiAfterLocalFindings( localFindings: List&lt;LocalFinding>, request: HttpRequest, requestBody: String, ): Boolean</ID>
     <ID>ReturnCount:PassiveAiScannerFilters.kt$internal fun PassiveAiScanner.shouldSkipKnownResponseFingerprint( request: HttpRequest, response: HttpResponse?, responseBody: String, ): Boolean</ID>
     <ID>ReturnCount:PassiveAiScannerFilters.kt$internal fun PassiveAiScanner.shouldSkipUninterestingTraffic( request: HttpRequest, response: HttpResponse?, responseBody: String, ): Boolean</ID>
-    <ID>ReturnCount:PassiveAiScannerFinding.kt$internal fun PassiveAiScanner.queueToActiveScanner( requestResponse: HttpRequestResponse, title: String, severity: String, detail: String, confidence: Int, settings: AgentSettings, )</ID>
     <ID>ReturnCount:PassiveAiScannerHeuristics.kt$private fun detectCsrf( request: HttpRequest, response: HttpResponse?, ): LocalFinding?</ID>
     <ID>ReturnCount:PassiveAiScannerHeuristics.kt$private fun detectUnrestrictedFileUpload( request: HttpRequest, response: HttpResponse?, requestBody: String, responseBody: String, ): LocalFinding?</ID>
     <ID>ReturnCount:PassiveAiScannerParsing.kt$internal fun cleanJsonResponse(text: String): String</ID>
@@ -934,7 +880,6 @@
     <ID>ReturnCount:ScannerTaskRegistry.kt$ScannerTaskRegistry$fun get(id: String): ScanTask?</ID>
     <ID>ReturnCount:SecretCipher.kt$SecretCipher$fun decrypt( ciphertext: String, prefKeyName: String = "", ): String</ID>
     <ID>ReturnCount:SecurityExcerpts.kt$SecurityExcerpts$fun extract( fullBody: String, includedLen: Int, maxChars: Int = MAX_CHARS, ): String?</ID>
-    <ID>ReturnCount:SettingsPanelActions.kt$internal fun SettingsPanel.shellQuote(value: String): String</ID>
     <ID>ReturnCount:SsrfGuard.kt$SsrfGuard$fun isPrivateOrLinkLocal(url: String): Boolean</ID>
     <ID>ReturnCount:SsrfGuard.kt$SsrfGuard$private fun extractAuthorityHost(url: String): String?</ID>
     <ID>ReturnCount:ToolCallParser.kt$ToolCallParser$private fun firstNestedToolCallObject(obj: JsonObject): JsonObject?</ID>
@@ -949,21 +894,12 @@
     <ID>ReturnCount:UiActions.kt$UiActions$private fun ensureActiveScannerEnabled( tab: MainTab, activeAiScanner: ActiveAiScanner?, ): Boolean</ID>
     <ID>ReturnCount:UiActions.kt$UiActions$private fun handleBountyPromptCompletion( api: MontoyaApi, tab: MainTab, definition: BountyPromptDefinition, responseText: String, targets: List&lt;HttpRequestResponse>, audit: AuditLogger?, )</ID>
     <ID>SpreadOperator:BurpAiBackend.kt$BurpAiConnection$(promptOptions, *messages.toTypedArray())</ID>
-    <ID>SpreadOperator:McpToolExecutorImpl.kt$McpToolExecutor$(*byteArrays.toTypedArray())</ID>
-    <ID>SpreadOperator:McpToolExecutorImpl.kt$McpToolExecutor$(*input.seedUrls.toTypedArray())</ID>
-    <ID>SpreadOperator:McpToolExecutorImpl.kt$McpToolExecutor$(*opts)</ID>
-    <ID>SpreadOperator:McpToolExecutorImpl.kt$McpToolExecutor$(input.customData.trim(), *opts)</ID>
-    <ID>SpreadOperator:McpToolLegacy.kt$(*byteArrays.toTypedArray())</ID>
-    <ID>SpreadOperator:McpToolLegacy.kt$(*opts)</ID>
-    <ID>SpreadOperator:McpToolLegacy.kt$(*seedUrls.toTypedArray())</ID>
-    <ID>SpreadOperator:McpToolLegacy.kt$(customData.trim(), *opts)</ID>
     <ID>SwallowedException:ActiveAiScanner.kt$ActiveAiScanner$e: TimeoutException</ID>
     <ID>SwallowedException:AgentSettings.kt$AgentSettingsRepository$e: Exception</ID>
     <ID>SwallowedException:BurpAiBackend.kt$BurpAiConnection$e: java.util.concurrent.RejectedExecutionException</ID>
     <ID>SwallowedException:ChatPanelConcurrencyTest.kt$ChatPanelConcurrencyTest$e: Exception</ID>
     <ID>SwallowedException:CustomPromptDefinition.kt$CustomPromptDefinition.Companion$e: Exception</ID>
     <ID>SwallowedException:KtorMcpServerManager.kt$KtorMcpServerManager$e: TimeoutException</ID>
-    <ID>SwallowedException:McpToolExecutorImpl.kt$McpToolExecutor$e: kotlinx.serialization.MissingFieldException</ID>
     <ID>SwallowedException:SecretCipher.kt$SecretCipher$e: Exception</ID>
     <ID>SwallowedException:SsrfGuard.kt$SsrfGuard$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ActiveAiScanner.kt$ActiveAiScanner$e: Exception</ID>
@@ -973,7 +909,6 @@
     <ID>TooGenericExceptionCaught:AgentSettings.kt$AgentSettingsRepository$e: Throwable</ID>
     <ID>TooGenericExceptionCaught:AgentSettings.kt$AgentSettingsRepository.Companion$e: Exception</ID>
     <ID>TooGenericExceptionCaught:AgentSupervisor.kt$AgentSupervisor$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:AgentSupervisor.kt$AgentSupervisor$e: Throwable</ID>
     <ID>TooGenericExceptionCaught:AiLoggerPanel.kt$AiLoggerPanel$e: Exception</ID>
     <ID>TooGenericExceptionCaught:AiScanCheck.kt$AiScanCheck$e: Exception</ID>
     <ID>TooGenericExceptionCaught:AnthropicBackend.kt$AnthropicBackend.AnthropicConnection$e: Exception</ID>
@@ -984,7 +919,6 @@
     <ID>TooGenericExceptionCaught:BurpAiBackend.kt$BurpAiConnection$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ChatPanel.kt$ChatPanel$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ChatSessionManager.kt$ChatSessionManager$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:CliBackend.kt$CliBackend.CliConnection$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CliBackend.kt$CliBackend.NonInteractiveCliConnection$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CustomPromptDefinition.kt$CustomPromptDefinition.Companion$e: Exception</ID>
     <ID>TooGenericExceptionCaught:CustomPromptLibraryEditor.kt$CustomPromptLibraryEditor$e: Exception</ID>
@@ -1003,7 +937,6 @@
     <ID>TooGenericExceptionCaught:PassiveAiScannerParsing.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:PerplexityBackendFactory.kt$PerplexityBackendFactory.Companion$e: Exception</ID>
     <ID>TooGenericExceptionCaught:SecretCipher.kt$SecretCipher$e: Exception</ID>
-    <ID>TooGenericExceptionCaught:SettingsPanelActions.kt$e: Exception</ID>
     <ID>TooGenericExceptionCaught:SsrfGuard.kt$SsrfGuard$e: Exception</ID>
     <ID>TooGenericExceptionCaught:ToolInvocationDialog.kt$ToolInvocationDialog$e: Exception</ID>
     <ID>TooGenericExceptionThrown:CliBackendTempFileTest.kt$CliBackendTempFileTest$throw RuntimeException("simulated processing failure")</ID>
@@ -1025,7 +958,6 @@
     <ID>TooManyFunctions:ExternalServersPanel.kt$ExternalServersPanel</ID>
     <ID>TooManyFunctions:MainTab.kt$MainTab</ID>
     <ID>TooManyFunctions:McpSupervisor.kt$McpSupervisor</ID>
-    <ID>TooManyFunctions:McpToolExecutorImpl.kt$McpToolExecutor</ID>
     <ID>TooManyFunctions:McpToolHelpers.kt$com.six2dez.burp.aiagent.mcp.tools.McpToolHelpers.kt</ID>
     <ID>TooManyFunctions:PassiveAiScanner.kt$PassiveAiScanner</ID>
     <ID>TooManyFunctions:PassiveAiScannerAnalysis.kt$com.six2dez.burp.aiagent.scanner.PassiveAiScannerAnalysis.kt</ID>

@@ -24,7 +24,6 @@ class McpToolTabModelTest {
         title: String,
         description: String = "",
         category: String = "Cat",
-        nativeTool: Boolean = false,
         proOnly: Boolean = false,
         unsafeOnly: Boolean = false,
         // Defaulted at the HELPER level only. D-03 is about the production `data class`
@@ -39,86 +38,81 @@ class McpToolTabModelTest {
         description = description,
         category = category,
         defaultEnabled = true,
-        nativeTool = nativeTool,
         proOnly = proOnly,
         unsafeOnly = unsafeOnly,
         secTier = secTier,
     )
 
     // -------------------------------------------------------------------------
-    // groupTools — native list
+    // groupTools — provenance comes from the registry's core id set (D-14, BUILD-04)
     // -------------------------------------------------------------------------
 
     @Test
-    fun groupTools_nativeToolsGoToNativeList() {
+    fun groupTools_coreIdsGoToCoreListAndTheRestToProvided() {
         val tools =
             listOf(
-                descriptor("n1", "Native One", nativeTool = true),
-                descriptor("n2", "Native Two", nativeTool = true),
-                descriptor("g1", "Generic One", nativeTool = false),
-                descriptor("g2", "Generic Two", nativeTool = false),
+                descriptor("n1", "Native One"),
+                descriptor("n2", "Native Two"),
+                descriptor("g1", "Generic One"),
+                descriptor("g2", "Generic Two"),
             )
-        val grouping = McpToolTabModel.groupTools(tools)
+        val grouping = McpToolTabModel.groupTools(tools, coreIds = setOf("n1", "n2"))
 
-        assertEquals(2, grouping.native.size)
-        assertEquals(2, grouping.generic.size)
-        assertTrue(grouping.native.all { it.nativeTool })
-        assertFalse(grouping.generic.any { it.nativeTool })
+        assertEquals(listOf("n1", "n2"), grouping.core.map { it.id })
+        assertEquals(listOf("g1", "g2"), grouping.provided.map { it.id })
     }
 
     @Test
-    fun groupTools_nativeListIsSortedByTitle() {
+    fun groupTools_coreListIsSortedByTitle() {
         val tools =
             listOf(
-                descriptor("z", "Zebra", nativeTool = true),
-                descriptor("a", "Alpha", nativeTool = true),
-                descriptor("m", "Mango", nativeTool = true),
+                descriptor("z", "Zebra"),
+                descriptor("a", "Alpha"),
+                descriptor("m", "Mango"),
             )
-        val grouping = McpToolTabModel.groupTools(tools)
+        val grouping = McpToolTabModel.groupTools(tools, coreIds = setOf("z", "a", "m"))
 
-        assertEquals(listOf("Alpha", "Mango", "Zebra"), grouping.native.map { it.title })
+        assertEquals(listOf("Alpha", "Mango", "Zebra"), grouping.core.map { it.title })
+        assertTrue(grouping.provided.isEmpty())
     }
 
     @Test
-    fun groupTools_genericListIsSortedByTitle() {
+    fun groupTools_providedListIsSortedByTitle() {
         val tools =
             listOf(
-                descriptor("z", "Zebra", nativeTool = false),
-                descriptor("a", "Alpha", nativeTool = false),
-                descriptor("m", "Mango", nativeTool = false),
+                descriptor("z", "Zebra"),
+                descriptor("a", "Alpha"),
+                descriptor("m", "Mango"),
             )
-        val grouping = McpToolTabModel.groupTools(tools)
+        val grouping = McpToolTabModel.groupTools(tools, coreIds = emptySet())
 
-        assertEquals(listOf("Alpha", "Mango", "Zebra"), grouping.generic.map { it.title })
+        assertEquals(listOf("Alpha", "Mango", "Zebra"), grouping.provided.map { it.title })
+        assertTrue(grouping.core.isEmpty())
     }
 
     @Test
-    fun groupTools_noNativeToolsGivesEmptyNativeList() {
-        val tools =
-            listOf(
-                descriptor("g1", "Generic One", nativeTool = false),
-                descriptor("g2", "Generic Two", nativeTool = false),
-            )
-        val grouping = McpToolTabModel.groupTools(tools)
+    fun groupTools_aCoreIdWithNoMatchingToolIsIgnored() {
+        val tools = listOf(descriptor("g1", "Generic One"))
+        val grouping = McpToolTabModel.groupTools(tools, coreIds = setOf("absent"))
 
-        assertTrue(grouping.native.isEmpty())
-        assertEquals(2, grouping.generic.size)
+        assertTrue(grouping.core.isEmpty())
+        assertEquals(listOf("g1"), grouping.provided.map { it.id })
     }
 
     // -------------------------------------------------------------------------
-    // badgeStyle — UI-04
+    // badgeStyle — UI-04, keyed on the core id set
     // -------------------------------------------------------------------------
 
     @Test
-    fun badgeStyle_nativeToolReturnsBadgeNative() {
-        val tool = descriptor("t1", "Tool", nativeTool = true)
-        assertEquals(BadgeStyle.NATIVE, McpToolTabModel.badgeStyle(tool))
+    fun badgeStyle_coreToolReturnsBadgeNative() {
+        val tool = descriptor("t1", "Tool")
+        assertEquals(BadgeStyle.NATIVE, McpToolTabModel.badgeStyle(tool, coreIds = setOf("t1")))
     }
 
     @Test
-    fun badgeStyle_genericToolReturnsBadgeFull() {
-        val tool = descriptor("t1", "Tool", nativeTool = false)
-        assertEquals(BadgeStyle.FULL, McpToolTabModel.badgeStyle(tool))
+    fun badgeStyle_providedToolReturnsBadgeFull() {
+        val tool = descriptor("t1", "Tool")
+        assertEquals(BadgeStyle.FULL, McpToolTabModel.badgeStyle(tool, coreIds = setOf("other")))
     }
 
     // -------------------------------------------------------------------------

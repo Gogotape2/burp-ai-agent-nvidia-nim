@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.ui
 
 import com.six2dez.burp.aiagent.agents.AgentProfileLoader
+import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.config.McpSettings
@@ -11,6 +12,8 @@ import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.scanner.PayloadRisk
 import com.six2dez.burp.aiagent.scanner.ScanMode
 import com.six2dez.burp.aiagent.scanner.applyOptimizationSettings
+import com.six2dez.burp.aiagent.spi.ContributionSnapshot
+import com.six2dez.burp.aiagent.spi.SettingsContribution
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
 import com.six2dez.burp.aiagent.ui.panels.BackendConfigState
 import java.util.concurrent.atomic.AtomicBoolean
@@ -30,8 +33,6 @@ internal fun SettingsPanel.currentSettings(): AgentSettings {
             tlsAutoGenerate = mcpTlsAuto.isSelected,
             tlsKeystorePath = mcpKeystorePath.text.trim(),
             tlsKeystorePassword = String(mcpKeystorePassword.password),
-            scanTaskTtlMinutes = settings.mcpSettings.scanTaskTtlMinutes,
-            collaboratorClientTtlMinutes = settings.mcpSettings.collaboratorClientTtlMinutes,
             maxConcurrentRequests = (mcpMaxConcurrent.value as? Int) ?: 4,
             // 07-02 D-02: spinner is denominated in KB; convert to bytes for persistence.
             // Floor of 32 KB matches AgentSettings.loadMcpSettings coerceIn lower bound.
@@ -48,9 +49,6 @@ internal fun SettingsPanel.currentSettings(): AgentSettings {
             unsafeEnabled = mcpUnsafe.isSelected,
             // 07-03 D-03: persist the global MCP scope toggle on the McpSettings sub-object.
             scopeOnly = mcpScopeOnly.isSelected,
-            // Phase 16-05: external server list; bearerToken values are PLAINTEXT here —
-            // AgentSettingsRepository.saveExternalMcpServers() encrypts per-field at persist time.
-            externalMcpServers = externalServersPanel.getServers(),
         )
     val backendState = backendConfigPanel.currentBackendSettings()
     val ollamaTimeoutSeconds =
@@ -79,12 +77,7 @@ internal fun SettingsPanel.currentSettings(): AgentSettings {
             settings.perplexityTimeoutSeconds,
         )
     return AgentSettings(
-        codexCmd = backendState.codexCmd,
-        geminiCmd = backendState.geminiCmd,
-        opencodeCmd = backendState.opencodeCmd,
-        claudeCmd = backendState.claudeCmd,
         agentProfile = profilePicker.selectedItem as? String ?: "pentester",
-        ollamaCliCmd = backendState.ollamaCliCmd,
         ollamaModel = backendState.ollamaModel,
         ollamaUrl = backendState.ollamaUrl,
         ollamaServeCmd = backendState.ollamaServeCmd,
@@ -127,7 +120,6 @@ internal fun SettingsPanel.currentSettings(): AgentSettings {
                 .trim()
                 .toIntOrNull()
                 ?.coerceAtLeast(0) ?: 0,
-        copilotCmd = backendState.copilotCmd,
         requestPromptTemplate = promptRequest.text.trim(),
         issuePromptTemplate = promptIssueFull.text.trim(),
         issueAnalyzePrompt = promptIssueAnalyze.text.trim(),
@@ -138,10 +130,9 @@ internal fun SettingsPanel.currentSettings(): AgentSettings {
         accessControlPrompt = promptAccessControl.text.trim(),
         loginSequencePrompt = promptLoginSequence.text.trim(),
         hostAnonymizationSalt = settings.hostAnonymizationSalt,
-        preferredBackendId = preferredBackendId(),
+        preferredBackendId = backendIdToStore(),
         privacyMode = privacyMode.selectedItem as? PrivacyMode ?: PrivacyMode.STRICT,
         determinismMode = determinism.isSelected,
-        autoRestart = autoRestart.isSelected,
         auditEnabled = auditEnabled.isSelected,
         auditVerbose = auditVerbose.isSelected,
         mcpSettings = mcpSettings,
@@ -185,7 +176,6 @@ internal fun SettingsPanel.currentSettings(): AgentSettings {
         activeAiRequestDelayMs = (activeAiDelaySpinner.value as? Int) ?: 100,
         activeAiMaxRiskLevel = PayloadRisk.fromString(activeAiRiskLevelCombo.selectedItem as? String),
         activeAiScopeOnly = activeAiScopeOnly.isSelected,
-        activeAiAutoFromPassive = activeAiAutoFromPassive.isSelected,
         activeAiScanMode = ScanMode.fromString(activeAiScanModeCombo.selectedItem as? String),
         activeAiUseCollaborator = activeAiUseCollaborator.isSelected,
         activeAiAdaptivePayloads = activeAiAdaptivePayloads.isSelected,
@@ -297,14 +287,13 @@ internal fun SettingsPanel.applySettingsToUi(
     updated: AgentSettings,
     notifyHosts: Boolean = true,
 ) {
-    preferredBackend.selectedItem = updated.preferredBackendId
+    // D-08: an unregistered saved id stays remembered (and is written back on Save) while burp-ai stands in.
+    unavailableSavedBackendId = unavailableBackendId(updated.preferredBackendId, backends)
+    preferredBackend.selectedItem =
+        if (unavailableSavedBackendId == null) updated.preferredBackendId else BackendRegistry.DEFAULT_BACKEND_ID
+    syncUnavailableBackendNotice()
     backendConfigPanel.applyState(
         BackendConfigState(
-            codexCmd = updated.codexCmd,
-            geminiCmd = updated.geminiCmd,
-            opencodeCmd = updated.opencodeCmd,
-            claudeCmd = updated.claudeCmd,
-            ollamaCliCmd = updated.ollamaCliCmd,
             ollamaModel = updated.ollamaModel,
             ollamaUrl = updated.ollamaUrl,
             ollamaServeCmd = updated.ollamaServeCmd,
@@ -336,13 +325,11 @@ internal fun SettingsPanel.applySettingsToUi(
             perplexityTimeoutSeconds = updated.perplexityTimeoutSeconds.toString(),
             anthropicModel = updated.anthropicModel,
             anthropicApiKey = updated.anthropicApiKey,
-            copilotCmd = updated.copilotCmd,
         ),
     )
     profilePicker.selectedItem = updated.agentProfile
     privacyMode.selectedItem = updated.privacyMode
     determinism.isSelected = updated.determinismMode
-    autoRestart.isSelected = updated.autoRestart
     auditEnabled.isSelected = updated.auditEnabled
     auditVerbose.isSelected = updated.auditVerbose
     // 07-02 D-02: keep the small-model-mode toggle in sync with persisted state.
@@ -389,9 +376,6 @@ internal fun SettingsPanel.applySettingsToUi(
     mcpUnsafe.isSelected = updated.mcpSettings.unsafeEnabled
     // 07-03 D-03: keep the scope-only toggle in sync with persisted state.
     mcpScopeOnly.isSelected = updated.mcpSettings.scopeOnly
-    // Phase 16-05: refresh external server list; bearerToken values are PLAINTEXT (decrypted
-    // by AgentSettingsRepository.loadExternalMcpServers() before reaching here).
-    externalServersPanel.setServers(updated.mcpSettings.externalMcpServers)
     preprocessProxyHistory.isSelected = updated.preprocessProxyHistory
     preprocessMaxResponseSizeKb.value = updated.preprocessMaxResponseSizeKb
     preprocessFilterBinaryContent.isSelected = updated.preprocessFilterBinaryContent
@@ -440,7 +424,6 @@ internal fun SettingsPanel.applySettingsToUi(
     // Active AI Scanner settings
     activeAiEnabled.isSelected = updated.activeAiEnabled
     activeAiScopeOnly.isSelected = updated.activeAiScopeOnly
-    activeAiAutoFromPassive.isSelected = updated.activeAiAutoFromPassive
     activeAiMaxConcurrentSpinner.value = updated.activeAiMaxConcurrent
     activeAiMaxPayloadsSpinner.value = updated.activeAiMaxPayloadsPerPoint
     activeAiTimeoutSpinner.value = updated.activeAiTimeoutSeconds
@@ -451,6 +434,8 @@ internal fun SettingsPanel.applySettingsToUi(
     activeAiAdaptivePayloads.isSelected = updated.activeAiAdaptivePayloads
     updateActiveRiskDescription()
     refreshActiveAiStatus()
+    // D-07: every contribution hears about the core apply, after the core components show it.
+    activeContributions.forEach { it.onCoreSettingsApplied(updated) }
     if (notifyHosts) {
         onMcpEnabledChanged?.invoke(updated.mcpSettings.enabled)
         onPassiveAiEnabledChanged?.invoke(updated.passiveAiEnabled)
@@ -536,9 +521,15 @@ internal fun SettingsPanel.parseContentTypePrefixesInput(
 internal fun SettingsPanel.applyAndSaveSettingsBody(
     updated: AgentSettings,
     isCurrent: () -> Boolean = { true },
+    contributionSnapshots: List<Pair<SettingsContribution, ContributionSnapshot>> = emptyList(),
 ) {
     settings = updated
     settingsRepo.save(updated)
+    // D-07 (UI-SPEC H-2, T-29-28): contributions persist on this worker, strictly after the core save
+    // and before the backends reload, so a reloaded backend reads the values just saved. A persist that
+    // throws does not stop the core apply steps below: its failure is rethrown at the end of the body,
+    // where it reaches the caller's onFailure ("Save failed: {message}") with core settings applied.
+    val contributionFailure = if (isCurrent()) persistContributions(contributionSnapshots) else null
     // Re-prime the BountyPrompt cache off-thread so menu builds never touch disk (BApp #231, finding 2).
     // Called from this worker it starts a second, nested daemon thread. That nesting is harmless and
     // deliberate: the cache refresh is fire-and-forget, this worker never reads its result, and the
@@ -604,7 +595,36 @@ internal fun SettingsPanel.applyAndSaveSettingsBody(
     if (!isCurrent()) return
     activeAiScanner.setEnabled(updated.activeAiEnabled)
 
+    contributionFailure?.let { throw it }
     api.logging().logToOutput("AI Agent settings saved.")
+}
+
+/**
+ * Runs each contribution's `persist` on the calling thread (the settings-save worker), in list order,
+ * and returns the first failure with any later ones attached as suppressed, or null. Every contribution
+ * gets its turn even when an earlier one throws, and each failure is logged with its class name.
+ *
+ * **Why the catch is broad.** A plug-in may throw anything; one failing plug-in must neither skip the
+ * others nor the core apply steps. A `VirtualMachineError` is rethrown at once.
+ */
+@Suppress("TooGenericExceptionCaught")
+internal fun SettingsPanel.persistContributions(snapshots: List<Pair<SettingsContribution, ContributionSnapshot>>): Throwable? {
+    var firstFailure: Throwable? = null
+    snapshots.forEach { (contribution, snapshot) ->
+        try {
+            contribution.persist(snapshot, pluginSettings)
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Throwable) {
+            api.logging().logToError(
+                "[SettingsPanel] Settings contribution ${contribution.javaClass.name} failed to persist: " +
+                    "${failure.javaClass.simpleName}: ${failure.message}",
+            )
+            val earlier = firstFailure
+            if (earlier == null) firstFailure = failure else earlier.addSuppressed(failure)
+        }
+    }
+    return firstFailure
 }
 
 /**
@@ -628,6 +648,7 @@ internal fun SettingsPanel.applyAndSaveSettingsBody(
 @Suppress("TooGenericExceptionCaught")
 internal fun SettingsPanel.applyAndSaveSettingsAsync(
     updated: AgentSettings,
+    contributionSnapshots: List<Pair<SettingsContribution, ContributionSnapshot>> = emptyList(),
     onDone: (Result<Unit>) -> Unit,
 ) {
     // CR-01: a save submitted AFTER unload is refused outright rather than superseded mid-body.
@@ -670,6 +691,7 @@ internal fun SettingsPanel.applyAndSaveSettingsAsync(
                 applyAndSaveSettingsBody(
                     updated,
                     isCurrent = { saveGeneration.get() == generation && !disposed },
+                    contributionSnapshots = contributionSnapshots,
                 )
             } catch (failure: Throwable) {
                 // Outer layer. The dispatcher posts its EDT tail after routing this throwable to

@@ -26,42 +26,116 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
 
-      - name: ktlint check
-        run: ./gradlew ktlintCheck --no-daemon
+      - name: ktlint and detekt
+        run: ./gradlew ktlintCheck detekt --no-daemon
 
-      - name: Run full test suite (fast + heavy)
-        run: ./gradlew test nightlyRegressionTest --no-daemon
+      # The full asset ships the CLI backends, whose heavy suites live in the full flavor, so the
+      # release runs both flavors' fast and heavy suites, not only the store ones.
+      - name: Run both flavors' test suites (fast + heavy)
+        run: ./gradlew test fullTest nightlyRegressionTest nightlyRegressionFullTest edtGuardWithoutAssertionsTest --no-daemon
 
-      - name: Build shadow JAR
-        run: ./gradlew shadowJar --no-daemon
+      # This is the same task PRs run. A failing step stops the job before anything is staged or
+      # published, so a tag on a commit that never ran PR CI cannot publish an unchecked store JAR (D-02).
+      - name: Build both JARs and inspect the BApp Store JAR (CI-01 / D-02)
+        run: ./gradlew bappJar fullJar storeJarContentTest --no-daemon
 
       - name: Generate SBOM (CycloneDX)
         # --no-configuration-cache: cyclonedx-gradle-plugin 1.10.0 uses Task.project
         # at execution time, which is incompatible with Gradle's configuration cache.
         run: ./gradlew cyclonedxBom --no-daemon --no-configuration-cache
 
-      - name: Compute SHA-256 checksum
+      # The Gradle output keeps the name BappManifest.bmf pins; only the release asset is versioned
+      # (D-01). Staging in an emptied directory keeps stale JARs from earlier builds out of the release
+      # and keeps the publish globs exact. The tag is read from GITHUB_REF in the environment, never
+      # through a workflow expression in the script.
+      - name: Stage release assets (D-01)
         run: |
-          cd build/libs
-          for f in Custom-AI-Agent-*.jar; do
-            sha256sum "$f" > "$f.sha256"
-          done
+          TAG="${GITHUB_REF#refs/tags/}"
+          VERSION="${TAG#v}"
+          full="build/libs/Custom-AI-Agent-full-${VERSION}.jar"
+          storeJar="build/libs/custom-ai-agent-bapp.jar"
+          bappAsset="Custom-AI-Agent-bapp-${VERSION}.jar"
+          if [ ! -f "$full" ]; then
+            echo "::error::Tag ${TAG} does not match the Gradle version: expected ${full}."
+            ls -l build/libs || true
+            exit 1
+          fi
+          if [ ! -f "$storeJar" ]; then
+            echo "::error::BApp Store JAR ${storeJar} was not built."
+            exit 1
+          fi
+          rm -rf build/release
+          mkdir -p build/release
+          cp "$full" build/release/
+          cp "$storeJar" "build/release/${bappAsset}"
+          cmp "$storeJar" "build/release/${bappAsset}"
+          staged=$(find build/release -maxdepth 1 -type f -name '*.jar' | wc -l | tr -d ' ')
+          if [ "$staged" != "2" ]; then
+            echo "::error::Expected exactly 2 JARs in build/release, found ${staged}."
+            ls -l build/release
+            exit 1
+          fi
 
-      - name: Extract release notes from CHANGELOG
+      # Computed after the rename and from inside the staging directory, so the file name inside each
+      # checksum is the published asset name. The sha256sum format is unchanged from 1.0.x (D-03).
+      - name: Compute SHA-256 checksums (D-03)
+        run: |
+          cd build/release
+          for f in *.jar; do
+            sha256sum "$f" > "$f.sha256"
+            lines=$(wc -l < "$f.sha256" | tr -d ' ')
+            if [ "$lines" != "1" ]; then
+              echo "::error::${f}.sha256 holds ${lines} lines, expected exactly 1."
+              exit 1
+            fi
+          done
+          sha256sum -c ./*.sha256
+
+      # The workflow writes the "Which JAR?" block on every release instead of leaving it to each
+      # CHANGELOG section (D-04). The body is prepended to GitHub's generated notes, so the release page
+      # reads: Which JAR? block, CHANGELOG section, generated notes. The heredoc is quoted so the
+      # Markdown backticks are never run as command substitutions; the version is substituted after.
+      # The bullet for the BApp Store asset names the build command, not the file the BApp Store
+      # distributes (PortSwigger builds from source), and the checksum is described as an integrity
+      # check only.
+      - name: Write release notes (D-04)
         id: extract_notes
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           VERSION="${TAG#v}"
+          case "$VERSION" in
+            ''|*[!0-9A-Za-z.+-]*)
+              echo "::error::Tag ${TAG} does not hold a plain version; refusing to write release notes."
+              exit 1
+              ;;
+          esac
+          rm -rf build/release-notes
+          mkdir -p build/release-notes
+          cat > build/release-notes/which-jar.md <<'WHICH_JAR'
+          ## Which JAR?
+
+          - **`Custom-AI-Agent-full-@VERSION@.jar`** is the GitHub full build. It adds the generic MCP tools, the CLI backends (Claude Code, Codex, Gemini, OpenCode, Copilot), the external MCP client and the opt-in auto-queue to what the BApp Store build offers.
+          - **`Custom-AI-Agent-bapp-@VERSION@.jar`** is the BApp Store build: the extension-native MCP tools and the HTTP backends, built with `./gradlew bappJar`, the command PortSwigger's BApp Store build runs.
+
+          **Load only one build.** The full build and the BApp Store build both register as **Custom AI Agent**, so they look identical in Burp's Extensions list. Loading both at once gives you two Custom AI Agent tabs, two MCP servers competing for the same port, and two copies writing the shared `~/.burp-ai-agent` directory. Unload one before you load the other.
+
+          Each JAR has a `.sha256` file in `sha256sum` format. Run `sha256sum -c <asset>.sha256` next to the download to check that it is complete and uncorrupted. The checksum is published on the same release as the JAR, so it does not show who built the file.
+
+          `bom.json` lists the full build's runtime dependencies, which include every dependency of the BApp Store build.
+
+          WHICH_JAR
+          sed "s/@VERSION@/${VERSION}/g" build/release-notes/which-jar.md > build/release-notes/release_notes.md
           # Extract the section between "## [VERSION]" and the next "## [" heading
           awk -v ver="$VERSION" '
             $0 ~ "^## \\[" ver "\\]" { found=1; next }
             found && /^## \[/ { exit }
             found { print }
-          ' CHANGELOG.md > release_notes.md
-          if [ ! -s release_notes.md ]; then
-            echo "No changelog section for $VERSION, falling back to auto-generated notes." > release_notes.md
+          ' CHANGELOG.md > build/release-notes/changelog-section.md
+          if [ ! -s build/release-notes/changelog-section.md ]; then
+            echo "No changelog section for $VERSION, falling back to auto-generated notes." > build/release-notes/changelog-section.md
           fi
-          echo "notes_file=release_notes.md" >> "$GITHUB_OUTPUT"
+          cat build/release-notes/changelog-section.md >> build/release-notes/release_notes.md
+          echo "notes_file=build/release-notes/release_notes.md" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v3
@@ -69,7 +143,12 @@ jobs:
           body_path: ${{ steps.extract_notes.outputs.notes_file }}
           generate_release_notes: true
           append_body: true
+          fail_on_unmatched_files: true
+          # One glob per asset kind, so a missing store asset fails the step instead of passing on the
+          # full asset's match.
           files: |
-            build/libs/Custom-AI-Agent-*.jar
-            build/libs/Custom-AI-Agent-*.jar.sha256
+            build/release/Custom-AI-Agent-full-*.jar
+            build/release/Custom-AI-Agent-full-*.jar.sha256
+            build/release/Custom-AI-Agent-bapp-*.jar
+            build/release/Custom-AI-Agent-bapp-*.jar.sha256
             build/reports/sbom/bom.json

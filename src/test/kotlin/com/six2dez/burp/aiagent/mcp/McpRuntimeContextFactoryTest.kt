@@ -70,8 +70,6 @@ class McpRuntimeContextFactoryTest {
             tlsAutoGenerate = true,
             tlsKeystorePath = "",
             tlsKeystorePassword = "",
-            scanTaskTtlMinutes = 120,
-            collaboratorClientTtlMinutes = 60,
             maxConcurrentRequests = maxConcurrentRequests,
             maxBodyBytes = maxBodyBytes,
             toolToggles = toolToggles,

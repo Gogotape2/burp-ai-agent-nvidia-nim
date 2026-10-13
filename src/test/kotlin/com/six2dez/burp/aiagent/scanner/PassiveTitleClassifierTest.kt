@@ -1,19 +1,28 @@
 package com.six2dez.burp.aiagent.scanner
 
+import burp.api.montoya.http.message.HttpRequestResponse
 import com.six2dez.burp.aiagent.TestSettings
+import com.six2dez.burp.aiagent.config.AgentSettings
+import com.six2dez.burp.aiagent.spi.SuggestedTargetSink
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import org.mockito.kotlin.argumentCaptor
-import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.mock
-import org.mockito.kotlin.verify
 import org.mockito.kotlin.verifyNoInteractions
+import java.util.Collections
 
 /**
  * Quick 261009-d0i - short acronyms in a passive finding title match only as whole words ("ato" no
  * longer matches "Indicators", "rce" no longer matches "Source") and NoSQL is checked before SQL. The
- * class picked by `mapTitleToVulnClass` drives both the `[AI Passive]` issue name and what the AI
- * active scanner is auto-queued to test, so both are checked through the real code paths.
+ * class picked by `mapTitleToVulnClass` drives both the `[AI Passive]` issue name and the suggested
+ * targets the passive scanner offers to its [SuggestedTargetSink], so both are checked through the
+ * real code paths.
+ *
+ * Phase 29 / D-02: the passive scanner holds no active-scanner reference. It builds suggested targets
+ * only when a sink is installed (the full build's opt-in auto-queue plug-in) and offers them once; the
+ * sink, not the core, decides whether anything is queued.
  */
 class PassiveTitleClassifierTest {
     @Test
@@ -73,36 +82,146 @@ class PassiveTitleClassifierTest {
     }
 
     @Test
-    fun onlyTheRealClassIsAutoQueuedToTheActiveScanner() {
-        val settings =
-            TestSettings.baselineSettings().copy(
-                passiveAiEnabled = true,
-                passiveAiScopeOnly = false,
-                activeAiEnabled = true,
-                activeAiAutoFromPassive = true,
-                activeAiScanMode = ScanMode.FULL,
-            )
-        PassiveScanCheckRig(settings).use { rig ->
-            val active = mock<ActiveAiScanner>()
-            rig.scanner.activeScanner = active
-            val unrelated =
-                listOf(
-                    "HTTP Request Smuggling Indicators" to "queue-smuggling.example",
-                    "JavaScript Source Map Exposed" to "queue-sourcemap.example",
-                    "Missing Brute Force Protection" to "queue-bruteforce.example",
-                )
+    fun aSqlInjectionFindingOffersSqliTargetsToTheSink() {
+        PassiveScanCheckRig(offerSettings(ScanMode.FULL)).use { rig ->
+            val sink = RecordingSink()
+            rig.scanner.suggestedTargetSink = sink
+            val request = rig.csrfPost("offer-sqli.example")
 
-            for ((title, host) in unrelated) {
-                rig.scanner.queueToActiveScanner(rig.csrfPost(host), title, "Medium", "evidence", 90, rig.settings)
-            }
-            verifyNoInteractions(active)
+            rig.scanner.offerSuggestedTargets(request, "SQL Injection", "Medium", "evidence", 90, rig.settings)
 
-            rig.scanner.queueToActiveScanner(rig.csrfPost("queue-sqli.example"), "SQL Injection", "Medium", "evidence", 90, rig.settings)
-            val targets = argumentCaptor<ActiveScanTarget>()
-            verify(active, atLeastOnce()).queueTarget(targets.capture())
-            assertEquals(setOf(VulnClass.SQLI), targets.allValues.map { it.vulnHint.vulnClass }.toSet())
+            val offered = sink.offers.single()
+            assertTrue(offered.targets.isNotEmpty(), "the request's injection points become targets")
+            assertEquals(setOf(VulnClass.SQLI), offered.classes())
+            assertEquals(setOf(MEDIUM_PRIORITY), offered.priorities())
+            assertEquals(setOf(90), offered.targets.map { it.vulnHint.confidence }.toSet())
+            assertTrue(offered.targets.all { it.originalRequest === request }, "every target keeps the original request")
+            assertSame(rig.settings, offered.settings, "the sink receives the settings the scan ran with")
         }
     }
+
+    @Test
+    fun theTargetPriorityFollowsTheFindingSeverity() {
+        PassiveScanCheckRig(offerSettings(ScanMode.FULL)).use { rig ->
+            val sink = RecordingSink()
+            rig.scanner.suggestedTargetSink = sink
+            val expected =
+                listOf(
+                    "CRITICAL" to 100,
+                    "High" to 80,
+                    "medium" to MEDIUM_PRIORITY,
+                    "Low" to 40,
+                    "Information" to 40,
+                )
+
+            expected.forEachIndexed { index, (severity, _) ->
+                rig.scanner.offerSuggestedTargets(
+                    rig.csrfPost("offer-priority-$index.example"),
+                    "SQL Injection",
+                    severity,
+                    "evidence",
+                    90,
+                    rig.settings,
+                )
+            }
+
+            val actual = sink.offers.map { it.priorities() }
+            assertEquals(expected.map { (_, priority) -> setOf(priority) }, actual, "priorities for ${expected.map { it.first }}")
+        }
+    }
+
+    @Test
+    fun withNoSinkNothingIsBuiltOrOffered() {
+        PassiveScanCheckRig(offerSettings(ScanMode.FULL)).use { rig ->
+            val request = mock<HttpRequestResponse>()
+
+            rig.scanner.offerSuggestedTargets(request, "SQL Injection", "High", "evidence", 90, rig.settings)
+
+            // extractInjectionPoints reads the request: an untouched request means no target was built.
+            verifyNoInteractions(request)
+            assertNull(rig.scanner.suggestedTargetSink, "the store classpath installs no sink")
+        }
+    }
+
+    @Test
+    fun passiveOnlyAndModeDisallowedClassesAreNeverOffered() {
+        PassiveScanCheckRig(offerSettings(ScanMode.BUG_BOUNTY)).use { rig ->
+            val sink = RecordingSink()
+            rig.scanner.suggestedTargetSink = sink
+            val neverOffered =
+                listOf(
+                    // ScanPolicy.PASSIVE_ONLY_VULN_CLASSES
+                    "HTTP Request Smuggling Indicators" to "offer-smuggling.example",
+                    "JavaScript Source Map Exposed" to "offer-sourcemap.example",
+                    "Anti-CSRF Token Missing" to "offer-csrf.example",
+                    // no class at all
+                    "Missing Brute Force Protection" to "offer-bruteforce.example",
+                    // real classes that BUG_BOUNTY mode does not test
+                    "LDAP Injection" to "offer-ldap.example",
+                    "LFI via Path Parameter" to "offer-lfi.example",
+                )
+
+            for ((title, host) in neverOffered) {
+                rig.scanner.offerSuggestedTargets(rig.csrfPost(host), title, "High", "evidence", 90, rig.settings)
+            }
+            assertEquals(emptyList<Offer>(), sink.offers)
+
+            rig.scanner.offerSuggestedTargets(rig.csrfPost("offer-bb-sqli.example"), "SQL Injection", "High", "evidence", 90, rig.settings)
+            assertEquals(setOf(VulnClass.SQLI), sink.offers.single().classes())
+        }
+    }
+
+    @Test
+    fun theCoreOffersEvenWhenTheActiveScannerIsOffBecauseTheSinkDecides() {
+        PassiveScanCheckRig(offerSettings(ScanMode.FULL).copy(activeAiEnabled = false)).use { rig ->
+            val sink = RecordingSink()
+            rig.scanner.suggestedTargetSink = sink
+
+            rig.scanner.offerSuggestedTargets(rig.csrfPost("offer-gate.example"), "SQL Injection", "High", "evidence", 90, rig.settings)
+
+            assertEquals(1, sink.offers.size, "core has no settings gate; the sink applies its own")
+        }
+    }
+
+    @Test
+    fun aRecordedIssueOffersItsSuggestedTargetsOnce() {
+        PassiveScanCheckRig(offerSettings(ScanMode.FULL)).use { rig ->
+            val sink = RecordingSink()
+            rig.scanner.suggestedTargetSink = sink
+
+            rig.scanner.recordNewIssue(rig.csrfPost("offer-record.example"), "SQL Injection", "High", "detail", 90, rig.settings, "test")
+
+            assertEquals(setOf(VulnClass.SQLI), sink.offers.single().classes())
+        }
+    }
+
+    private data class Offer(
+        val targets: List<ActiveScanTarget>,
+        val settings: AgentSettings,
+    ) {
+        fun classes(): Set<VulnClass> = targets.map { it.vulnHint.vulnClass }.toSet()
+
+        fun priorities(): Set<Int> = targets.map { it.priority }.toSet()
+    }
+
+    private class RecordingSink : SuggestedTargetSink {
+        val offers: MutableList<Offer> = Collections.synchronizedList(mutableListOf())
+
+        override fun offer(
+            targets: List<ActiveScanTarget>,
+            settings: AgentSettings,
+        ) {
+            offers += Offer(targets, settings)
+        }
+    }
+
+    private fun offerSettings(mode: ScanMode): AgentSettings =
+        TestSettings.baselineSettings().copy(
+            passiveAiEnabled = true,
+            passiveAiScopeOnly = false,
+            activeAiEnabled = true,
+            activeAiScanMode = mode,
+        )
 
     private fun mismatches(
         rig: PassiveScanCheckRig,
@@ -114,6 +233,8 @@ class PassiveTitleClassifierTest {
         }
 
     private companion object {
+        const val MEDIUM_PRIORITY = 60
+
         /** Titles where a short token sat inside another word, or NoSQL lost to SQL. */
         val REGRESSION_ROWS: List<Pair<String, VulnClass?>> =
             listOf(

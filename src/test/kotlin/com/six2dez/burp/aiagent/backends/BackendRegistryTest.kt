@@ -51,6 +51,34 @@ class BackendRegistryTest {
     }
 
     @Test
+    fun storeClasspath_registersTheSixHttpBackendsAndBurpAiOnly() {
+        // Phase 29 / D-03: the store build registers no CLI backend, through ServiceLoader or the
+        // ServiceLoader-empty fallback list alike.
+        val factories =
+            java.util.ServiceLoader
+                .load(AiBackendFactory::class.java, AiBackendFactory::class.java.classLoader)
+                .map { it.javaClass.simpleName }
+                .sorted()
+        assertEquals(
+            listOf(
+                "AnthropicBackendFactory",
+                "LmStudioBackendFactory",
+                "NvidiaNimBackendFactory",
+                "OllamaBackendFactory",
+                "OpenAiCompatibleBackendFactory",
+                "PerplexityBackendFactory",
+            ),
+            factories,
+        )
+        val ids = createRegistry().listAllBackendIds()
+        assertEquals(
+            setOf("burp-ai", "anthropic", "lmstudio", "nvidia-nim", "ollama", "openai-compatible", "perplexity"),
+            ids.toSet(),
+        )
+        assertTrue(ids.none { it.endsWith("-cli") }, "no CLI backend id in the store build, got $ids")
+    }
+
+    @Test
     fun reloadAndShutdown_clearAvailabilityCache() {
         val registry = createRegistry()
         val cache = availabilityCacheField(registry)
@@ -115,12 +143,7 @@ class BackendRegistryTest {
 
     private fun baselineSettings(): AgentSettings =
         AgentSettings(
-            codexCmd = "codex",
-            geminiCmd = "gemini",
-            opencodeCmd = "opencode",
-            claudeCmd = "claude",
             agentProfile = "pentester",
-            ollamaCliCmd = "ollama",
             ollamaModel = "llama3.1:8b",
             ollamaUrl = "http://127.0.0.1:11434",
             ollamaServeCmd = "ollama serve",
@@ -154,7 +177,6 @@ class BackendRegistryTest {
             preferredBackendId = "codex-cli",
             privacyMode = PrivacyMode.STRICT,
             determinismMode = false,
-            autoRestart = true,
             auditEnabled = true,
             mcpSettings =
                 McpSettings(
@@ -169,8 +191,6 @@ class BackendRegistryTest {
                     tlsAutoGenerate = true,
                     tlsKeystorePath = "",
                     tlsKeystorePassword = "",
-                    scanTaskTtlMinutes = 120,
-                    collaboratorClientTtlMinutes = 60,
                     maxConcurrentRequests = 4,
                     maxBodyBytes = 262_144,
                     toolToggles = emptyMap(),
@@ -189,7 +209,6 @@ class BackendRegistryTest {
             activeAiRequestDelayMs = 100,
             activeAiMaxRiskLevel = PayloadRisk.SAFE,
             activeAiScopeOnly = true,
-            activeAiAutoFromPassive = true,
             activeAiScanMode = ScanMode.FULL,
             activeAiUseCollaborator = false,
             bountyPromptEnabled = false,

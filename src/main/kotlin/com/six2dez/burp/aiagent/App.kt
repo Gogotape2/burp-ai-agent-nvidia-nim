@@ -6,16 +6,13 @@ import burp.api.montoya.ui.contextmenu.AuditIssueContextMenuEvent
 import burp.api.montoya.ui.contextmenu.ContextMenuEvent
 import burp.api.montoya.ui.contextmenu.ContextMenuItemsProvider
 import com.six2dez.burp.aiagent.agents.AgentProfileLoader
-import com.six2dez.burp.aiagent.alerts.Alerting
 import com.six2dez.burp.aiagent.audit.ActivityType
 import com.six2dez.burp.aiagent.audit.AiRequestLogger
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.audit.RollingLogConfig
 import com.six2dez.burp.aiagent.backends.BackendDiagnostics
 import com.six2dez.burp.aiagent.backends.BackendRegistry
-import com.six2dez.burp.aiagent.backends.cli.CliTempFileRegistry
 import com.six2dez.burp.aiagent.config.AgentSettingsRepository
-import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.config.toPreprocessorSettings
 import com.six2dez.burp.aiagent.context.ContextCollector
 import com.six2dez.burp.aiagent.mcp.McpSupervisor
@@ -26,39 +23,23 @@ import com.six2dez.burp.aiagent.scanner.AiPassiveScanCheck
 import com.six2dez.burp.aiagent.scanner.AiScanCheck
 import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
 import com.six2dez.burp.aiagent.scanner.applyOptimizationSettings
+import com.six2dez.burp.aiagent.spi.AiAccessPolicy
+import com.six2dez.burp.aiagent.spi.ExtensionPlugin
+import com.six2dez.burp.aiagent.spi.FlavorProfile
+import com.six2dez.burp.aiagent.spi.PluginHost
+import com.six2dez.burp.aiagent.spi.Plugins
+import com.six2dez.burp.aiagent.spi.StoreAiAccessPolicy
+import com.six2dez.burp.aiagent.spi.StoreFlavorProfile
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.MainTab
 import com.six2dez.burp.aiagent.ui.UiActions
 import java.nio.file.Paths
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
-import java.util.concurrent.ThreadFactory
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.ServiceConfigurationError
 
 object App {
     lateinit var api: MontoyaApi
         private set
 
-    // REL-07 / SC6: a FIXED pool, and deliberately a different answer from the explicit
-    // ThreadPoolExecutor used for the active scanner's per-request pool. After the service log pump
-    // moved onto its own daemon thread (AgentSupervisor.startService), nothing submitted here has
-    // unbounded duration: only short, bursty auto-restart work remains, and startService has exactly
-    // two reachable call sites (ollama-serve, lmstudio-server), so the ceiling has ample headroom and
-    // the fixed pool's unbounded LinkedBlockingQueue is acceptable. Saturation on this pool must
-    // degrade to QUEUEING — never to task loss, and never to an uncaught throw. Two alternatives were
-    // rejected for exactly that reason:
-    //  - a throwing rejection policy (AbortPolicy, which IS correct for the scanner's pool, where the
-    //    queue shape is load-bearing and saturation must be observable) is wrong here, because the
-    //    submit in AgentSupervisor.scheduleRestart is not inside a try: a rejection would propagate
-    //    uncaught and kill the auto-restart path outright.
-    //  - CallerRunsPolicy is wrong because it runs the rejected task on the CALLING thread. For this
-    //    pool's historical workload that meant running a never-returning stdout pump inline, possibly
-    //    on the EDT that Phase 23 (REL-05) spent eight plans clearing.
-    // The ceiling is a shared constant rather than a literal: detekt's MagicNumber rule is active and
-    // QUAL-07 forbids growing the baseline.
-    private val workerPool: ExecutorService =
-        Executors.newFixedThreadPool(Defaults.MAX_WORKER_THREADS, workerPoolThreadFactory())
     lateinit var backendRegistry: BackendRegistry
         private set
     lateinit var auditLogger: AuditLogger
@@ -79,9 +60,21 @@ object App {
 
     private lateinit var settingsRepo: AgentSettingsRepository
 
+    @Volatile
+    private var installedPlugins: List<ExtensionPlugin> = emptyList()
+
     fun initialize(montoyaApi: MontoyaApi) {
         api = montoyaApi
-        api.extension().setName("Custom AI Agent")
+        // UI-SPEC PC-15: the profile is resolved ONCE. The banner and the Help caption both come from it,
+        // so a provider conflict is logged once and the two can never disagree.
+        val flavorProfile =
+            resolveFlavorProfile { providers ->
+                api.logging().logToError(
+                    "More than one FlavorProfile provider found (${providers.joinToString(", ")}); " +
+                        "using the BApp Store default.",
+                )
+            }
+        registerExtensionIdentity(api, flavorProfile)
 
         BackendDiagnostics.output = { api.logging().logToOutput(it) }
         BackendDiagnostics.error = { api.logging().logToError(it) }
@@ -94,15 +87,25 @@ object App {
 
         settingsRepo = AgentSettingsRepository(api)
         backendRegistry = BackendRegistry(api)
+        // Phase 29 / D-06: backends whose settings live in plug-in keys read them through this store.
+        backendRegistry.setPluginSettings(settingsRepo.pluginSettings())
         auditLogger = AuditLogger(api)
         AuditLogger.registerGlobalEmitter { type, payload -> auditLogger.logEvent(type, payload) }
-        supervisor = AgentSupervisor(api, backendRegistry, auditLogger, workerPool)
+        val aiAccessPolicy =
+            resolveAiAccessPolicy { providers ->
+                api.logging().logToError(
+                    "More than one AiAccessPolicy provider found (${providers.joinToString(", ")}); " +
+                        "the strict BApp Store AI access policy is in force.",
+                )
+            }
+        supervisor = AgentSupervisor(api, backendRegistry, auditLogger, aiAccessPolicy)
         mirrorAppliedSettingsInto(settingsRepo, supervisor)
-        Alerting.transport = supervisor.httpTransport
+        supervisor.pluginSettings = settingsRepo.pluginSettings()
         aiRequestLogger = AiRequestLogger()
         supervisor.aiRequestLogger = aiRequestLogger
         mcpSupervisor = McpSupervisor(api)
         mcpSupervisor.setAiRequestLogger(aiRequestLogger)
+        mcpSupervisor.setPluginSettings(settingsRepo.pluginSettings())
         contextCollector = ContextCollector(api)
         passiveAiScanner = PassiveAiScanner(api, supervisor, auditLogger) { settingsRepo.load() }
         passiveAiScanner.aiRequestLogger = aiRequestLogger
@@ -169,7 +172,6 @@ object App {
         passiveAiScanner.scopeOnly = settings.passiveAiScopeOnly
         passiveAiScanner.maxSizeKb = settings.passiveAiMaxSizeKb
         passiveAiScanner.applyOptimizationSettings(settings)
-        passiveAiScanner.activeScanner = activeAiScanner // Wire passive -> active
         passiveAiScanner.setEnabled(settings.passiveAiEnabled)
 
         // Initialize active AI scanner
@@ -183,9 +185,26 @@ object App {
         activeAiScanner.useCollaborator = settings.activeAiUseCollaborator
         activeAiScanner.setEnabled(settings.activeAiEnabled)
 
-        val ui = MainTab(api, settingsRepo, backendRegistry, supervisor, auditLogger, mcpSupervisor, passiveAiScanner, activeAiScanner, aiRequestLogger)
+        // Phase 29 / D-02, BUILD-04: full-build plug-ins (the opt-in passive-to-active auto-queue)
+        // install here, after both scanners exist. The store JAR has no ExtensionPlugin services file,
+        // so it installs nothing and the passive scanner keeps no sink.
+        installExtensionPlugins()
+
+        val ui =
+            MainTab(
+                api,
+                settingsRepo,
+                backendRegistry,
+                supervisor,
+                auditLogger,
+                mcpSupervisor,
+                passiveAiScanner,
+                activeAiScanner,
+                aiRequestLogger,
+                buildIdentity = buildIdentityLine(flavorProfile),
+            )
         mainTab = ui
-        api.userInterface().registerSuiteTab("Custom AI Agent", ui.root)
+        api.userInterface().registerSuiteTab(EXTENSION_NAME, ui.root)
 
         // Context menu: requests/responses (all editions)
         api.userInterface().registerContextMenuItemsProvider(
@@ -245,6 +264,11 @@ object App {
     fun shutdown() {
         safeShutdownStep("MainTab") { mainTab?.shutdown() }
         mainTab = null
+        // Plug-ins unhook before the scanners stop (the auto-queue plug-in clears the passive sink).
+        installedPlugins.forEach { plugin ->
+            safeShutdownStep("Plug-in ${plugin.javaClass.name}") { plugin.shutdown() }
+        }
+        installedPlugins = emptyList()
         safeShutdownStep("AI Request Logger") { aiRequestLogger.shutdown() }
         safeShutdownStep("Passive scanner") {
             passiveAiScanner.setEnabled(false)
@@ -256,26 +280,11 @@ object App {
         safeShutdownStep("Active scanner") { activeAiScanner.shutdown() }
         safeShutdownStep("Supervisor") { supervisor.shutdown() }
         safeShutdownStep("MCP supervisor") { mcpSupervisor.shutdown() }
+        // REL-07 / SC5 / D-03: each backend's shutdown() runs inside this step, after the supervisor has
+        // stopped. In the full build that drains the CLI temp-file registry (T-24-07; see
+        // BackendRegistry.shutdown()).
         safeShutdownStep("Backend registry") { backendRegistry.shutdown() }
-        // REL-07 / SC5 / D-03: placed here because the CLI executor lives under the backend registry —
-        // by this point every in-flight CLI call has already had its finally block run, so the drain
-        // sweeps a settled set. It is also the ONLY cleanup an unload gets: the JVM exit hook does not
-        // fire when the extension is unloaded while Burp keeps running. Unregistering the hook here is
-        // what stops a reload from pinning a dead classloader (threat T-24-07).
-        safeShutdownStep("CLI temp files") { CliTempFileRegistry.shutdown() }
         BackendDiagnostics.retry = null
-        safeShutdownStep("Worker pool") {
-            workerPool.shutdown()
-            try {
-                if (!workerPool.awaitTermination(5, TimeUnit.SECONDS)) {
-                    workerPool.shutdownNow()
-                }
-            } catch (e: InterruptedException) {
-                workerPool.shutdownNow()
-                throw e
-            }
-        }
-        safeShutdownStep("Alerting client") { Alerting.shutdownClient() }
         safeShutdownStep("Redaction mappings") { Redaction.clearMappings() }
         // (PRIV-06) WR-04 / W-08 / T-21-66: unwire the truncation sink beside clearMappings(), so
         // both pieces of Redaction's global state are released together. The lambda set in
@@ -299,6 +308,32 @@ object App {
         // harmless even if this line is ever removed.
         safeShutdownStep("Redaction truncation sink") { Redaction.truncationLogger = null }
         AuditLogger.registerGlobalEmitter(null)
+    }
+
+    /**
+     * Installs every [ExtensionPlugin] on the extension's classpath. A plug-in whose install throws is
+     * logged to Burp's error output and skipped, and the extension still loads (T-29-35).
+     */
+    private fun installExtensionPlugins() {
+        val host =
+            PluginHost(
+                api = api,
+                pluginSettings = settingsRepo.pluginSettings(),
+                passiveScanner = passiveAiScanner,
+                activeScanner = activeAiScanner,
+                log = api.logging()::logToOutput,
+            )
+        installedPlugins =
+            loadExtensionPlugins { error -> api.logging().logToError("Extension plug-in failed to load: ${error.message}") }
+                .filter { plugin ->
+                    try {
+                        plugin.install(host)
+                        true
+                    } catch (e: Exception) {
+                        api.logging().logToError("Extension plug-in ${plugin.javaClass.name} failed to install: ${e.message}")
+                        false
+                    }
+                }
     }
 
     private fun configureRollingLoggerFromProperties() {
@@ -346,10 +381,65 @@ object App {
 }
 
 /**
+ * Phase 29 / BUILD-03 (D-04 amended) — the Burp extension name, identical in both flavors.
+ *
+ * Burp keys an extension's preferences node by this name, so one name means one node: the full build
+ * keeps reading the settings and encrypted secrets an earlier install wrote. Byte-exact on purpose
+ * (15 characters, no surrounding whitespace), pinned by ExtensionNameTest and FullExtensionNameTest.
+ */
+const val EXTENSION_NAME = "Custom AI Agent"
+
+/**
+ * Phase 29 / D-02 — every [ExtensionPlugin] provider (none on the store classpath). A provider that
+ * cannot be instantiated is reported to [onError] and the result is empty, so extension load continues.
+ */
+internal fun loadExtensionPlugins(onError: (Throwable) -> Unit = {}): List<ExtensionPlugin> =
+    try {
+        Plugins.load(ExtensionPlugin::class.java)
+    } catch (e: ServiceConfigurationError) {
+        onError(e)
+        emptyList()
+    }
+
+/**
+ * Phase 29 — the running flavor's [FlavorProfile]: the full build's provider when its services file is
+ * on the classpath, otherwise the core [StoreFlavorProfile]. More than one provider falls back to the
+ * store default after [onConflict] receives the provider class names.
+ */
+internal fun resolveFlavorProfile(onConflict: (List<String>) -> Unit = {}): FlavorProfile = Plugins.single(FlavorProfile::class.java, onConflict) ?: StoreFlavorProfile()
+
+/**
+ * Phase 29 / BUILD-04 — the running flavor's [AiAccessPolicy]: the full build's provider when its
+ * services file is on the classpath, otherwise the strict core [StoreAiAccessPolicy]. More than one
+ * provider also resolves to [StoreAiAccessPolicy] after [onConflict] receives the provider class names,
+ * so a packaging error can only make the build stricter.
+ */
+internal fun resolveAiAccessPolicy(onConflict: (List<String>) -> Unit = {}): AiAccessPolicy = Plugins.single(AiAccessPolicy::class.java, onConflict) ?: StoreAiAccessPolicy()
+
+/**
+ * Phase 29 — the ONLY place the extension names itself to Burp. The name is [EXTENSION_NAME] in every
+ * flavor; [profile] only labels the load banner so the Output tab says which build is running.
+ */
+internal fun registerExtensionIdentity(
+    api: MontoyaApi,
+    profile: FlavorProfile,
+) {
+    api.extension().setName(EXTENSION_NAME)
+    api.logging().logToOutput(buildIdentityLine(profile))
+}
+
+/**
+ * Phase 29 / UI-SPEC PC-15 (S3, S25, C-N12): the one string that names the running build, for example
+ * `Custom AI Agent 1.0.1 (BApp Store build)`. [registerExtensionIdentity] logs it as the Output banner
+ * and App passes the same value down to the Settings Help caption. The label is shown, never compared.
+ */
+internal fun buildIdentityLine(profile: FlavorProfile): String = "$EXTENSION_NAME ${BuildFlags.VERSION} (${profile.label})"
+
+/**
  * Quick 261008-n0c — makes [AgentSupervisor]'s settings copy a mirror of the one [settingsRepo].
  *
  * AgentSupervisor keeps its own AtomicReference because its launch config (backend commands, URLs,
- * keys, MCP env) and its auto-restart read settings off the EDT. This listener updates it inside every
+ * keys, MCP env) reads settings off the EDT. This listener updates it inside every
  * successful save, including MainTab's header writes (backend picker, scanner and MCP toggles), which
  * never call `supervisor.applySettings` themselves.
  */
@@ -358,30 +448,4 @@ internal fun mirrorAppliedSettingsInto(
     supervisor: AgentSupervisor,
 ) {
     settingsRepo.addChangeListener { supervisor.applySettings(it) }
-}
-
-/**
- * REL-07 / SC6 — the thread factory for the extension-wide worker pool.
- *
- * Every thread it produces is a daemon and carries a counter-suffixed, product-prefixed kebab-case
- * name, so a Burp thread dump taken while a managed backend is flapping says which subsystem owns the
- * busy threads instead of showing an anonymous `pool-N-thread-M`. That readability is the stated point
- * of SC6; a bounded but unnamed pool would satisfy the ceiling and diagnose nothing.
- *
- * The counter is per factory instance, so each pool numbers its own threads from 1.
- *
- * Visibility: `internal` so `WorkerPoolExecutorTest` can assert on the names and the daemon flag by
- * calling this directly, with no live pool, no live Burp and no reflection — the same seam
- * `scanRequestThreadFactory` / `ScanRequestExecutorTest` uses. It is not part of the extension's
- * public surface.
- *
- * This mirrors the scanner's factory rather than sharing a helper with it: the repo has six inline
- * named factories and zero shared ones, and the two pools bounded in this phase must not share a
- * sizing policy — their workload shapes and their rejection contracts differ.
- */
-internal fun workerPoolThreadFactory(): ThreadFactory {
-    val counter = AtomicInteger(0)
-    return ThreadFactory { runnable ->
-        Thread(runnable, "burp-ai-agent-worker-${counter.incrementAndGet()}").apply { isDaemon = true }
-    }
 }

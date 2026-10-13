@@ -1,6 +1,8 @@
 package com.six2dez.burp.aiagent.ui
 
 import com.six2dez.burp.aiagent.config.McpSettings
+import com.six2dez.burp.aiagent.spi.SettingsContributionContext
+import com.six2dez.burp.aiagent.spi.SettingsSlot
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
 import com.six2dez.burp.aiagent.ui.design.addRowFull
 import com.six2dez.burp.aiagent.ui.design.addSpacerRow
@@ -96,6 +98,8 @@ internal const val AUDIT_VERBOSE_TOOLTIP =
 @Suppress("LongMethod")
 internal fun SettingsPanel.initUiWiring() {
     refreshProfileOptions()
+    // Before any section is composed: the MCP and active-scanner sections read the built components.
+    buildContributionComponents()
 
     applyFieldStyle(mcpHost)
     applyFieldStyle(mcpKeystorePath)
@@ -129,10 +133,6 @@ internal fun SettingsPanel.initUiWiring() {
     determinism.background = DesignTokens.Colors.surface
     determinism.foreground = DesignTokens.Colors.onSurface
     determinism.toolTipText = "Stable ordering for reproducible prompts. Advanced use only."
-    autoRestart.font = DesignTokens.Typography.body
-    autoRestart.background = DesignTokens.Colors.surface
-    autoRestart.foreground = DesignTokens.Colors.onSurface
-    autoRestart.toolTipText = "Automatically restart a crashed agent session."
     auditEnabled.font = DesignTokens.Typography.body
     auditEnabled.background = DesignTokens.Colors.surface
     auditEnabled.foreground = DesignTokens.Colors.onSurface
@@ -233,7 +233,10 @@ internal fun SettingsPanel.initUiWiring() {
         EmptyBorder(DesignTokens.Spacing.xs, DesignTokens.Spacing.sm, DesignTokens.Spacing.xs, DesignTokens.Spacing.sm)
     saveFeedbackLabel.isOpaque = true
 
-    val backendBody =
+    val backendBody = aiBackendSectionBody
+    // UI-SPEC S8 / PC-2: the backend-unavailable notice row is the body's first element, above the
+    // Agent profile grid; the grid and the backend card keep their 1.0.1 layout inside backendContent.
+    val backendContent =
         JPanel(BorderLayout()).apply {
             background = DesignTokens.Colors.surface
         }
@@ -243,7 +246,9 @@ internal fun SettingsPanel.initUiWiring() {
             subtitle = "Select the default backend and configure its connection.",
             content = backendBody,
         ).apply {
-            backendBody.add(backendConfigPanel, BorderLayout.CENTER)
+            backendBody.add(unavailableBackendNoticeRow, BorderLayout.NORTH)
+            backendBody.add(backendContent, BorderLayout.CENTER)
+            backendContent.add(backendConfigPanel, BorderLayout.CENTER)
             val profileGrid = formGrid()
             val profileRow =
                 JPanel().apply {
@@ -259,7 +264,7 @@ internal fun SettingsPanel.initUiWiring() {
             addSpacerRow(profileGrid, DesignTokens.Spacing.xs)
             // 07-02 D-02: small-model-mode toggle (BUG-69-02 / issue #69).
             addRowFull(profileGrid, "Small model mode", chatSmallModelMode)
-            backendBody.add(profileGrid, BorderLayout.NORTH)
+            backendContent.add(profileGrid, BorderLayout.NORTH)
         }
     val privacySection = privacySection()
     val burpIntegrationBody =
@@ -386,13 +391,11 @@ internal fun SettingsPanel.initUiWiring() {
             JOptionPane.INFORMATION_MESSAGE,
         )
     }
-    backendConfigPanel.onOpenCli = { backendId, command ->
-        openExternalCli(backendId, command)
-    }
     backendConfigPanel.onTestConnection = { backendId ->
         testBackendConnection(backendId)
     }
     backendConfigPanel.setBackend(preferredBackendId())
+    syncUnavailableBackendNotice()
     updateMcpTlsState()
     updateMcpCorsWarning()
     updatePrivacyWarnings()
@@ -478,9 +481,6 @@ internal fun SettingsPanel.initUiWiring() {
     activeAiScopeOnly.addActionListener {
         applyActiveAiSettings()
     }
-    activeAiAutoFromPassive.addActionListener {
-        applyActiveAiSettings()
-    }
     activeAiMaxConcurrentSpinner.addChangeListener {
         applyActiveAiSettings()
     }
@@ -538,4 +538,58 @@ internal fun SettingsPanel.initUiWiring() {
         }
     statusRefreshTimer?.start()
     updateProfileWarnings()
+}
+
+/**
+ * Phase 29 / D-07 (UI-SPEC PC-9, PC-10, M4): builds every requested contribution's component, in list
+ * order, and records the ones that built in [SettingsPanel.contributionComponents]. BACKEND_CARD
+ * components are placed here; the MCP and active-scanner sections pick theirs up when composed.
+ *
+ * A contribution that fails is logged to Burp's error output with its class name and message, and
+ * dropped: it gets no slot, and collect, persist, defaults, applyToUi and onCoreSettingsApplied never
+ * run on it, since it has no Swing state. The window keeps building. Failing means `createComponent`
+ * threw, or the contribution broke the [com.six2dez.burp.aiagent.spi.SettingsContribution] contract
+ * (blank or repeated `sectionId`, BACKEND_CARD without a `backendId`), which the host checks first.
+ *
+ * **Why the catch is broad.** A plug-in may throw anything, including a `LinkageError` from a missing
+ * class, and one broken plug-in must not take the settings window down with it. A
+ * `VirtualMachineError` is rethrown: the JVM, not the plug-in, is failing then.
+ */
+@Suppress("TooGenericExceptionCaught")
+internal fun SettingsPanel.buildContributionComponents() {
+    val context =
+        SettingsContributionContext(
+            api = api,
+            store = pluginSettings,
+            coreSettings = { settings },
+            dialogParent = { dialogParentComponent() },
+            testConnection = { backendId -> testBackendConnection(backendId) },
+        )
+    val sectionIds = mutableSetOf<String>()
+    requestedContributions.forEach { contribution ->
+        try {
+            val sectionId = contribution.sectionId
+            require(sectionId.isNotBlank()) { "its sectionId is blank" }
+            require(sectionId !in sectionIds) { "its sectionId '$sectionId' is already used" }
+            val cardId =
+                if (contribution.slot == SettingsSlot.BACKEND_CARD) {
+                    requireNotNull(contribution.backendId?.takeIf { it.isNotBlank() }) {
+                        "it targets BACKEND_CARD without a backendId"
+                    }
+                } else {
+                    null
+                }
+            val component = contribution.createComponent(context)
+            cardId?.let { backendConfigPanel.addContribution(it, component) }
+            sectionIds.add(sectionId)
+            contributionComponents[contribution] = component
+        } catch (fatal: VirtualMachineError) {
+            throw fatal
+        } catch (failure: Throwable) {
+            api.logging().logToError(
+                "[SettingsPanel] Settings contribution ${contribution.javaClass.name} was skipped: " +
+                    "${failure.javaClass.simpleName}: ${failure.message}",
+            )
+        }
+    }
 }

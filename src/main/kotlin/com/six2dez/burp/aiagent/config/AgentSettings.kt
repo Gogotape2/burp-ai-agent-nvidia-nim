@@ -3,15 +3,14 @@ package com.six2dez.burp.aiagent.config
 import burp.api.montoya.MontoyaApi
 import burp.api.montoya.persistence.Preferences
 import com.fasterxml.jackson.databind.ObjectMapper
-import com.fasterxml.jackson.databind.json.JsonMapper
 import com.fasterxml.jackson.module.kotlin.KotlinModule
-import com.fasterxml.jackson.module.kotlin.registerKotlinModule
-import com.six2dez.burp.aiagent.mcp.external.ExternalMcpServerConfig
+import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.mcp.tools.ResponsePreprocessorSettings
 import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptCatalog
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.scanner.PayloadRisk
 import com.six2dez.burp.aiagent.scanner.ScanMode
+import com.six2dez.burp.aiagent.spi.PluginSettingsStore
 
 enum class SeverityLevel {
     LOW,
@@ -26,12 +25,7 @@ enum class SeverityLevel {
 }
 
 data class AgentSettings(
-    val codexCmd: String,
-    val geminiCmd: String,
-    val opencodeCmd: String,
-    val claudeCmd: String,
     val agentProfile: String,
-    val ollamaCliCmd: String,
     val ollamaModel: String,
     val ollamaUrl: String,
     val ollamaServeCmd: String,
@@ -62,12 +56,6 @@ data class AgentSettings(
     val perplexityApiKey: String = "",
     val perplexityHeaders: String = "",
     val perplexityTimeoutSeconds: Int = 60,
-    // REL-04: user-configurable CLI process timeout (issue #71). Defaulted so existing
-    // positional/named constructions keep compiling. Plaintext pref (not a secret — timeout integer).
-    // WR-02: clamped to [30, 3600] seconds on load and save; values below 30s are silently raised to
-    // the 30s floor (a sub-30s watchdog would kill slow-starting CLIs). CliBackend re-coerces to the
-    // same bounds at the consumption boundary, so the watchdog is robust even for directly-built configs.
-    val cliTimeoutSeconds: Int = Defaults.CLI_PROCESS_TIMEOUT_SECONDS,
     // CAP-01: Anthropic Messages API backend fields (14-01).
     // All four carry defaults so existing named/positional constructions keep compiling (Planner Note 3).
     val anthropicModel: String = "claude-sonnet-4-6",
@@ -77,7 +65,6 @@ data class AgentSettings(
     // NOT secrets — persisted as plain integers, never routed through SecretCipher (Pitfall 5).
     val tokenBudgetWarnThreshold: Int = 0,
     val tokenBudgetHardCap: Int = 0,
-    val copilotCmd: String = "",
     val requestPromptTemplate: String,
     val issuePromptTemplate: String,
     val issueAnalyzePrompt: String,
@@ -91,7 +78,6 @@ data class AgentSettings(
     val preferredBackendId: String,
     val privacyMode: PrivacyMode,
     val determinismMode: Boolean,
-    val autoRestart: Boolean,
     val auditEnabled: Boolean,
     val auditVerbose: Boolean = false,
     val mcpSettings: McpSettings,
@@ -132,7 +118,6 @@ data class AgentSettings(
     val activeAiRequestDelayMs: Int = 100,
     val activeAiMaxRiskLevel: PayloadRisk = PayloadRisk.SAFE,
     val activeAiScopeOnly: Boolean = true,
-    val activeAiAutoFromPassive: Boolean = true, // Auto-queue passive findings
     val activeAiScanMode: ScanMode = ScanMode.FULL,
     val activeAiUseCollaborator: Boolean = false, // SSRF OAST confirmation
     val activeAiAdaptivePayloads: Boolean = false,
@@ -172,7 +157,7 @@ class AgentSettingsRepository(
 
     /**
      * SEC-01 secret encryption. Reuses the existing [prefs] instance so the per-install master
-     * key is shared across encrypt/decrypt — do NOT call api.persistence().preferences() again
+     * key is shared across encrypt/decrypt — do NOT ask the Montoya API for the preferences again
      * (a second mock instance in tests would store the master key separately and break round-trips).
      */
     private val cipher: SecretCipher = SecretCipher(prefs)
@@ -228,39 +213,13 @@ class AgentSettingsRepository(
         migrateIfNeeded()
         val privacy = PrivacyMode.fromString(prefs.getString(KEY_PRIVACY_MODE))
         val mcpSettings = loadMcpSettings()
-        val rawGeminiCmd = prefs.getString(KEY_GEMINI_CMD).orEmpty().trim()
         return AgentSettings(
-            codexCmd =
-                prefs
-                    .getString(KEY_CODEX_CMD)
-                    .orEmpty()
-                    .trim()
-                    .ifBlank { DEFAULT_CODEX_CMD },
-            geminiCmd = normalizeLegacyGeminiCmd(rawGeminiCmd).ifBlank { DEFAULT_GEMINI_CMD },
-            opencodeCmd =
-                prefs
-                    .getString(KEY_OPENCODE_CMD)
-                    .orEmpty()
-                    .trim()
-                    .ifBlank { DEFAULT_OPENCODE_CMD },
-            claudeCmd =
-                prefs
-                    .getString(KEY_CLAUDE_CMD)
-                    .orEmpty()
-                    .trim()
-                    .ifBlank { DEFAULT_CLAUDE_CMD },
             agentProfile =
                 prefs
                     .getString(KEY_AGENT_PROFILE)
                     .orEmpty()
                     .trim()
                     .ifBlank { DEFAULT_AGENT_PROFILE },
-            ollamaCliCmd =
-                prefs
-                    .getString(KEY_OLLAMA_CLI_CMD)
-                    .orEmpty()
-                    .trim()
-                    .ifBlank { DEFAULT_OLLAMA_CLI_CMD },
             ollamaModel =
                 prefs
                     .getString(KEY_OLLAMA_MODEL)
@@ -330,10 +289,6 @@ class AgentSettingsRepository(
             perplexityTimeoutSeconds =
                 (prefs.getInteger(KEY_PERPLEXITY_TIMEOUT) ?: defaultPerplexityTimeoutSeconds())
                     .coerceIn(30, 3600),
-            // REL-04: configurable CLI timeout — V5 input validation (coerceIn rejects negative/zero/absurd)
-            cliTimeoutSeconds =
-                (prefs.getInteger(KEY_CLI_TIMEOUT) ?: Defaults.CLI_PROCESS_TIMEOUT_SECONDS)
-                    .coerceIn(30, 3600),
             // CAP-01: Anthropic backend — decrypt key, string model (14-01)
             anthropicModel =
                 prefs
@@ -346,12 +301,6 @@ class AgentSettingsRepository(
             // CAP-04: token-budget thresholds — plain integers, never encrypted (Pitfall 5)
             tokenBudgetWarnThreshold = (prefs.getInteger(KEY_TOKEN_BUDGET_WARN) ?: 0).coerceAtLeast(0),
             tokenBudgetHardCap = (prefs.getInteger(KEY_TOKEN_BUDGET_CAP) ?: 0).coerceAtLeast(0),
-            copilotCmd =
-                prefs
-                    .getString(KEY_COPILOT_CMD)
-                    .orEmpty()
-                    .trim()
-                    .ifBlank { DEFAULT_COPILOT_CMD },
             requestPromptTemplate = prefs.getString(KEY_PROMPT_FIND_VULNS).orEmpty().ifBlank { defaultRequestPrompt() },
             issuePromptTemplate = prefs.getString(KEY_PROMPT_FULL_REPORT).orEmpty().ifBlank { defaultIssuePrompt() },
             issueAnalyzePrompt = prefs.getString(KEY_PROMPT_ISSUE_ANALYZE).orEmpty().ifBlank { defaultIssueAnalyzePrompt() },
@@ -367,10 +316,9 @@ class AgentSettingsRepository(
                     prefs.setString(KEY_HOST_SALT, generated)
                     generated
                 },
-            preferredBackendId = (prefs.getString(KEY_PREFERRED_BACKEND) ?: "burp-ai").trim(),
+            preferredBackendId = (prefs.getString(KEY_PREFERRED_BACKEND) ?: DEFAULT_PREFERRED_BACKEND_ID).trim(),
             privacyMode = privacy,
             determinismMode = prefs.getBoolean(KEY_DETERMINISM) ?: false,
-            autoRestart = prefs.getBoolean(KEY_AUTORESTART) ?: true,
             auditEnabled = prefs.getBoolean(KEY_AUDIT_ENABLED) ?: false,
             // A missing key is an install from 1.0.0 or earlier: verbose audit stays off (quick 261008-sqa).
             auditVerbose = prefs.getBoolean(KEY_AUDIT_VERBOSE) ?: false,
@@ -429,7 +377,6 @@ class AgentSettingsRepository(
             activeAiRequestDelayMs = (prefs.getInteger(KEY_ACTIVE_AI_DELAY) ?: 100).coerceIn(0, 5000),
             activeAiMaxRiskLevel = PayloadRisk.fromString(prefs.getString(KEY_ACTIVE_AI_RISK_LEVEL)),
             activeAiScopeOnly = prefs.getBoolean(KEY_ACTIVE_AI_SCOPE_ONLY) ?: true,
-            activeAiAutoFromPassive = prefs.getBoolean(KEY_ACTIVE_AI_AUTO_PASSIVE) ?: true,
             activeAiScanMode = ScanMode.fromString(prefs.getString(KEY_ACTIVE_AI_SCAN_MODE)),
             activeAiUseCollaborator = prefs.getBoolean(KEY_ACTIVE_AI_USE_COLLABORATOR) ?: false,
             activeAiAdaptivePayloads = prefs.getBoolean(KEY_ACTIVE_AI_ADAPTIVE_PAYLOADS) ?: false,
@@ -471,12 +418,7 @@ class AgentSettingsRepository(
 
     fun defaultSettings(): AgentSettings =
         AgentSettings(
-            codexCmd = DEFAULT_CODEX_CMD,
-            geminiCmd = DEFAULT_GEMINI_CMD,
-            opencodeCmd = DEFAULT_OPENCODE_CMD,
-            claudeCmd = DEFAULT_CLAUDE_CMD,
             agentProfile = DEFAULT_AGENT_PROFILE,
-            ollamaCliCmd = DEFAULT_OLLAMA_CLI_CMD,
             ollamaModel = DEFAULT_OLLAMA_MODEL,
             ollamaUrl = "http://127.0.0.1:11434",
             ollamaServeCmd = DEFAULT_OLLAMA_SERVE_CMD,
@@ -507,12 +449,10 @@ class AgentSettingsRepository(
             perplexityApiKey = "",
             perplexityHeaders = "",
             perplexityTimeoutSeconds = defaultPerplexityTimeoutSeconds(),
-            cliTimeoutSeconds = Defaults.CLI_PROCESS_TIMEOUT_SECONDS,
             anthropicModel = "claude-sonnet-4-6",
             anthropicApiKey = "",
             tokenBudgetWarnThreshold = 0,
             tokenBudgetHardCap = 0,
-            copilotCmd = DEFAULT_COPILOT_CMD,
             requestPromptTemplate = defaultRequestPrompt(),
             issuePromptTemplate = defaultIssuePrompt(),
             issueAnalyzePrompt = defaultIssueAnalyzePrompt(),
@@ -523,10 +463,9 @@ class AgentSettingsRepository(
             accessControlPrompt = defaultAccessControlPrompt(),
             loginSequencePrompt = defaultLoginSequencePrompt(),
             hostAnonymizationSalt = McpSettings.generateToken(),
-            preferredBackendId = "burp-ai",
+            preferredBackendId = DEFAULT_PREFERRED_BACKEND_ID,
             privacyMode = PrivacyMode.BALANCED,
             determinismMode = false,
-            autoRestart = true,
             auditEnabled = false,
             auditVerbose = false,
             mcpSettings = defaultMcpSettings(),
@@ -559,7 +498,6 @@ class AgentSettingsRepository(
             activeAiRequestDelayMs = 100,
             activeAiMaxRiskLevel = PayloadRisk.SAFE,
             activeAiScopeOnly = true,
-            activeAiAutoFromPassive = true,
             activeAiScanMode = ScanMode.FULL,
             activeAiUseCollaborator = false,
             bountyPromptEnabled = false,
@@ -581,12 +519,7 @@ class AgentSettingsRepository(
             // SecretCipherException mid-save does not leave the cache holding never-persisted values.
             // On exception, clear the cache so the next load() re-reads the (partial) prefs.
             try {
-                prefs.setString(KEY_CODEX_CMD, settings.codexCmd)
-                prefs.setString(KEY_GEMINI_CMD, settings.geminiCmd)
-                prefs.setString(KEY_OPENCODE_CMD, settings.opencodeCmd)
-                prefs.setString(KEY_CLAUDE_CMD, settings.claudeCmd)
                 prefs.setString(KEY_AGENT_PROFILE, settings.agentProfile)
-                prefs.setString(KEY_OLLAMA_CLI_CMD, settings.ollamaCliCmd)
                 prefs.setString(KEY_OLLAMA_MODEL, settings.ollamaModel)
                 prefs.setString(KEY_OLLAMA_URL, settings.ollamaUrl)
                 prefs.setString(KEY_OLLAMA_SERVE_CMD, settings.ollamaServeCmd)
@@ -617,15 +550,12 @@ class AgentSettingsRepository(
                 prefs.setString(KEY_PERPLEXITY_API_KEY, cipher.encrypt(settings.perplexityApiKey, KEY_PERPLEXITY_API_KEY))
                 prefs.setString(KEY_PERPLEXITY_HEADERS, settings.perplexityHeaders)
                 prefs.setInteger(KEY_PERPLEXITY_TIMEOUT, settings.perplexityTimeoutSeconds.coerceIn(30, 3600))
-                // REL-04: persist CLI timeout plaintext (not a secret — timeout integer, V5 validated)
-                prefs.setInteger(KEY_CLI_TIMEOUT, settings.cliTimeoutSeconds.coerceIn(30, 3600))
                 // CAP-01: Anthropic — model (plain string), API key (encrypted), token-budget (plain integers)
                 prefs.setString(KEY_ANTHROPIC_MODEL, settings.anthropicModel)
                 prefs.setString(KEY_ANTHROPIC_API_KEY, cipher.encrypt(settings.anthropicApiKey, KEY_ANTHROPIC_API_KEY))
                 // CAP-04: token-budget thresholds are integers, NOT secrets — never SecretCipher (Pitfall 5)
                 prefs.setInteger(KEY_TOKEN_BUDGET_WARN, settings.tokenBudgetWarnThreshold.coerceAtLeast(0))
                 prefs.setInteger(KEY_TOKEN_BUDGET_CAP, settings.tokenBudgetHardCap.coerceAtLeast(0))
-                prefs.setString(KEY_COPILOT_CMD, settings.copilotCmd)
                 prefs.setString(KEY_PROMPT_FIND_VULNS, settings.requestPromptTemplate)
                 prefs.setString(KEY_PROMPT_FULL_REPORT, settings.issuePromptTemplate)
                 prefs.setString(KEY_PROMPT_ISSUE_ANALYZE, settings.issueAnalyzePrompt)
@@ -639,7 +569,6 @@ class AgentSettingsRepository(
                 prefs.setString(KEY_PREFERRED_BACKEND, settings.preferredBackendId)
                 prefs.setString(KEY_PRIVACY_MODE, settings.privacyMode.name)
                 prefs.setBoolean(KEY_DETERMINISM, settings.determinismMode)
-                prefs.setBoolean(KEY_AUTORESTART, settings.autoRestart)
                 prefs.setBoolean(KEY_AUDIT_ENABLED, settings.auditEnabled)
                 prefs.setBoolean(KEY_AUDIT_VERBOSE, settings.auditVerbose)
                 saveMcpSettings(settings.mcpSettings)
@@ -716,7 +645,6 @@ class AgentSettingsRepository(
                 prefs.setInteger(KEY_ACTIVE_AI_DELAY, settings.activeAiRequestDelayMs)
                 prefs.setString(KEY_ACTIVE_AI_RISK_LEVEL, settings.activeAiMaxRiskLevel.name)
                 prefs.setBoolean(KEY_ACTIVE_AI_SCOPE_ONLY, settings.activeAiScopeOnly)
-                prefs.setBoolean(KEY_ACTIVE_AI_AUTO_PASSIVE, settings.activeAiAutoFromPassive)
                 prefs.setString(KEY_ACTIVE_AI_SCAN_MODE, settings.activeAiScanMode.name)
                 prefs.setBoolean(KEY_ACTIVE_AI_USE_COLLABORATOR, settings.activeAiUseCollaborator)
                 prefs.setBoolean(KEY_ACTIVE_AI_ADAPTIVE_PAYLOADS, settings.activeAiAdaptivePayloads)
@@ -771,6 +699,50 @@ class AgentSettingsRepository(
             updated
         }
 
+    /**
+     * Phase 29 / D-06 — the [PluginSettingsStore] plug-ins use for their own keys. It reads and writes
+     * this repository's one [prefs] and encrypts with its one [cipher] (never a second Preferences or a
+     * second SecretCipher, which would be a second master key), and every setter takes [writeLock], so
+     * a plug-in write never interleaves a [save]. Setters do not notify the change listeners: plug-in
+     * keys are not part of the [AgentSettings] snapshot.
+     */
+    fun pluginSettings(): PluginSettingsStore = pluginSettingsStore
+
+    private val pluginSettingsStore: PluginSettingsStore = RepositoryPluginSettings()
+
+    private inner class RepositoryPluginSettings : PluginSettingsStore {
+        override fun getString(key: String): String? = prefs.getString(key)
+
+        override fun setString(
+            key: String,
+            value: String,
+        ) = synchronized(writeLock) { prefs.setString(key, value) }
+
+        override fun getBoolean(key: String): Boolean? = prefs.getBoolean(key)
+
+        override fun setBoolean(
+            key: String,
+            value: Boolean,
+        ) = synchronized(writeLock) { prefs.setBoolean(key, value) }
+
+        override fun getInteger(key: String): Int? = prefs.getInteger(key)
+
+        override fun setInteger(
+            key: String,
+            value: Int,
+        ) = synchronized(writeLock) { prefs.setInteger(key, value) }
+
+        override fun encrypt(
+            plain: String,
+            keyName: String,
+        ): String = cipher.encrypt(plain, keyName)
+
+        override fun decrypt(
+            stored: String,
+            keyName: String,
+        ): String = cipher.decrypt(stored, keyName)
+    }
+
     private fun migrateIfNeeded() {
         val storedVersion = prefs.getInteger(KEY_SETTINGS_SCHEMA_VERSION) ?: 1
         var effectiveVersion = storedVersion.coerceAtLeast(1)
@@ -795,11 +767,9 @@ class AgentSettingsRepository(
         }
 
         if (effectiveVersion < 5) {
-            // v5 (PHASE 16 Plan 16-02): adds externalMcpServers encrypted blob under
-            // KEY_EXT_MCP_SERVERS. New key; no existing data to migrate. Existing installs
-            // get an empty list on first load — no action needed. Idempotent: re-running this
-            // branch on a v5 store is a no-op (the empty-list default is written by save(), not
-            // here). The schema bump itself prevents double-entry on subsequent loads.
+            // v5 (PHASE 16 Plan 16-02) added the external MCP server blob; since 1.1.0 the full build's
+            // external-MCP plug-in owns that key and core never touches it. No data migration ran then and
+            // none runs now: this branch only stamps the version, so it stays idempotent.
             effectiveVersion = 5
         }
 
@@ -859,22 +829,18 @@ class AgentSettingsRepository(
         if (rawOrigins != normalizedOrigins) {
             prefs.setString(KEY_MCP_ALLOWED_ORIGINS, normalizedOrigins)
         }
-
-        val rawGeminiCmd = prefs.getString(KEY_GEMINI_CMD).orEmpty().trim()
-        val legacyDefault = "gemini --output-format text --model gemini-2.5-flash"
-        if (rawGeminiCmd == legacyDefault) {
-            prefs.setString(KEY_GEMINI_CMD, DEFAULT_GEMINI_CMD)
-        }
     }
 
     companion object {
-        private const val KEY_CODEX_CMD = "codex.cmd"
-        private const val KEY_GEMINI_CMD = "gemini.cmd"
-        private const val KEY_OPENCODE_CMD = "opencode.cmd"
-        private const val KEY_CLAUDE_CMD = "claude.cmd"
+        /**
+         * The backend new installs use, and the one the registry substitutes for a saved id the
+         * running build does not register (Phase 29 / D-08). BackendRegistry.DEFAULT_BACKEND_ID is
+         * this constant, so the two cannot drift.
+         */
+        const val DEFAULT_PREFERRED_BACKEND_ID = "burp-ai"
+
         private const val KEY_AGENT_PROFILE = "agent.profile"
         private const val KEY_OLLAMA_URL = "ollama.url"
-        private const val KEY_OLLAMA_CLI_CMD = "ollama.cli.cmd"
         private const val KEY_OLLAMA_MODEL = "ollama.model"
         private const val KEY_OLLAMA_SERVE_CMD = "ollama.serve.cmd"
         private const val KEY_OLLAMA_AUTOSTART = "ollama.autostart"
@@ -905,9 +871,6 @@ class AgentSettingsRepository(
         private const val KEY_PERPLEXITY_HEADERS = "perplexity.headers"
         private const val KEY_PERPLEXITY_TIMEOUT = "perplexity.timeoutSeconds"
 
-        // REL-04: configurable CLI process timeout (issue #71) — plaintext integer pref, not a secret
-        private const val KEY_CLI_TIMEOUT = "cli.timeoutSeconds"
-
         // CAP-01: Anthropic backend (14-01)
         private const val KEY_ANTHROPIC_MODEL = "anthropic.model"
         private const val KEY_ANTHROPIC_API_KEY = "anthropic.apiKey"
@@ -915,7 +878,6 @@ class AgentSettingsRepository(
         // CAP-04: token-budget guardrails (14-01 — fields declared here; logic in 14-02)
         private const val KEY_TOKEN_BUDGET_WARN = "tokenBudget.warnThreshold"
         private const val KEY_TOKEN_BUDGET_CAP = "tokenBudget.hardCap"
-        private const val KEY_COPILOT_CMD = "copilot.cmd"
         private const val KEY_PROMPT_FIND_VULNS = "prompt.find_vulns"
         private const val KEY_PROMPT_QUICK_RECON = "prompt.quick_recon"
         private const val KEY_PROMPT_EXPLAIN_JS = "prompt.explain_js"
@@ -929,7 +891,6 @@ class AgentSettingsRepository(
         private const val KEY_PREFERRED_BACKEND = "backend.preferred"
         private const val KEY_PRIVACY_MODE = "privacy.mode"
         private const val KEY_DETERMINISM = "determinism.enabled"
-        private const val KEY_AUTORESTART = "agent.autorestart"
         private const val KEY_AUDIT_ENABLED = "audit.enabled"
         private const val KEY_AUDIT_VERBOSE = "audit.verbose"
         private const val KEY_MCP_ENABLED = "mcp.enabled"
@@ -943,8 +904,6 @@ class AgentSettingsRepository(
         private const val KEY_MCP_TLS_AUTO = "mcp.tls.auto"
         private const val KEY_MCP_TLS_KEYSTORE = "mcp.tls.keystore.path"
         private const val KEY_MCP_TLS_PASSWORD = "mcp.tls.keystore.password"
-        private const val KEY_MCP_SCAN_TASK_TTL_MINUTES = "mcp.scan.task.ttl.minutes"
-        private const val KEY_MCP_COLLABORATOR_TTL_MINUTES = "mcp.collaborator.ttl.minutes"
         private const val KEY_MCP_MAX_CONCURRENT = "mcp.max.concurrent"
         private const val KEY_MCP_MAX_BODY_BYTES = "mcp.max.body.bytes"
         private const val KEY_MCP_PROXY_HISTORY_MAX_ITEMS = "mcp.proxy.history.max.items"
@@ -957,12 +916,6 @@ class AgentSettingsRepository(
         // 07-03 D-03: global "Restrict MCP tools to in-scope hosts" toggle. Stored on the
         // McpSettings sub-object via this key. Default false on absence.
         private const val KEY_MCP_SCOPE_ONLY = "mcp.scope.only"
-
-        // PHASE 16: external MCP server list blob. Per-field token encryption — each server's
-        // bearerToken is encrypted before serializing into the JSON blob; decrypted after parsing.
-        // The blob itself is not encrypted at the blob level; only the per-field bearerToken values
-        // carry the ENC1: prefix at rest.
-        private const val KEY_EXT_MCP_SERVERS = "mcp.external.servers.v1"
 
         private const val KEY_PREPROCESS_PROXY_HISTORY = "mcp.preprocess.proxy.history"
         private const val KEY_PREPROCESS_MAX_RESPONSE_SIZE_KB = "mcp.preprocess.max.response.size.kb"
@@ -1001,7 +954,6 @@ class AgentSettingsRepository(
         private const val KEY_ACTIVE_AI_DELAY = "active.ai.delay"
         private const val KEY_ACTIVE_AI_RISK_LEVEL = "active.ai.risk.level"
         private const val KEY_ACTIVE_AI_SCOPE_ONLY = "active.ai.scope.only"
-        private const val KEY_ACTIVE_AI_AUTO_PASSIVE = "active.ai.auto.passive"
         private const val KEY_ACTIVE_AI_SCAN_MODE = "active.ai.scan.mode"
         private const val KEY_ACTIVE_AI_USE_COLLABORATOR = "active.ai.use.collaborator"
         private const val KEY_ACTIVE_AI_ADAPTIVE_PAYLOADS = "active.ai.adaptive.payloads"
@@ -1019,31 +971,12 @@ class AgentSettingsRepository(
         private const val KEY_CUSTOM_REDACTION_PATTERNS = "privacy.custom.redaction.patterns.v1"
         private const val KEY_SETTINGS_SCHEMA_VERSION = "settings.schema.version"
 
-        // PHASE 16 (Plan 16-02): bumped 4→5; adds externalMcpServers blob with per-field
-        // bearerToken encryption. Atomic with the if (effectiveVersion < 5) migration branch.
+        // PHASE 16 (Plan 16-02): bumped 4→5 for the external MCP server blob, which the full build's
+        // external-MCP plug-in owns since 1.1.0. Atomic with the if (effectiveVersion < 5) branch; never
+        // decrement it.
         private const val CURRENT_SETTINGS_SCHEMA_VERSION = 5
 
-        private const val DEFAULT_CODEX_CMD = "codex chat"
-
-        private const val DEFAULT_GEMINI_CMD = "gemini --output-format text --model gemini-2.5-flash --yolo"
-
-        private fun normalizeLegacyGeminiCmd(raw: String): String {
-            if (raw.isBlank()) return raw
-            val legacyDefault = "gemini --output-format text --model gemini-2.5-flash"
-            return if (raw == legacyDefault) {
-                DEFAULT_GEMINI_CMD
-            } else {
-                raw
-            }
-        }
-
-        private const val DEFAULT_OPENCODE_CMD = "opencode"
-
-        private const val DEFAULT_CLAUDE_CMD = "claude"
-
         private const val DEFAULT_AGENT_PROFILE = "pentester"
-
-        private const val DEFAULT_OLLAMA_CLI_CMD = "ollama run llama3.1"
 
         private const val DEFAULT_OLLAMA_MODEL = "llama3.1"
 
@@ -1068,8 +1001,6 @@ class AgentSettingsRepository(
         private fun defaultPerplexityTimeoutSeconds(): Int = Defaults.CLI_PROCESS_TIMEOUT_SECONDS
 
         private fun defaultNvidiaNimTimeoutSeconds(): Int = Defaults.CLI_PROCESS_TIMEOUT_SECONDS
-
-        private const val DEFAULT_COPILOT_CMD = "copilot"
 
         private fun defaultBountyPromptDir(): String =
             java.io
@@ -1225,8 +1156,6 @@ Response Language: English.
                 tlsAutoGenerate = true,
                 tlsKeystorePath = defaultPath.absolutePath,
                 tlsKeystorePassword = McpSettings.generatePassword(),
-                scanTaskTtlMinutes = 120,
-                collaboratorClientTtlMinutes = 60,
                 maxConcurrentRequests = 4,
                 maxBodyBytes = 2 * 1024 * 1024,
                 proxyHistoryMaxItemsPerRequest = Defaults.MCP_PROXY_HISTORY_MAX_ITEMS_PER_REQUEST,
@@ -1306,12 +1235,6 @@ Response Language: English.
             if (lib.isEmpty()) return ""
             return customPromptMapper.writeValueAsString(lib.filter { it.isValid() })
         }
-
-        // PHASE 16: Jackson mapper for ExternalMcpServerConfig list serialization.
-        // Registered with Kotlin module so data class defaults and named params work correctly.
-        internal val externalServerMapper: ObjectMapper by lazy {
-            JsonMapper.builder().build().registerKotlinModule()
-        }
     }
 
     private fun loadMcpSettings(): McpSettings {
@@ -1358,10 +1281,6 @@ Response Language: English.
             tlsAutoGenerate = tlsAuto,
             tlsKeystorePath = resolvedKeystorePath,
             tlsKeystorePassword = tlsPassword,
-            scanTaskTtlMinutes = (prefs.getInteger(KEY_MCP_SCAN_TASK_TTL_MINUTES) ?: 120).coerceIn(5, 24 * 60),
-            collaboratorClientTtlMinutes =
-                (prefs.getInteger(KEY_MCP_COLLABORATOR_TTL_MINUTES) ?: 60)
-                    .coerceIn(5, 24 * 60),
             maxConcurrentRequests = (prefs.getInteger(KEY_MCP_MAX_CONCURRENT) ?: 4).coerceIn(1, 64),
             // 07-02 D-02: lowered floor from 256 KB → 32 KB so users with 1278-token-class
             // models can configure tight MCP body caps. Existing stored values below 32 KB
@@ -1384,9 +1303,6 @@ Response Language: English.
             unsafeEnabled = prefs.getBoolean(KEY_MCP_UNSAFE) ?: false,
             // 07-03 D-03: absent → false preserves bytewise behaviour for legacy installs.
             scopeOnly = prefs.getBoolean(KEY_MCP_SCOPE_ONLY) ?: false,
-            // PHASE 16: load external server list with per-field bearerToken decryption.
-            // Absent key → empty list (schema v5 migration adds the key on first save).
-            externalMcpServers = loadExternalMcpServers(),
         )
     }
 
@@ -1402,11 +1318,6 @@ Response Language: English.
         prefs.setBoolean(KEY_MCP_TLS_AUTO, settings.tlsAutoGenerate)
         prefs.setString(KEY_MCP_TLS_KEYSTORE, settings.tlsKeystorePath)
         prefs.setString(KEY_MCP_TLS_PASSWORD, cipher.encrypt(settings.tlsKeystorePassword, KEY_MCP_TLS_PASSWORD))
-        prefs.setInteger(KEY_MCP_SCAN_TASK_TTL_MINUTES, settings.scanTaskTtlMinutes.coerceIn(5, 24 * 60))
-        prefs.setInteger(
-            KEY_MCP_COLLABORATOR_TTL_MINUTES,
-            settings.collaboratorClientTtlMinutes.coerceIn(5, 24 * 60),
-        )
         prefs.setInteger(KEY_MCP_MAX_CONCURRENT, settings.maxConcurrentRequests)
         prefs.setInteger(KEY_MCP_MAX_BODY_BYTES, settings.maxBodyBytes)
         prefs.setInteger(
@@ -1415,84 +1326,20 @@ Response Language: English.
         )
         prefs.setBoolean(KEY_MCP_PROXY_HISTORY_NEWEST_FIRST, settings.proxyHistoryNewestFirst)
         prefs.setBoolean(KEY_MCP_ALLOW_UNPREPROCESSED_PROXY_HISTORY, settings.allowUnpreprocessedProxyHistory)
-        prefs.setString(KEY_MCP_TOOL_TOGGLES, McpSettings.serializeToolToggles(settings.toolToggles))
-        prefs.setString(KEY_MCP_UNSAFE_TOOLS, McpSettings.serializeUnsafeToolSet(settings.enabledUnsafeTools))
+        // Phase 29 (RESEARCH Pitfall 13, D-08): both flavors share this preferences node, and the settings UI
+        // only collects the tools of this build's catalog. Stored entries for ids the catalog does not have
+        // (the full build's generic tools, seen from the store build) are carried over unchanged, so a store
+        // save never destroys the full build's per-tool settings. Catalog ids take the new value. In the full
+        // build every tool id is in the catalog, so nothing changes there.
+        val catalogIds = McpToolCatalog.all().mapTo(HashSet()) { it.id }
+        val storedToggles = McpSettings.parseToolToggles(prefs.getString(KEY_MCP_TOOL_TOGGLES))
+        val toolToggles = settings.toolToggles + storedToggles.filterKeys { it !in catalogIds }
+        val storedUnsafeTools = McpSettings.parseUnsafeToolSet(prefs.getString(KEY_MCP_UNSAFE_TOOLS))
+        val unsafeTools = settings.enabledUnsafeTools + storedUnsafeTools.filterNot { it in catalogIds }
+        prefs.setString(KEY_MCP_TOOL_TOGGLES, McpSettings.serializeToolToggles(toolToggles))
+        prefs.setString(KEY_MCP_UNSAFE_TOOLS, McpSettings.serializeUnsafeToolSet(unsafeTools))
         prefs.setBoolean(KEY_MCP_UNSAFE, settings.unsafeEnabled)
         // 07-03 D-03: persist the global MCP scope toggle.
         prefs.setBoolean(KEY_MCP_SCOPE_ONLY, settings.scopeOnly)
-        // PHASE 16: persist external server list with per-field bearerToken encryption.
-        saveExternalMcpServers(settings.externalMcpServers)
-    }
-
-    /**
-     * Persists the external MCP server list with per-field [bearerToken] encryption (Plan 16-02).
-     *
-     * Encryption contract: each server's [bearerToken] is encrypted individually via
-     * [SecretCipher.encrypt] before the list is serialized to JSON. The JSON blob itself
-     * is NOT encrypted at the blob level — only the per-field bearerToken values carry the
-     * ENC1: prefix at rest. Blank tokens are stored as-is (no encryption overhead for blank).
-     *
-     * Logging contract: on serialization failure, only [KEY_EXT_MCP_SERVERS] is logged —
-     * never the token value (T-16-02-LOG).
-     */
-    private fun saveExternalMcpServers(configs: List<ExternalMcpServerConfig>) {
-        val encryptedList =
-            configs.map { config ->
-                val storedToken =
-                    if (config.bearerToken.isBlank()) {
-                        ""
-                    } else {
-                        cipher.encrypt(config.bearerToken, KEY_EXT_MCP_SERVERS)
-                    }
-                config.copy(bearerToken = storedToken)
-            }
-        try {
-            // Store an empty list as "" (not "[]") so a later load never has to deserialize the
-            // empty-array sentinel via Jackson (#81).
-            val json = if (encryptedList.isEmpty()) "" else externalServerMapper.writeValueAsString(encryptedList)
-            prefs.setString(KEY_EXT_MCP_SERVERS, json)
-        } catch (e: Exception) {
-            // Never log the token value — log only the key name (T-16-02-LOG).
-            api.logging().logToError("saveExternalMcpServers: serialization failed for key: $KEY_EXT_MCP_SERVERS")
-        }
-    }
-
-    /**
-     * Loads the external MCP server list with per-field [bearerToken] decryption (Plan 16-02).
-     *
-     * Decryption contract: each server's stored [bearerToken] (ENC1:-prefixed) is decrypted
-     * individually via [SecretCipher.decrypt] after JSON parsing. The returned
-     * [ExternalMcpServerConfig] instances carry PLAINTEXT [bearerToken] values — callers
-     * MUST NOT call [SecretCipher.decrypt] on them again.
-     *
-     * On any parse exception: logs only [KEY_EXT_MCP_SERVERS] (never the value) and returns
-     * an empty list (fail-soft per D-01).
-     */
-    private fun loadExternalMcpServers(): List<ExternalMcpServerConfig> {
-        val json = prefs.getString(KEY_EXT_MCP_SERVERS)
-        // Treat blank and the empty-array sentinel "[]" as "no servers" WITHOUT invoking Jackson:
-        // deserializing "[]" via jackson-module-kotlin can surface a kotlin-reflect Throwable in
-        // Burp's isolated classloader that would otherwise abort extension load on restart (#81).
-        if (json.isNullOrBlank() || json.trim() == "[]") return emptyList()
-        return try {
-            val stored = externalServerMapper.readValue(json, Array<ExternalMcpServerConfig>::class.java).toList()
-            stored.map { config ->
-                val plainToken =
-                    if (config.bearerToken.isBlank()) {
-                        ""
-                    } else {
-                        cipher.decrypt(config.bearerToken, KEY_EXT_MCP_SERVERS)
-                    }
-                config.copy(bearerToken = plainToken)
-            }
-        } catch (e: Throwable) {
-            // Fail-soft per D-01: never let a config-parse failure abort extension load. Catch
-            // Throwable (not just Exception) so a kotlin-reflect Error degrades gracefully too
-            // (#81). Log only the key name + throwable type, never the raw value (T-16-02-LOG).
-            api.logging().logToError(
-                "loadExternalMcpServers: parse failed for key $KEY_EXT_MCP_SERVERS (${e.javaClass.simpleName})",
-            )
-            emptyList()
-        }
     }
 }

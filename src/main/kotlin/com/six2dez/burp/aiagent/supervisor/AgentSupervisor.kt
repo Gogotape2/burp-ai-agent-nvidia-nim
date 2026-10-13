@@ -7,19 +7,18 @@ import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.backends.AgentConnection
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.BackendRegistry
-import com.six2dez.burp.aiagent.backends.DiagnosableConnection
 import com.six2dez.burp.aiagent.backends.HealthCheckResult
+import com.six2dez.burp.aiagent.backends.LaunchRequest
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.redact.PrivacyMode
+import com.six2dez.burp.aiagent.spi.AiAccessPolicy
+import com.six2dez.burp.aiagent.spi.BackendModelHint
+import com.six2dez.burp.aiagent.spi.PluginSettingsStore
+import com.six2dez.burp.aiagent.spi.Plugins
 import com.six2dez.burp.aiagent.util.HeaderParser
 import java.util.UUID
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -28,9 +27,21 @@ class AgentSupervisor(
     private val api: MontoyaApi,
     private val registry: BackendRegistry,
     private val audit: AuditLogger,
-    private val workerPool: ExecutorService,
+    // Phase 29 / BUILD-04: no default value on purpose (Pitfall 11). Every caller, tests included,
+    // states which flavor's access policy it runs under, so none silently inherits one.
+    private val aiAccessPolicy: AiAccessPolicy,
 ) {
     var aiRequestLogger: AiRequestLogger? = null
+
+    /**
+     * Phase 29 / D-06: the plug-in settings store handed to [com.six2dez.burp.aiagent.spi.BackendModelHint]
+     * providers. App sets it once at startup; null (tests, or before wiring) means no hint is asked.
+     */
+    @Volatile
+    var pluginSettings: PluginSettingsStore? = null
+
+    // Loaded once. The store build ships no provider; the full build's CLI plug-in answers for ollama.
+    private val modelHints: List<BackendModelHint> = Plugins.load(BackendModelHint::class.java)
 
     data class Status(
         val state: String,
@@ -55,46 +66,23 @@ class AgentSupervisor(
             val sessionId: String,
             val connection: AgentConnection,
             val launchConfig: BackendLaunchConfig,
-            val startedAt: Long,
         ) : AgentState()
     }
 
     private val stateRef = AtomicReference<AgentState>(AgentState.Idle)
     private val settingsRef = AtomicReference<AgentSettings?>(null)
     private val lastErrorRef = AtomicReference<String?>(null)
-    private val crashCount = AtomicInteger(0)
-    private val lastRestartAt = AtomicLong(0)
-    private val autoRestartSuppressed = AtomicReference<String?>(null)
-    private val immediateCrashCount = AtomicInteger(0)
     private val chatSessionManager = ChatSessionManager()
     internal val httpTransport = MontoyaHttpTransport(api)
     private val services = java.util.concurrent.ConcurrentHashMap<String, Process>()
     private val lifecycleLock = ReentrantLock()
 
-    // REL-07 / SC6: a named daemon factory so a Burp thread dump identifies this scheduler as the
-    // supervisor's health monitor instead of showing an anonymous `pool-N-thread-M`. Size and
-    // interval are unchanged; this is naming only.
-    private val monitorExec =
-        Executors.newSingleThreadScheduledExecutor { runnable ->
-            Thread(runnable, "burp-ai-agent-supervisor-monitor").apply { isDaemon = true }
-        }
+    // UI-SPEC PC-4: saved backend ids already reported as substituted during this extension load.
+    private val substitutedBackendIds: MutableSet<String> =
+        java.util.concurrent.ConcurrentHashMap
+            .newKeySet()
 
     init {
-        monitorExec.scheduleAtFixedRate(
-            {
-                // scheduleAtFixedRate silently cancels the recurring task if any run throws an
-                // uncaught exception — guard so a transient checkHealth() failure can't stop the
-                // health monitor (and with it auto-restart) for the rest of the session.
-                try {
-                    checkHealth()
-                } catch (e: Throwable) {
-                    api.logging().logToError("[AgentSupervisor] health check failed: ${e.message}")
-                }
-            },
-            Defaults.HEALTH_CHECK_INTERVAL_MS,
-            Defaults.HEALTH_CHECK_INTERVAL_MS,
-            TimeUnit.MILLISECONDS,
-        )
         // BUG-69-01: HTTP backends' health checks must use Burp's HTTP stack (upstream proxy /
         // SOCKS / cert store). The registry remembers the transport and re-applies it to every
         // HttpTransportAware backend on reload(), so a Settings save no longer drops it.
@@ -106,16 +94,12 @@ class AgentSupervisor(
     }
 
     /**
-     * Returns the state of Burp Pro's built-in **"Use AI" for extensions** preference.
+     * Returns the state of Burp Pro's built-in **"Use AI" for extensions** preference (always `false`
+     * in Burp Community, where the preference does not exist).
      *
-     * IMPORTANT: this flag is *only* relevant to the `burp-ai` backend, which delegates inference
-     * to Burp Pro's bundled AI provider. Every other backend in this plugin (CLI agents like
-     * Claude Code / Codex / Gemini, plus HTTP backends like Ollama, LM Studio, OpenAI-compatible,
-     * NVIDIA NIM, Perplexity) is independent of Burp's AI features and must keep working when the
-     * toggle is off — including in Burp Community where the toggle does not exist at all.
-     *
-     * Callers should prefer [requiresBurpAiAndDisabled] to gate startup / send paths, so non-AI
-     * backends are not accidentally blocked by Burp's preference.
+     * Which backends need it is decided by the injected [AiAccessPolicy], not here: the BApp Store
+     * build requires it for every backend, the full build only for `burp-ai`. Callers gating start /
+     * send paths should use [aiAccessRefusal], never this raw value.
      */
     fun isAiEnabled(): Boolean =
         try {
@@ -126,20 +110,20 @@ class AgentSupervisor(
         }
 
     /**
-     * `true` iff [backendId] is the Burp-bundled `burp-ai` backend AND Burp Pro's `Use AI`
-     * preference is currently OFF. Used to short-circuit start / send paths with a clear error
-     * message; non-AI backends always return `false` regardless of the preference.
+     * `null` when the injected [AiAccessPolicy] allows a request to [backendId] under the current
+     * value of Burp's `Use AI` preference; otherwise the user-facing refusal message. Start / send
+     * paths short-circuit on a non-null result and surface the message as the error.
      */
-    fun requiresBurpAiAndDisabled(backendId: String): Boolean = backendId == "burp-ai" && !isAiEnabled()
+    fun aiAccessRefusal(backendId: String): String? = aiAccessPolicy.refusal(backendId, isAiEnabled())
 
     /**
-     * `true` iff the currently-running backend is `burp-ai` AND Burp Pro's `Use AI` toggle is OFF.
-     * Returns false when no backend is running, or when the running backend doesn't depend on
-     * Burp's bundled AI. Background scanners use this to skip work that would fail at send time.
+     * `true` iff a backend is running AND the [AiAccessPolicy] currently refuses it. Returns false
+     * when no backend is running. Background scanners use this to skip work that would fail at send
+     * time.
      */
-    fun isBlockedByBurpAiGate(): Boolean {
+    fun isBlockedByAiAccessPolicy(): Boolean {
         val running = stateRef.get() as? AgentState.Running ?: return false
-        return requiresBurpAiAndDisabled(running.backendId)
+        return aiAccessRefusal(running.backendId) != null
     }
 
     fun currentSessionId(): String? = (stateRef.get() as? AgentState.Running)?.sessionId
@@ -147,10 +131,12 @@ class AgentSupervisor(
     fun lastStartError(): String? = lastErrorRef.get()
 
     fun startOrAttach(backendId: String): Boolean {
-        if (requiresBurpAiAndDisabled(backendId)) {
-            val msg = "Burp AI is disabled in Burp Suite settings. Enable 'Use AI' for extensions, or pick a different backend."
-            lastErrorRef.set(msg)
-            api.logging().logToOutput(msg)
+        // Phase 29 / D-08: an unregistered saved id runs on burp-ai, and the policy judges that backend.
+        val resolvedId = resolveBackendId(backendId)
+        val refusal = aiAccessRefusal(resolvedId)
+        if (refusal != null) {
+            lastErrorRef.set(refusal)
+            api.logging().logToOutput(refusal)
             return false
         }
 
@@ -162,12 +148,10 @@ class AgentSupervisor(
 
         lifecycleLock.withLock {
             lastErrorRef.set(null)
-            autoRestartSuppressed.set(null)
-            immediateCrashCount.set(0)
 
             // Check if already running the requested backend
             val current = stateRef.get()
-            if (current is AgentState.Running && current.backendId == backendId && current.connection.isAlive()) {
+            if (current is AgentState.Running && current.backendId == resolvedId && current.connection.isAlive()) {
                 return true
             }
 
@@ -181,9 +165,9 @@ class AgentSupervisor(
 
             stop()
 
-            val resolved = registry.get(backendId)
+            val resolved = registry.get(resolvedId)
             if (resolved == null) {
-                val msg = "Backend not found: $backendId"
+                val msg = "Backend not found: $resolvedId"
                 lastErrorRef.set(msg)
                 api.logging().logToError(msg)
                 return false
@@ -191,26 +175,25 @@ class AgentSupervisor(
             backend = resolved
 
             sessionId = "session-" + UUID.randomUUID().toString()
-            launchConfig = buildLaunchConfig(backendId, sessionId, embeddedMode = true)
+            launchConfig = buildLaunchConfig(resolvedId, sessionId)
 
             // Set transitional STARTING state before releasing lock.
             // Keep a reference for the CAS below (AtomicReference uses identity comparison).
-            startingState = AgentState.Starting(backendId)
+            startingState = AgentState.Starting(resolvedId)
             stateRef.set(startingState)
         }
 
         // Phase 2: Launch backend outside lock (may block for CLI processes)
         return try {
-            api.logging().logToOutput("Launching backend $backendId with config: ${redactedConfigSummary(launchConfig)}")
+            api.logging().logToOutput("Launching backend $resolvedId with config: ${redactedConfigSummary(launchConfig)}")
             val conn = backend.launch(launchConfig)
 
             val newState =
                 AgentState.Running(
-                    backendId = backendId,
+                    backendId = resolvedId,
                     sessionId = sessionId,
                     connection = conn,
                     launchConfig = launchConfig,
-                    startedAt = System.currentTimeMillis(),
                 )
 
             // Only transition if still in STARTING state (stop() may have been called).
@@ -220,7 +203,7 @@ class AgentSupervisor(
                 audit.logEvent(
                     "session_start",
                     mapOf(
-                        "backendId" to backendId,
+                        "backendId" to resolvedId,
                         "sessionId" to sessionId,
                         "model" to launchConfig.model,
                         "displayName" to launchConfig.displayName,
@@ -233,7 +216,7 @@ class AgentSupervisor(
                 false
             }
         } catch (e: Exception) {
-            val msg = "[AgentSupervisor] Failed to launch backend $backendId: ${e.message}"
+            val msg = "[AgentSupervisor] Failed to launch backend $resolvedId: ${e.message}"
             lastErrorRef.set(msg)
             api.logging().logToError(msg)
             // Reset to Idle if still in STARTING
@@ -266,7 +249,21 @@ class AgentSupervisor(
 
     fun isBackendHealthy(settings: AgentSettings): Boolean = backendHealth(settings).isHealthy
 
-    fun backendHealth(settings: AgentSettings): HealthCheckResult = registry.healthCheck(settings.preferredBackendId, settings)
+    fun backendHealth(settings: AgentSettings): HealthCheckResult = registry.healthCheck(resolveBackendId(settings.preferredBackendId), settings)
+
+    /**
+     * Phase 29 / D-08: [backendId] when the registry has it, otherwise the default backend (burp-ai).
+     * Logs C-N9 to the Output tab once per substituted id per extension load (UI-SPEC S24 / PC-4), as
+     * plain text: the Output pane renders no HTML. The substitution is never persisted.
+     */
+    private fun resolveBackendId(backendId: String): String {
+        if (registry.get(backendId) != null) return backendId
+        val fallback = BackendRegistry.DEFAULT_BACKEND_ID
+        if (backendId != fallback && substitutedBackendIds.add(backendId)) {
+            safeLogOutput("[AgentSupervisor] Saved backend '$backendId' is not registered in this build; using $fallback.")
+        }
+        return fallback
+    }
 
     fun stop() {
         lifecycleLock.withLock {
@@ -283,18 +280,6 @@ class AgentSupervisor(
                 }
                 is AgentState.Idle -> { /* nothing */ }
             }
-            autoRestartSuppressed.set(null)
-            immediateCrashCount.set(0)
-        }
-    }
-
-    fun restart(): Boolean {
-        return lifecycleLock.withLock {
-            val current = stateRef.get()
-            if (current !is AgentState.Running) return@withLock false
-            val backendId = current.backendId
-            stop()
-            startOrAttach(backendId)
         }
     }
 
@@ -316,8 +301,9 @@ class AgentSupervisor(
             onComplete(IllegalStateException("No active session"))
             return
         }
-        if (requiresBurpAiAndDisabled(current.backendId)) {
-            onComplete(IllegalStateException("Burp AI is disabled in Burp Suite settings."))
+        val refusal = aiAccessRefusal(current.backendId)
+        if (refusal != null) {
+            onComplete(IllegalStateException(refusal))
             return
         }
 
@@ -442,32 +428,34 @@ class AgentSupervisor(
         maxOutputTokens: Int? = null,
         launchMetadata: Map<String, String>? = null,
     ): com.six2dez.burp.aiagent.backends.AgentConnection? {
-        if (requiresBurpAiAndDisabled(backendId)) {
-            onComplete(IllegalStateException("Burp AI is disabled in Burp Suite settings."))
+        // Phase 29 / D-08: an unregistered saved id runs on burp-ai, and the policy judges that backend.
+        val resolvedId = resolveBackendId(backendId)
+        val refusal = aiAccessRefusal(resolvedId)
+        if (refusal != null) {
+            onComplete(IllegalStateException(refusal))
             return null
         }
 
         lastErrorRef.set(null)
         val resolvedTraceId = traceId ?: "chat-turn-" + UUID.randomUUID().toString()
-        val backend = registry.get(backendId)
+        val backend = registry.get(resolvedId)
         if (backend == null) {
-            onComplete(IllegalStateException("Backend not found: $backendId"))
+            onComplete(IllegalStateException("Backend not found: $resolvedId"))
             return null
         }
 
         // Hoisted so the audit bundle (below) can read backend config in both
         // existing-connection and new-connection paths.
-        val cliSessionId = chatSessionManager.cliSessionIdFor(chatSessionId, backendId)
+        val cliSessionId = chatSessionManager.cliSessionIdFor(chatSessionId, resolvedId)
         val launchConfig =
             buildLaunchConfig(
-                backendId,
+                resolvedId,
                 chatSessionId,
-                embeddedMode = true,
                 cliSessionId = cliSessionId,
             )
 
         // Try to reuse an existing connection (for HTTP backends with conversation history)
-        val existingConn = chatSessionManager.existingConnectionFor(chatSessionId, backendId)
+        val existingConn = chatSessionManager.existingConnectionFor(chatSessionId, resolvedId)
         val connection: AgentConnection
         if (existingConn != null) {
             connection = existingConn
@@ -475,7 +463,7 @@ class AgentSupervisor(
             try {
                 connection = backend.launch(launchConfig)
             } catch (e: Exception) {
-                val msg = "[AgentSupervisor] Failed to launch backend $backendId: ${e.message}"
+                val msg = "[AgentSupervisor] Failed to launch backend $resolvedId: ${e.message}"
                 lastErrorRef.set(msg)
                 api.logging().logToError(msg)
                 onComplete(e)
@@ -487,7 +475,7 @@ class AgentSupervisor(
             val bundle =
                 audit.buildPromptBundle(
                     sessionId = chatSessionId,
-                    backendId = backendId,
+                    backendId = resolvedId,
                     backendConfig = launchConfig,
                     promptText = text,
                     contextJson = contextJson,
@@ -502,13 +490,13 @@ class AgentSupervisor(
             audit.writePromptBundle(bundle)
         }
 
-        api.logging().logToOutput("AI chat send: backend=$backendId chatSession=$chatSessionId")
+        api.logging().logToOutput("AI chat send: backend=$resolvedId chatSession=$chatSessionId")
 
         val chatSendStartMs = System.currentTimeMillis()
         aiRequestLogger?.log(
             type = ActivityType.PROMPT_SENT,
             source = "chat",
-            backendId = backendId,
+            backendId = resolvedId,
             sessionId = chatSessionId,
             detail = "Chat prompt sent (${text.length} chars)",
             promptChars = text.length,
@@ -527,7 +515,7 @@ class AgentSupervisor(
             onChunk = { chunk ->
                 chatResponseAccumulator.append(chunk)
                 if (audit.isEnabled()) {
-                    audit.logEvent("agent_chunk", mapOf("backendId" to backendId) + audit.bodyFields("chunk", chunk))
+                    audit.logEvent("agent_chunk", mapOf("backendId" to resolvedId) + audit.bodyFields("chunk", chunk))
                 }
                 onChunk(chunk)
             },
@@ -537,14 +525,14 @@ class AgentSupervisor(
                 val durationMs = System.currentTimeMillis() - chatSendStartMs
                 audit.logEvent(
                     "prompt_complete",
-                    mapOf("backendId" to backendId, "status" to (if (err == null) "ok" else "error")) + audit.errorFields(err),
+                    mapOf("backendId" to resolvedId, "status" to (if (err == null) "ok" else "error")) + audit.errorFields(err),
                 )
                 if (err != null) {
-                    api.logging().logToError("AI backend error ($backendId): ${err.message}")
+                    api.logging().logToError("AI backend error ($resolvedId): ${err.message}")
                     aiRequestLogger?.log(
                         type = ActivityType.ERROR,
                         source = "chat",
-                        backendId = backendId,
+                        backendId = resolvedId,
                         sessionId = chatSessionId,
                         detail = "Chat error: ${err.message}",
                         durationMs = durationMs,
@@ -562,7 +550,7 @@ class AgentSupervisor(
                     aiRequestLogger?.log(
                         type = ActivityType.RESPONSE_COMPLETE,
                         source = "chat",
-                        backendId = backendId,
+                        backendId = resolvedId,
                         sessionId = chatSessionId,
                         detail = "Chat response received (${chatResponseAccumulator.length} chars)",
                         durationMs = durationMs,
@@ -577,7 +565,7 @@ class AgentSupervisor(
                     )
                 }
                 // Update session state after completion (stores cliSessionId or connection for reuse)
-                chatSessionManager.updateSession(chatSessionId, backendId, connection)
+                chatSessionManager.updateSession(chatSessionId, resolvedId, connection)
                 onComplete(err)
             },
         )
@@ -622,39 +610,24 @@ class AgentSupervisor(
         )
     }
 
+    // Suppressed here rather than baselined (ADR-17 forbids new baseline entries): one branch per
+    // backend core ships. Phase 29 / D-09: every other backend (the full build's CLI backends, drop-in
+    // JARs) builds its own configuration through AiBackend.launchConfig, in the `else` branch.
+    @Suppress("CyclomaticComplexMethod", "LongMethod")
     private fun buildLaunchConfig(
         backendId: String,
         sessionId: String,
-        embeddedMode: Boolean,
         cliSessionId: String? = null,
     ): BackendLaunchConfig {
         val prefs = api.persistence().preferences()
         val settings = settingsRef.get()
         val determinism = settings?.determinismMode ?: (prefs.getBoolean("determinism.enabled") ?: false)
 
-        val mcpSettings = settings?.mcpSettings
-        val mcpEnv =
-            if (mcpSettings != null && mcpSettings.enabled) {
-                val url = "http://${mcpSettings.host}:${mcpSettings.port}/mcp"
-                mapOf(
-                    "BURP_MCP_PORT" to mcpSettings.port.toString(),
-                    "BURP_MCP_HOST" to mcpSettings.host,
-                    "BURP_MCP_TOKEN" to mcpSettings.token,
-                    "BURP_MCP_API_URL" to url,
-                    "MCP_SERVER_URL" to url,
-                    "MCP_SERVER" to url,
-                    "MCP_TOKEN" to mcpSettings.token,
-                )
-            } else {
-                emptyMap()
-            }
-
         val baseEnv =
             mapOf(
                 "BURP_AI_AGENT_SESSION_ID" to sessionId,
                 "BURP_AI_AGENT_DETERMINISM" to determinism.toString(),
-                "PATH" to buildCliPathStatic(),
-            ) + mcpEnv
+            )
 
         return when (backendId) {
             "burp-ai" ->
@@ -665,71 +638,10 @@ class AgentSupervisor(
                     determinismMode = determinism,
                     env = baseEnv,
                 )
-            "codex-cli" -> {
-                val cmd = (settings?.codexCmd ?: prefs.getString("codex.cmd") ?: "codex").trim()
-                val env = embeddedCliEnv(baseEnv, embeddedMode)
-                BackendLaunchConfig(
-                    backendId = backendId,
-                    displayName = "Codex CLI",
-                    command = tokenizeCommand(cmd),
-                    embeddedMode = embeddedMode,
-                    sessionId = sessionId,
-                    determinismMode = determinism,
-                    env = env,
-                    cliSessionId = cliSessionId,
-                    cliTimeoutSeconds = settings?.cliTimeoutSeconds,
-                )
-            }
-            "gemini-cli" -> {
-                val cmd = (settings?.geminiCmd ?: prefs.getString("gemini.cmd") ?: "gemini").trim()
-                val env = embeddedCliEnv(baseEnv, embeddedMode)
-                BackendLaunchConfig(
-                    backendId = backendId,
-                    displayName = "Gemini CLI",
-                    command = tokenizeCommand(cmd),
-                    embeddedMode = embeddedMode,
-                    sessionId = sessionId,
-                    determinismMode = determinism,
-                    env = env,
-                    cliSessionId = cliSessionId,
-                    cliTimeoutSeconds = settings?.cliTimeoutSeconds,
-                )
-            }
-            "opencode-cli" -> {
-                val baseCmd = (settings?.opencodeCmd ?: prefs.getString("opencode.cmd") ?: "opencode").trim()
-                val cmdParts = tokenizeCommand(baseCmd)
-                val env = embeddedCliEnv(baseEnv, embeddedMode)
-                BackendLaunchConfig(
-                    backendId = backendId,
-                    displayName = "OpenCode CLI",
-                    command = cmdParts,
-                    embeddedMode = embeddedMode,
-                    sessionId = sessionId,
-                    determinismMode = determinism,
-                    env = env,
-                    cliSessionId = cliSessionId,
-                    cliTimeoutSeconds = settings?.cliTimeoutSeconds,
-                )
-            }
-            "claude-cli" -> {
-                val cmd = (settings?.claudeCmd ?: prefs.getString("claude.cmd") ?: "claude").trim()
-                val env = embeddedCliEnv(baseEnv, embeddedMode)
-                BackendLaunchConfig(
-                    backendId = backendId,
-                    displayName = "Claude Code",
-                    command = tokenizeCommand(cmd),
-                    embeddedMode = embeddedMode,
-                    sessionId = sessionId,
-                    determinismMode = determinism,
-                    env = env,
-                    cliSessionId = cliSessionId,
-                    cliTimeoutSeconds = settings?.cliTimeoutSeconds,
-                )
-            }
             "ollama" -> {
                 val url = (settings?.ollamaUrl ?: prefs.getString("ollama.url") ?: "http://127.0.0.1:11434").trim()
                 val explicitModel = (settings?.ollamaModel ?: prefs.getString("ollama.model")).orEmpty().trim()
-                val model = explicitModel.ifBlank { resolveOllamaModel(settings) }
+                val model = explicitModel.ifBlank { hintedModel("ollama") ?: DEFAULT_OLLAMA_MODEL }
                 val apiKey = settings?.ollamaApiKey ?: prefs.getString("ollama.apiKey").orEmpty()
                 val rawHeaders = settings?.ollamaHeaders ?: prefs.getString("ollama.headers").orEmpty()
                 val headers =
@@ -747,7 +659,6 @@ class AgentSupervisor(
                     model = model,
                     headers = headers,
                     requestTimeoutSeconds = timeoutSeconds.toLong(),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = baseEnv,
@@ -778,7 +689,6 @@ class AgentSupervisor(
                     model = model,
                     headers = headers,
                     requestTimeoutSeconds = timeoutSeconds.toLong(),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = baseEnv,
@@ -806,7 +716,6 @@ class AgentSupervisor(
                     model = model,
                     headers = headers,
                     requestTimeoutSeconds = timeoutSeconds.toLong(),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = baseEnv,
@@ -834,7 +743,6 @@ class AgentSupervisor(
                     model = model,
                     headers = headers,
                     requestTimeoutSeconds = timeoutSeconds.toLong(),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = baseEnv,
@@ -865,7 +773,6 @@ class AgentSupervisor(
                     model = model,
                     headers = headers,
                     requestTimeoutSeconds = timeoutSeconds.toLong(),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = baseEnv,
@@ -890,7 +797,6 @@ class AgentSupervisor(
                     model = model,
                     headers = mapOf("x-api-key" to apiKey, "anthropic-version" to "2023-06-01"),
                     requestTimeoutSeconds = timeoutSeconds.toLong(),
-                    embeddedMode = embeddedMode,
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = baseEnv,
@@ -899,123 +805,36 @@ class AgentSupervisor(
                     transport = httpTransport,
                 )
             }
-            "copilot-cli" -> {
-                val cmd = (settings?.copilotCmd ?: prefs.getString("copilot.cmd") ?: "copilot").trim()
-                val env = embeddedCliEnv(baseEnv, embeddedMode)
-                BackendLaunchConfig(
-                    backendId = backendId,
-                    displayName = "Copilot CLI",
-                    command = tokenizeCommand(cmd),
-                    embeddedMode = embeddedMode,
-                    sessionId = sessionId,
-                    determinismMode = determinism,
-                    env = env,
-                    cliSessionId = cliSessionId,
-                    cliTimeoutSeconds = settings?.cliTimeoutSeconds,
-                )
+            else ->
+                registry.get(backendId)?.launchConfig(
+                    LaunchRequest(
+                        backendId = backendId,
+                        sessionId = sessionId,
+                        determinismMode = determinism,
+                        cliSessionId = cliSessionId,
+                        settings = settings,
+                        baseEnv = baseEnv,
+                    ),
+                ) ?: BackendLaunchConfig(backendId, backendId, env = baseEnv, cliSessionId = cliSessionId)
+        }
+    }
+
+    /**
+     * Phase 29 / D-06: the first non-blank model a [BackendModelHint] plug-in suggests for [backendId],
+     * or null. A hint that throws is logged and skipped, so a broken plug-in cannot stop a launch
+     * (TooGenericExceptionCaught is suppressed for that reason: a plug-in may throw anything).
+     */
+    @Suppress("TooGenericExceptionCaught")
+    private fun hintedModel(backendId: String): String? {
+        val store = pluginSettings ?: return null
+        return modelHints.firstNotNullOfOrNull { hint ->
+            try {
+                hint.defaultModel(backendId, store)?.trim()?.takeIf { it.isNotEmpty() }
+            } catch (e: Exception) {
+                api.logging().logToError("[AgentSupervisor] Model hint ${hint.javaClass.name} failed: ${e.message}")
+                null
             }
-            else -> BackendLaunchConfig(backendId, backendId, embeddedMode = embeddedMode, env = baseEnv, cliSessionId = cliSessionId)
         }
-    }
-
-    private fun embeddedCliEnv(
-        baseEnv: Map<String, String>,
-        embeddedMode: Boolean,
-    ): Map<String, String> {
-        if (!embeddedMode) return baseEnv
-        return baseEnv +
-            mapOf(
-                "CI" to "1",
-                "TERM" to "dumb",
-                "NO_COLOR" to "1",
-                "CLICOLOR" to "0",
-                "FORCE_COLOR" to "0",
-                "BURP_AI_AGENT_EMBEDDED" to "1",
-            )
-    }
-
-    private fun resolveOllamaModel(settings: AgentSettings?): String {
-        val cmd = settings?.ollamaCliCmd?.trim().orEmpty()
-        val fromCmd = parseOllamaModelFromCli(cmd)
-        if (!fromCmd.isNullOrBlank()) return fromCmd
-        return "llama3.1"
-    }
-
-    private fun parseOllamaModelFromCli(cmd: String): String? {
-        if (cmd.isBlank()) return null
-        val parts = tokenizeCommand(cmd)
-        val runIdx = parts.indexOf("run")
-        if (runIdx >= 0 && runIdx + 1 < parts.size) {
-            val candidate = parts[runIdx + 1]
-            return if (candidate.startsWith("-")) null else candidate
-        }
-        if (parts.size >= 3 && parts[0] == "ollama" && parts[1] == "run") {
-            return parts[2]
-        }
-        return null
-    }
-
-    private fun checkHealth() {
-        // Snapshot state atomically — if it's not Running, skip
-        val current = stateRef.get() as? AgentState.Running ?: return
-
-        if (current.connection.isAlive()) {
-            val startedAt = current.startedAt
-            if (startedAt > 0 && System.currentTimeMillis() - startedAt > 5_000) {
-                crashCount.set(0)
-                autoRestartSuppressed.set(null)
-                immediateCrashCount.set(0)
-            }
-            return
-        }
-
-        // Verify state hasn't changed since we checked isAlive (another thread may have called stop())
-        if (stateRef.get() !== current) return
-
-        val settings = settingsRef.get() ?: return
-        if (!settings.autoRestart) return
-        if (autoRestartSuppressed.get() != null) return
-
-        val startedAt = current.startedAt
-        val now = System.currentTimeMillis()
-        val immediateCrash = startedAt > 0 && (now - startedAt) < 5_000
-
-        val failures = crashCount.get().coerceAtLeast(1)
-        val backoffMs = (1000L * (1 shl failures.coerceAtMost(5))).coerceAtMost(30_000L)
-        val last = lastRestartAt.get()
-        if (now - last < backoffMs) return
-
-        val attempt = crashCount.incrementAndGet()
-        val backendId = current.backendId
-
-        if (immediateCrash) {
-            val immediate = immediateCrashCount.incrementAndGet()
-            val detail = buildExitDetail(current.connection)
-            if (detail.isNotBlank()) {
-                api.logging().logToError("Agent exited immediately: $backendId.$detail")
-            }
-            if (immediate >= 3) {
-                val msg = "Auto-restart suppressed: $backendId exits immediately. Check CLI config/auth.$detail"
-                autoRestartSuppressed.set(msg)
-                lastErrorRef.set(msg)
-                api.logging().logToError(msg)
-                return
-            }
-        } else {
-            immediateCrashCount.set(0)
-        }
-
-        lastRestartAt.set(now)
-        api.logging().logToError("Agent crashed. Auto-restarting in ${backoffMs}ms (attempt $attempt).")
-
-        workerPool.submit { startOrAttach(backendId) }
-    }
-
-    private fun buildExitDetail(conn: AgentConnection): String {
-        if (conn !is DiagnosableConnection) return ""
-        val code = conn.exitCode()?.let { " exit=$it" }.orEmpty()
-        val tail = conn.lastOutputTail()?.let { "\nOutput:\n$it" }.orEmpty()
-        return if (code.isNotBlank() || tail.isNotBlank()) "$code$tail" else ""
     }
 
     private fun startService(
@@ -1033,11 +852,9 @@ class AgentSupervisor(
                     .start()
             services[name] = process
             // REL-07 / SC6: this pump calls reader.forEachLine, which occupies its thread for the
-            // ENTIRE lifetime of the service process. It used to run on the shared workerPool; once
-            // that pool is bounded (App.kt) a never-returning task on it parks one worker thread per
-            // managed service and queues the auto-restart submit in scheduleRestart forever.
-            // Unbounded-duration work belongs on its own dedicated daemon thread (Phase 23 D-05),
-            // the same shape CliBackend.kt already uses for its reader thread. The body is unchanged.
+            // ENTIRE lifetime of the service process. Unbounded-duration work belongs on its own
+            // dedicated, named daemon thread (Phase 23 D-05), never on a shared pool where it would
+            // park a worker for as long as the service runs.
             val pumpThread =
                 Thread({
                     try {
@@ -1069,7 +886,7 @@ class AgentSupervisor(
      */
     private fun redactedConfigSummary(config: BackendLaunchConfig): String =
         "BackendLaunchConfig(backendId=${config.backendId}, displayName=${config.displayName}, " +
-            "model=${config.model}, baseUrl=${config.baseUrl}, embeddedMode=${config.embeddedMode}, " +
+            "model=${config.model}, baseUrl=${config.baseUrl}, " +
             "headers=[${config.headers.keys.joinToString()}])"
 
     private fun safeLogOutput(message: String) {
@@ -1093,15 +910,6 @@ class AgentSupervisor(
     fun shutdown() {
         stop()
         chatSessionManager.shutdown()
-        monitorExec.shutdown()
-        try {
-            if (!monitorExec.awaitTermination(3, TimeUnit.SECONDS)) {
-                monitorExec.shutdownNow()
-            }
-        } catch (_: InterruptedException) {
-            // INTENTIONAL: interrupt during monitor shutdown; shutdownNow() called; interrupt flag restored via JVM
-            monitorExec.shutdownNow()
-        }
         for ((name, process) in services) {
             try {
                 process.destroyForcibly()
@@ -1113,13 +921,15 @@ class AgentSupervisor(
     }
 
     companion object {
-        private val cachedPathRef = AtomicReference<String?>(null)
+        /** The Ollama model when the user left the field blank and no plug-in suggests one. */
+        private const val DEFAULT_OLLAMA_MODEL = "llama3.1"
 
         /**
          * Splits a user-typed command string into argv tokens with quote and backslash handling.
          *
-         * Shared between [AgentSupervisor]'s service launch paths and [com.six2dez.burp.aiagent.backends.cli.CliBackend.isAvailable]
-         * so that the executable resolved by `isAvailable()` is the same as the one launched by `send()` (fixes bug #67).
+         * Shared between [AgentSupervisor]'s service launch paths and the full build's CLI backend (its
+         * `isAvailable()` and its launch configuration), so that the executable resolved by
+         * `isAvailable()` is the same as the one launched by `send()` (fixes bug #67).
          *
          * On Windows the backslash is the path separator and MUST NOT be interpreted as an escape
          * character — otherwise paths like `C:\Users\u\bin\claude.exe` collapse to `C:Usersubinclaude.exe`.
@@ -1179,108 +989,6 @@ class AgentSupervisor(
                 tokens.add(currentToken.toString())
             }
             return tokens
-        }
-
-        fun buildCliPathStatic(): String {
-            cachedPathRef.get()?.let { return it }
-
-            val initialBase = System.getenv("PATH").orEmpty()
-            val userHome = System.getProperty("user.home")
-            val sep = java.io.File.pathSeparator
-            val os = System.getProperty("os.name").lowercase(java.util.Locale.ROOT)
-            val isWin = os.contains("win")
-
-            if (isWin) {
-                cachedPathRef.compareAndSet(null, initialBase)
-                return cachedPathRef.get()!!
-            }
-
-            // On Unix (macOS/Linux), Burp often has a truncated PATH if not started from terminal.
-            val capturedPath = capturePathFromShells() ?: initialBase
-
-            // Merge everything and inject common local folders that are often missed
-            val rawList = (capturedPath.split(sep) + initialBase.split(sep)).toMutableList()
-
-            val commonFolders =
-                listOf(
-                    "~/.local/bin",
-                    "~/bin",
-                    "/opt/homebrew/bin",
-                    "/usr/local/bin",
-                )
-
-            for (f in commonFolders) {
-                val expanded = expandHome(f, userHome)
-                if (java.io.File(expanded).exists()) {
-                    rawList.add(expanded)
-                }
-            }
-
-            val finalPath = rawList.filter { it.isNotBlank() }.distinct().joinToString(sep)
-
-            // Atomic set — first thread wins, subsequent calls use the cached value
-            cachedPathRef.compareAndSet(null, finalPath)
-            return cachedPathRef.get()!!
-        }
-
-        private fun expandHome(
-            path: String,
-            home: String,
-        ): String =
-            if (path.startsWith("~")) {
-                home + path.substring(1)
-            } else {
-                path
-            }
-
-        private fun capturePathFromShells(): String? {
-            val shells =
-                listOf(
-                    System.getenv("SHELL"),
-                    "/bin/zsh",
-                    "/usr/bin/zsh",
-                    "/bin/bash",
-                    "/usr/bin/bash",
-                    "/bin/sh",
-                ).filterNotNull().distinct()
-
-            for (shellPath in shells) {
-                if (!java.io.File(shellPath).exists()) continue
-
-                // Strategy A: Standard login shell
-                val captured = tryCapture(shellPath, listOf("-l", "-c", "echo ___BURP_PATH___\$PATH"))
-                if (!captured.isNullOrBlank()) return captured
-
-                // Strategy B: Explicit source (often needed for macOS GUI apps)
-                if (shellPath.endsWith("zsh")) {
-                    val fallback = tryCapture(shellPath, listOf("-c", "source ~/.zshrc 2>/dev/null; echo ___BURP_PATH___\$PATH"))
-                    if (!fallback.isNullOrBlank()) return fallback
-                }
-            }
-            return null
-        }
-
-        private fun tryCapture(
-            shellPath: String,
-            args: List<String>,
-        ): String? {
-            try {
-                val process = ProcessBuilder(listOf(shellPath) + args).start()
-                val output = process.inputStream.bufferedReader().use { it.readText() }
-                if (!process.waitFor(5, TimeUnit.SECONDS)) {
-                    process.destroyForcibly()
-                    return null
-                }
-                if (process.exitValue() == 0 && output.contains("___BURP_PATH___")) {
-                    val result = output.substringAfter("___BURP_PATH___").substringBefore("\n").trim()
-                    if (result.isNotBlank()) {
-                        return result
-                    }
-                }
-            } catch (_: Exception) {
-                // INTENTIONAL: shell PATH capture is best-effort; returns null on failure (fallback to System.getenv)
-            }
-            return null
         }
     }
 }

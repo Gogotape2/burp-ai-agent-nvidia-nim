@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.ui
 
 import com.six2dez.burp.aiagent.agents.AgentProfileLoader
+import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.backends.HealthCheckResult
 import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.redact.PrivacyMode
@@ -71,8 +72,11 @@ fun SettingsPanel.updateUsageSummary(
 fun SettingsPanel.saveSettings() {
     // currentSettings() reads the Swing components, so it stays on the EDT before dispatch.
     val updated = currentSettings()
+    // D-07 (UI-SPEC H-2): contribution values are read off their components here too, with the core
+    // snapshot; the worker persists them after the core save.
+    val contributionSnapshots = activeContributions.map { it to it.collect() }
     updateSaveFeedback("Saving settings...", DesignTokens.Colors.statusWarning)
-    applyAndSaveSettingsAsync(updated) { result ->
+    applyAndSaveSettingsAsync(updated, contributionSnapshots) { result ->
         result
             .onSuccess {
                 updateSaveFeedback("Saved and applied.", DesignTokens.Colors.statusSuccess, resetMs = 3000)
@@ -119,8 +123,13 @@ fun SettingsPanel.restoreDefaultsWithConfirmation() {
 internal fun SettingsPanel.restoreDefaultsConfirmed() {
     val defaults = settingsRepo.defaultSettings()
     applySettingsToUi(defaults, notifyHosts = false)
+    // D-10 amended: each contribution's defaults are shown here, on the EDT, and persisted on the worker.
+    val contributionDefaults =
+        activeContributions.map { contribution ->
+            contribution to contribution.defaults().also { contribution.applyToUi(it) }
+        }
     updateSaveFeedback("Restoring defaults...", DesignTokens.Colors.statusWarning)
-    applyAndSaveSettingsAsync(defaults) { result ->
+    applyAndSaveSettingsAsync(defaults, contributionDefaults) { result ->
         result
             .onSuccess {
                 updateSaveFeedback("Defaults restored and applied.", DesignTokens.Colors.statusSuccess, resetMs = 3000)
@@ -141,12 +150,39 @@ internal fun SettingsPanel.restoreDefaultsConfirmed() {
     }
 }
 
+/**
+ * The user's pick in the Main tab header picker. Any pick, burp-ai included, replaces an unavailable
+ * saved backend id, so the S8 notice hides with S5 (UI-SPEC PC-3).
+ */
 fun SettingsPanel.setPreferredBackend(value: String) {
+    unavailableSavedBackendId = null
     preferredBackend.selectedItem = value
     backendConfigPanel.setBackend(preferredBackendId())
+    syncUnavailableBackendNotice()
 }
 
-fun SettingsPanel.preferredBackendId(): String = preferredBackend.selectedItem as? String ?: "codex-cli"
+fun SettingsPanel.preferredBackendId(): String = preferredBackend.selectedItem as? String ?: BackendRegistry.DEFAULT_BACKEND_ID
+
+/**
+ * The backend id a Save stores: the unavailable saved id while the picker still shows the substituted
+ * default, so the substitution is never persisted (D-08, P-1); the picked id otherwise.
+ */
+internal fun SettingsPanel.backendIdToStore(): String {
+    val picked = preferredBackendId()
+    val unavailable = unavailableSavedBackendId
+    return if (unavailable != null && picked == BackendRegistry.DEFAULT_BACKEND_ID) unavailable else picked
+}
+
+/** UI-SPEC S8: shows C-N1 while the saved backend id is unavailable, hides it (and its gap) otherwise. */
+internal fun SettingsPanel.syncUnavailableBackendNotice() {
+    val unavailable = unavailableSavedBackendId
+    if (unavailable == null) {
+        unavailableBackendNotice.hideNotice()
+    } else {
+        unavailableBackendNotice.setMessage(SubtleNotice.Level.INFO, unavailableBackendNoticeHtml(unavailable))
+    }
+    unavailableBackendNoticeRow.isVisible = unavailable != null
+}
 
 fun SettingsPanel.setMcpEnabled(enabled: Boolean) {
     mcpEnabled.isSelected = enabled
@@ -199,12 +235,13 @@ internal fun SettingsPanel.dialogParentComponent(): JComponent? = dialogParent
 internal fun SettingsPanel.helpSection(): JPanel =
     HelpConfigPanel(
         dialogParentProvider = ::dialogParentComponent,
+        buildIdentity = buildIdentity,
     ).build()
 
 internal fun SettingsPanel.privacySection(): JPanel =
     PrivacyConfigPanel(
         privacyMode = privacyMode,
-        // Quick 261008-sqa (PD-12): PrivacyConfigPanel's constructor is baselined by its exact text, so
+        // Quick 261008-sqa (PD-12): PrivacyConfigPanel's constructor is held at its parameter count, so
         // the Verbose switch is composed INTO the Audit logging row here rather than added as a parameter.
         auditEnabled =
             JPanel(FlowLayout(FlowLayout.LEADING, 0, 0)).apply {
@@ -222,7 +259,6 @@ internal fun SettingsPanel.privacySection(): JPanel =
                 add(Box.createHorizontalStrut(DesignTokens.Spacing.xs))
                 add(auditVerbose)
             },
-        autoRestart = autoRestart,
         determinism = determinism,
         rotateSaltBtn = rotateSaltBtn,
         privacyNotice = privacyNotice,
@@ -452,55 +488,4 @@ internal fun SettingsPanel.styleCombo(combo: JComboBox<*>) {
     combo.background = DesignTokens.Colors.inputBackground
     combo.foreground = DesignTokens.Colors.inputForeground
     combo.border = LineBorder(DesignTokens.Colors.border, 1, true)
-}
-
-internal fun SettingsPanel.openExternalCli(
-    backendId: String,
-    command: String,
-) {
-    if (command.isBlank()) {
-        JOptionPane.showMessageDialog(
-            dialogParentComponent(),
-            "Command is empty for $backendId.",
-            "Custom AI Agent",
-            JOptionPane.WARNING_MESSAGE,
-        )
-        return
-    }
-    try {
-        val os = System.getProperty("os.name").lowercase()
-        val process =
-            when {
-                os.contains("win") -> {
-                    ProcessBuilder("cmd.exe", "/c", "start", "\"AI Agent CLI\"", "cmd.exe", "/k", command)
-                }
-                os.contains("mac") -> {
-                    val escaped = command.replace("\\", "\\\\").replace("\"", "\\\"")
-                    ProcessBuilder("osascript", "-e", "tell application \"Terminal\" to do script \"$escaped\"")
-                }
-                else -> {
-                    val shellCmd =
-                        "x-terminal-emulator -e bash -lc ${shellQuote("$command; exec bash")} " +
-                            "|| gnome-terminal -- bash -lc ${shellQuote("$command; exec bash")} " +
-                            "|| konsole -e bash -lc ${shellQuote("$command; exec bash")} " +
-                            "|| xterm -e bash -lc ${shellQuote("$command; exec bash")}"
-                    ProcessBuilder("sh", "-c", shellCmd)
-                }
-            }
-        process.start()
-    } catch (e: Exception) {
-        api.logging().logToError("Failed to open CLI for $backendId: ${e.message}")
-        JOptionPane.showMessageDialog(
-            dialogParentComponent(),
-            "Failed to open CLI: ${e.message}",
-            "Custom AI Agent",
-            JOptionPane.ERROR_MESSAGE,
-        )
-    }
-}
-
-internal fun SettingsPanel.shellQuote(value: String): String {
-    if (value.isEmpty()) return "''"
-    if (value.none { it.isWhitespace() || it == '"' || it == '\'' }) return value
-    return "'" + value.replace("'", "'\"'\"'") + "'"
 }

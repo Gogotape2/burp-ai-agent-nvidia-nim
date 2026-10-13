@@ -3,6 +3,7 @@ package com.six2dez.burp.aiagent.ui
 import burp.api.montoya.MontoyaApi
 import burp.api.montoya.core.BurpSuiteEdition
 import burp.api.montoya.persistence.Preferences
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.config.AgentSettings
@@ -31,7 +32,6 @@ import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
-import java.io.File
 import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -858,6 +858,7 @@ class SettingsSaveAsyncTest {
                 mcpSupervisor = mcpSupervisor,
                 passiveAiScanner = passiveAiScanner,
                 activeAiScanner = activeAiScanner,
+                buildIdentity = "Custom AI Agent test (test build)",
             )
         panels.add(panel)
         return Fixture(panel, api, supervisor, mcpSupervisor, passiveAiScanner, activeAiScanner)
@@ -910,15 +911,10 @@ class SettingsSaveAsyncTest {
      * block-comment opener.
      */
     private fun functionBody(signature: String): String {
-        val file = File(ACTIONS_SOURCE)
-        assertTrue(
-            file.isFile,
-            "Expected to find `$ACTIONS_SOURCE` relative to the test working directory " +
-                "`${System.getProperty("user.dir")}`, resolved as `${file.absolutePath}`. If the build " +
-                "layout changed, fix the path here and in the matching `tasks.test` input declaration.",
-        )
+        // SourceRoots.file fails naming both production roots when the file is in neither or in both.
         val source =
-            file
+            SourceRoots
+                .file(ACTIONS_SOURCE)
                 .readLines()
                 .filterNot { line ->
                     val trimmed = line.trimStart()
@@ -943,6 +939,6 @@ class SettingsSaveAsyncTest {
     }
 
     private companion object {
-        const val ACTIONS_SOURCE = "src/main/kotlin/com/six2dez/burp/aiagent/ui/SettingsPanelActions.kt"
+        const val ACTIONS_SOURCE = "com/six2dez/burp/aiagent/ui/SettingsPanelActions.kt"
     }
 }

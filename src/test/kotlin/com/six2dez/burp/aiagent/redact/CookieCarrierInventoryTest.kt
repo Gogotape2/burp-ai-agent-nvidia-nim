@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.redact
 
+import com.six2dez.burp.aiagent.SourceRoots
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -22,8 +23,8 @@ import java.io.File
  * This file keys one axis up: on the SOURCE of the bytes. A cookie byte can only enter this extension
  * through a Montoya call that returns it. So enumerate those calls, and require every site that makes
  * one to be either ROUTED through a named control or CLASSIFIED non-carrying with a reason read from
- * that site's own CONSUMER. Adding a call site anywhere in `src/main/kotlin` fails a test until
- * somebody classifies it.
+ * that site's own CONSUMER. Adding a call site anywhere in either production root (`src/main/kotlin`
+ * or `src/full/kotlin`, walked through SourceRoots) fails a test until somebody classifies it.
  *
  * ── THE BOUND, STATED FIRST AND NOT AS A FOOTNOTE ──
  *
@@ -92,7 +93,7 @@ import java.io.File
  *
  * Separated from the four above rather than averaged into them, because it is a limit of the
  * BOOKKEEPING and not of the axis. A registry key is a (file, accessor) PAIR, not an individual call.
- * Where the calls behind one pair split — `McpToolExecutorImpl`'s three `parameters()` calls are two
+ * Where the calls behind one pair split — `GenericRequestTools`'s three `parameters()` calls are two
  * `sanitizeParameters` producers plus one non-carrying `find_reflected` reader — the pair sits in
  * [ROUTED_THROUGH] and its reason enumerates the split by line. That prose is NOT machine-checked.
  * What IS machine-checked is the COUNT: adding a fourth `parameters()` call to that file turns
@@ -170,7 +171,8 @@ class CookieCarrierInventoryTest {
         // `headerValue("Content-Type")` cannot, so a new cookie-named argument must fail here even
         // when the per-file count is unchanged.
         val measured =
-            mainSourceFiles()
+            SourceRoots
+                .kotlinFiles()
                 .flatMap { file -> codeLines(file).flatMap { HEADER_VALUE_ARGUMENT.findAll(it).map { m -> m.groupValues[1] } } }
                 .groupingBy { it }
                 .eachCount()
@@ -195,10 +197,10 @@ class CookieCarrierInventoryTest {
     fun theCarrierScanIsNonVacuous() {
         // A repository-state test that goes green when it cannot find the repository is worse than
         // the grep it replaced. Both halves below FAIL rather than skip.
-        val files = mainSourceFiles()
+        val files = SourceRoots.kotlinFiles()
         assertTrue(
             files.size >= MIN_EXPECTED_MAIN_FILES,
-            "the walk found only ${files.size} .kt files under $MAIN_SOURCE_ROOT — the scan is not " +
+            "the walk found only ${files.size} .kt files under ${SourceRoots.PRODUCTION} — the scan is not " +
                 "reaching the repository, so every other assertion here proves nothing",
         )
 
@@ -217,9 +219,9 @@ class CookieCarrierInventoryTest {
 
         assertEquals(
             MEASURED_CARRIER_SITES.size,
-            MEASURED_CARRIER_SITES.keys.count { path -> sourceFile(path).isFile },
+            MEASURED_CARRIER_SITES.keys.count { path -> SourceRoots.locate(path).size == 1 },
             "a pinned carrier file does not exist on disk, so its zero counts would read as agreement: " +
-                "${MEASURED_CARRIER_SITES.keys.filterNot { sourceFile(it).isFile }}",
+                "${MEASURED_CARRIER_SITES.keys.filterNot { SourceRoots.locate(it).size == 1 }}",
         )
     }
 
@@ -227,11 +229,11 @@ class CookieCarrierInventoryTest {
 
     private fun scanCarrierSites(): Map<CarrierSite, Int> {
         val out = mutableMapOf<CarrierSite, Int>()
-        mainSourceFiles().forEach { file ->
+        SourceRoots.kotlinFiles().forEach { file ->
             val lines = codeLines(file)
             COOKIE_BYTE_ACCESSORS.forEach { (accessor, spec) ->
                 val count = lines.sumOf { spec.pattern.findAll(it).count() }
-                if (count > 0) out[CarrierSite(relativePath(file), accessor)] = count
+                if (count > 0) out[CarrierSite(SourceRoots.relativePath(file), accessor)] = count
             }
         }
         return out
@@ -264,31 +266,6 @@ class CookieCarrierInventoryTest {
      */
     private fun isBlockCommentContinuation(trimmed: String): Boolean = trimmed == "*" || trimmed.startsWith("* ") || trimmed.startsWith("*\t") || trimmed.startsWith("*/")
 
-    private fun mainSourceFiles(): List<File> =
-        mainSourceRoot()
-            .walkTopDown()
-            .filter { it.isFile && it.extension == "kt" }
-            .toList()
-
-    private fun sourceFile(relativePath: String): File = File(mainSourceRoot(), relativePath)
-
-    private fun relativePath(file: File): String = file.relativeTo(mainSourceRoot()).invariantSeparatorsPath
-
-    // Resolved from the Gradle test working directory, then by walking up. If it cannot be found the
-    // test FAILS — it is never weakened into a skip.
-    private fun mainSourceRoot(): File {
-        var candidate: File? = File(System.getProperty("user.dir")).absoluteFile
-        while (candidate != null) {
-            val root = File(candidate, MAIN_SOURCE_ROOT)
-            if (root.isDirectory) return root
-            candidate = candidate.parentFile
-        }
-        throw AssertionError(
-            "could not resolve $MAIN_SOURCE_ROOT from user.dir=${System.getProperty("user.dir")}. " +
-                "Resolve the path rather than weakening this test into a skip.",
-        )
-    }
-
     /** One measured call site class: a file plus the accessor it calls. */
     private data class CarrierSite(
         val path: String,
@@ -305,8 +282,6 @@ class CookieCarrierInventoryTest {
     )
 
     private companion object {
-        const val MAIN_SOURCE_ROOT = "src/main/kotlin"
-
         // Measured at 172 .kt files when CookieHeaderRuleOwnershipTest was written; re-measured above
         // that here. The floor catches a walk that reaches nothing, not the file count.
         const val MIN_EXPECTED_MAIN_FILES = 150
@@ -398,8 +373,10 @@ class CookieCarrierInventoryTest {
         /** The string-literal argument of a `.headerValue("…")` call. */
         val HEADER_VALUE_ARGUMENT = Regex("""\.headerValue\("([^"]*)"\)""")
 
-        const val EXECUTOR_MODERN = "com/six2dez/burp/aiagent/mcp/tools/McpToolExecutorImpl.kt"
-        const val EXECUTOR_LEGACY = "com/six2dez/burp/aiagent/mcp/tools/McpToolLegacy.kt"
+        const val GENERIC_REQUEST_TOOLS = "com/six2dez/burp/aiagent/mcp/tools/GenericRequestTools.kt"
+        const val GENERIC_SCANNER_TOOLS = "com/six2dez/burp/aiagent/mcp/tools/GenericScannerTools.kt"
+        const val GENERIC_HISTORY_TOOLS = "com/six2dez/burp/aiagent/mcp/tools/GenericHistoryTools.kt"
+        const val GENERIC_UTILITY_TOOLS = "com/six2dez/burp/aiagent/mcp/tools/GenericUtilityTools.kt"
         const val SERIALIZATION = "com/six2dez/burp/aiagent/mcp/schema/Serialization.kt"
         const val CONTEXT_COLLECTOR = "com/six2dez/burp/aiagent/context/ContextCollector.kt"
         const val BOUNTY_TAG_RESOLVER = "com/six2dez/burp/aiagent/prompts/bountyprompt/BountyPromptTagResolver.kt"
@@ -423,11 +400,30 @@ class CookieCarrierInventoryTest {
          * The two must move together — declaring a route without extending the accessor set turns
          * [everyCookieByteCarrierSiteIsRoutedOrClassified] red, and moving either without
          * [EXPECTED_TOTAL_CARRIER_SITES] turns [theMeasuredPerFilePerAccessorCountsArePinned] red.
+         *
+         * RE-MEASURED 2026-10-11 by plan 29-04 (DEAD-01): the legacy MCP registrar was deleted, not
+         * moved, and its eleven sites went with it (headerList 2, parameterList 3, rawMessage 5,
+         * cookieJar 1). Its four entries below were removed and nothing else changed: 63 sites across
+         * 11 files. Every other file's counts, and the whole-tree scan over both production roots, are
+         * as they were, so a new unlisted site in either root still turns this class red.
+         *
+         * RE-MEASURED 2026-10-11 by plan 29-06 (D-13): the history and utility tools moved out of the
+         * executor's dispatch into handler files, MOVED rather than changed. Three rawMessage sites
+         * went to GenericHistoryTools.kt and the cookieJar site to GenericUtilityTools.kt; the executor
+         * keeps headerList 2, parameterList 3 and rawMessage 2. Still 63 sites, now across 13 files.
+         *
+         * RE-MEASURED 2026-10-11 by plan 29-08 (D-13): the executor's residual dispatch was deleted and
+         * its last tool bodies MOVED verbatim into handler files. headerList 2 and parameterList 3 went
+         * to GenericRequestTools.kt (request_parse, response_parse, params_extract, find_reflected) and
+         * rawMessage 2 to GenericScannerTools.kt (collaborator_poll); the executor carries none. Still
+         * 63 sites, now across 14 files.
          */
         val MEASURED_CARRIER_SITES: Map<String, Map<String, Int>> =
             mapOf(
-                EXECUTOR_MODERN to mapOf(HEADER_LIST to 2, PARAMETER_LIST to 3, RAW_MESSAGE to 5, COOKIE_JAR to 1),
-                EXECUTOR_LEGACY to mapOf(HEADER_LIST to 2, PARAMETER_LIST to 3, RAW_MESSAGE to 5, COOKIE_JAR to 1),
+                GENERIC_REQUEST_TOOLS to mapOf(HEADER_LIST to 2, PARAMETER_LIST to 3),
+                GENERIC_SCANNER_TOOLS to mapOf(RAW_MESSAGE to 2),
+                GENERIC_HISTORY_TOOLS to mapOf(RAW_MESSAGE to 3),
+                GENERIC_UTILITY_TOOLS to mapOf(COOKIE_JAR to 1),
                 SERIALIZATION to mapOf(RAW_MESSAGE to 5),
                 CONTEXT_COLLECTOR to mapOf(RAW_MESSAGE to 2),
                 BOUNTY_TAG_RESOLVER to mapOf(PARAMETER_LIST to 1, RAW_MESSAGE to 2),
@@ -440,7 +436,7 @@ class CookieCarrierInventoryTest {
                 AI_SCAN_CHECK to mapOf(INSERTION_POINT_BASE_VALUE to 2),
             )
 
-        const val EXPECTED_TOTAL_CARRIER_SITES = 74
+        const val EXPECTED_TOTAL_CARRIER_SITES = 63
 
         /** Measured 2026-08-25. `Cookie` ×3 is the population that matters; the rest are the control. */
         val MEASURED_HEADER_VALUE_ARGUMENTS: Map<String, Int> =
@@ -458,20 +454,16 @@ class CookieCarrierInventoryTest {
          */
         val ROUTED_THROUGH: Map<CarrierSite, String> =
             mapOf(
-                CarrierSite(EXECUTOR_MODERN, HEADER_LIST) to
-                    "McpToolHelpers.sanitizeHeaders. Consumer read: :376 and :395 pass the list straight " +
-                    "into it as ParsedRequest.headers / ParsedResponse.headers.",
-                CarrierSite(EXECUTOR_LEGACY, HEADER_LIST) to
-                    "McpToolHelpers.sanitizeHeaders. Consumer read: :184 and :207, the same two shapes.",
-                CarrierSite(EXECUTOR_MODERN, PARAMETER_LIST) to
-                    "McpToolHelpers.sanitizeParameters at :360 (params_extract) and :381 (request_parse). " +
-                    "THE THIRD CALL, :406, IS NON-CARRYING: consumer read at :406-411, find_reflected " +
+                CarrierSite(GENERIC_REQUEST_TOOLS, HEADER_LIST) to
+                    "McpToolHelpers.sanitizeHeaders. Consumer read: :356 and :388 pass the list straight " +
+                    "into it as ParsedRequest.headers / ParsedResponse.headers. Moved verbatim from the " +
+                    "executor's residual dispatch by plan 29-08.",
+                CarrierSite(GENERIC_REQUEST_TOOLS, PARAMETER_LIST) to
+                    "McpToolHelpers.sanitizeParameters at :314 (params_extract) and :361 (request_parse). " +
+                    "THE THIRD CALL, :412, IS NON-CARRYING: consumer read at :412-417, find_reflected " +
                     "uses the value only as a needle for countOccurrences and emits " +
-                    "`name=… type=… count=…`, never the value itself.",
-                CarrierSite(EXECUTOR_LEGACY, PARAMETER_LIST) to
-                    "McpToolHelpers.sanitizeParameters at :160 (params_extract) and :189 (request_parse). " +
-                    "THE THIRD CALL, :222, IS NON-CARRYING for the same reason: consumer read at " +
-                    ":222-227, find_reflected emits name, type and an occurrence count only.",
+                    "`name=… type=… count=…`, never the value itself. Moved verbatim from the executor's " +
+                    "residual dispatch by plan 29-08.",
                 CarrierSite(INJECTION_EXTRACTOR, PARAMETER_LIST) to
                     "TWO CONSUMERS, BOTH READ, AND BOTH NOW CONTROLLED — BY DIFFERENT MECHANISMS, which is " +
                     "precisely the kind of thing this inventory exists to surface. MOVED HERE FROM " +
@@ -515,15 +507,20 @@ class CookieCarrierInventoryTest {
                     "a shipping residual by maintainer decision at 28-03's checkpoint), and there is " +
                     "no gate anywhere in this repository that would catch a THIRD detail producer — " +
                     "D-28-06 records building one as considered and NOT taken.",
-                CarrierSite(EXECUTOR_MODERN, RAW_MESSAGE) to
-                    "Redaction.apply at the redactIfNeeded choke point. Consumer read: all five sites " +
-                    "(:592, :593, :732, :761, :811) sit inside the dispatch `when` whose result is " +
-                    "wrapped at McpToolExecutorImpl.kt:1045. The logical-line cookie header rules fire " +
-                    "there; SerializedEmissionSiteInventoryTest pins the same choke point.",
-                CarrierSite(EXECUTOR_LEGACY, RAW_MESSAGE) to
-                    "Redaction.apply at the redactIfNeeded choke point. Consumer read: all five sites " +
-                    "(:460, :461, :622, :640, :690) sit inside mcpTool/mcpPaginatedTool registrations " +
-                    "whose handler wraps output at McpTool.kt:45 and :78.",
+                CarrierSite(GENERIC_SCANNER_TOOLS, RAW_MESSAGE) to
+                    "Redaction.apply at the redactIfNeeded choke point. Consumer read: both sites " +
+                    "(collaborator_poll's http_request / http_response lines, :351-352) sit inside its " +
+                    "toolHandler body, and executeToolResult wraps every handler.execute result in " +
+                    "context.redactIfNeeded. The logical-line cookie header rules fire there; " +
+                    "SerializedEmissionSiteInventoryTest pins the same choke point. (Until plan 29-06 " +
+                    "these were two of five executor sites; the other three moved to GenericHistoryTools.kt " +
+                    "unchanged, and plan 29-08 moved these two out of the residual dispatch.)",
+                CarrierSite(GENERIC_HISTORY_TOOLS, RAW_MESSAGE) to
+                    "Redaction.apply at the redactIfNeeded choke point. Consumer read: the three sites " +
+                    "(proxy_http_history and proxy_http_history_regex's orderedProxyHistory sort key, " +
+                    "response_body_search's response text) sit inside toolHandler bodies, and " +
+                    "executeToolResult wraps every handler.execute result in context.redactIfNeeded. " +
+                    "Moved here verbatim from the executor's dispatch by plan 29-06.",
                 CarrierSite(SERIALIZATION, RAW_MESSAGE) to
                     "Redaction.apply at the redactIfNeeded choke point. Consumer read: :44, :45, :50, :59 " +
                     "and :82 build HttpRequestResponse / SiteMapEntry carriers, which only the two " +
@@ -564,7 +561,7 @@ class CookieCarrierInventoryTest {
                     "27-08 task 1 narrowed the rule's comment to say so and pinned the behaviour.",
                 CarrierSite(AI_SCAN_CHECK, INSERTION_POINT_BASE_VALUE) to
                     "AiScanCheck.sanitizeCookiePointText (plan 28-05). THE PAIR COVERS TWO CALLS WITH " +
-                    "DIFFERENT DISPOSITIONS, enumerated by line the way McpToolExecutorImpl's split " +
+                    "DIFFERENT DISPOSITIONS, enumerated by line the way GenericRequestTools's split " +
                     "parameters() calls are — and, as the fifth bound in the class KDoc says, this " +
                     "attribution is PROSE; what is machine-checked is the COUNT of 2, so a third " +
                     "baseValue() call in this file turns theMeasuredPerFilePerAccessorCountsArePinned " +
@@ -596,14 +593,13 @@ class CookieCarrierInventoryTest {
          */
         val CLASSIFIED_NON_CARRYING: Map<CarrierSite, String> =
             mapOf(
-                CarrierSite(EXECUTOR_MODERN, COOKIE_JAR) to
+                CarrierSite(GENERIC_UTILITY_TOOLS, COOKIE_JAR) to
+                    "MOVED VERBATIM from McpToolExecutorImpl by plan 29-06 (cookie_jar_get's handler); " +
+                    "the line numbers below are the executor's before the move. " +
                     "MODE-GATED AT THE FIELD. Consumer read: :476 reads the jar, and the map at :502-523 " +
                     "emits cookie.value() ONLY when `includeValues && privacyMode == OFF`, writing " +
                     "[REDACTED] otherwise; the domain is additionally anonymised under STRICT. Under " +
                     "every redacting policy the value never enters CookieEntry.",
-                CarrierSite(EXECUTOR_LEGACY, COOKIE_JAR) to
-                    "MODE-GATED AT THE FIELD, byte-identical logic. Consumer read: :316 reads the jar and " +
-                    ":348-353 applies the same `includeValues && privacyMode == OFF` gate.",
                 CarrierSite(ACTIVE_SCANNER, HEADER_LIST) to
                     "LOCAL ANALYSIS and TARGET-BOUND MUTATION, no AI-facing emission. Consumers read: :933 " +
                     "hasAuthContext reduces to a Boolean; :943 stripAuthHeaders REMOVES the matched " +
@@ -885,6 +881,19 @@ class CookieCarrierInventoryTest {
                 "redactor's reach makes this residual's naming MORE accurate, not weaker, and " +
                 "D-28-09 and D-28-10 stand exactly as recorded. The retired phrases are " +
                 "deliberately not quoted anywhere in this file: the greps that enforce their " +
-                "retirement are literal."
+                "retirement are literal." +
+                " RELOCATED 2026-10-11 (phase 29, plan 29-04) — THIS NOTE WITHDRAWS NOTHING AND " +
+                "ADDS NO CONTROL. The two McpTool.kt handlers that clause (a) and the 28-09 block " +
+                "cite by line were deleted with the legacy MCP registrar (DEAD-01). The read-time " +
+                "pass those blocks describe still runs, unchanged in behaviour, at the one " +
+                "remaining wrapper: McpToolExecutorImpl's context.redactIfNeeded(output) choke " +
+                "point, which every registered tool reaches through " +
+                "McpToolHandlers.registerToolHandler (SerializedEmissionSiteInventoryTest pins " +
+                "it). Every disposition above, and AR-27-08's OPEN status, stand as recorded." +
+                " RELOCATED AGAIN 2026-10-11 (phase 29, plan 29-06) — THIS NOTE WITHDRAWS NOTHING AND " +
+                "ADDS NO CONTROL. The executor's dispatch `when` became a tool registry: the wrapper is " +
+                "now the single `context.redactIfNeeded(handler.execute(...))` line in " +
+                "McpToolExecutor.executeToolResult, which every MCP and chat tool call reaches, and " +
+                "SerializedEmissionSiteInventoryTest pins it. The read-time pass is unchanged in behaviour."
     }
 }

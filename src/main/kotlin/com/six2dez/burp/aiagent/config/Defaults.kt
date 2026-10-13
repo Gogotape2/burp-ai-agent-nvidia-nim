@@ -40,7 +40,6 @@ object Defaults {
     const val LARGE_PROMPT_THRESHOLD = 32_000
     const val CLI_PROCESS_TIMEOUT_SECONDS = 120
     const val PASSIVE_SCAN_TIMEOUT_MS = 90_000L
-    const val HEALTH_CHECK_INTERVAL_MS = 2_000L
     const val BACKEND_STARTUP_DELAY_MS = 2_000L
 
     // AI status pill: poll interval for LOCAL backends only (CLI, Burp AI, loopback HTTP servers).
@@ -87,10 +86,6 @@ object Defaults {
     // (REL-07 / SC6) Idle keep-alive for the same pool. Matches the JDK cached-pool keep-alive so
     // idle behaviour is unchanged by the bounding.
     const val SCAN_REQUEST_THREAD_KEEPALIVE_SECONDS = 60L
-
-    // (REL-07 / SC6) Ceiling for the extension-wide worker pool. Two backends can each own a
-    // service, and once the log pump moves off the pool only short bursty restart tasks remain.
-    const val MAX_WORKER_THREADS = 4
 
     // (PRIV-06 / D-04) Window width for the body-redaction stage in Redaction.apply — a window
     // width, NOT a skip threshold. Input at or below this length is processed in a single pass

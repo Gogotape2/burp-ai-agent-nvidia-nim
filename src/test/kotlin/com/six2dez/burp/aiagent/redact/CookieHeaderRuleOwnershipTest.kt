@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.redact
 
+import com.six2dez.burp.aiagent.SourceRoots
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -43,7 +44,7 @@ class CookieHeaderRuleOwnershipTest {
     @Test
     fun noHandWrittenCookieMatcherSurvivesInTheRedactionPaths() {
         REDACTION_PATHS.forEach { path ->
-            val hits = matcherHitsIn(sourceFile(path))
+            val hits = matcherHitsIn(SourceRoots.file(path))
             assertTrue(
                 hits.isEmpty(),
                 "$path is a REDACTION PATH and is not allowlistable: it must call " +
@@ -56,7 +57,12 @@ class CookieHeaderRuleOwnershipTest {
 
     @Test
     fun everyCookieHeaderNameMatcherInMainIsClassified() {
-        val hitFiles = mainSourceFiles().filter { matcherHitsIn(it).isNotEmpty() }.map(::relativePath).toSet()
+        val hitFiles =
+            SourceRoots
+                .kotlinFiles()
+                .filter { matcherHitsIn(it).isNotEmpty() }
+                .map(SourceRoots::relativePath)
+                .toSet()
         val unaccounted = hitFiles - REDACTION_PATHS - OWNER
 
         assertEquals(
@@ -75,10 +81,10 @@ class CookieHeaderRuleOwnershipTest {
     fun theOwnershipScanIsNonVacuous() {
         // A broken path or an empty walk must FAIL rather than pass silently. A repository-state test
         // that goes green when it cannot find the repository is worse than the grep it replaced.
-        val files = mainSourceFiles()
+        val files = SourceRoots.kotlinFiles()
         assertTrue(
             files.size >= MIN_EXPECTED_MAIN_FILES,
-            "the walk found only ${files.size} .kt files under $MAIN_SOURCE_ROOT — the scan is not " +
+            "the walk found only ${files.size} .kt files under ${SourceRoots.PRODUCTION} — the scan is not " +
                 "reaching the repository, so its other assertions prove nothing",
         )
 
@@ -115,35 +121,7 @@ class CookieHeaderRuleOwnershipTest {
         return trimmed.startsWith("//") || trimmed.startsWith("*") || trimmed.startsWith("/*")
     }
 
-    private fun mainSourceFiles(): List<File> =
-        mainSourceRoot()
-            .walkTopDown()
-            .filter { it.isFile && it.extension == "kt" }
-            .toList()
-
-    private fun sourceFile(relativePath: String): File = File(mainSourceRoot(), relativePath)
-
-    private fun relativePath(file: File): String = file.relativeTo(mainSourceRoot()).invariantSeparatorsPath
-
-    // Resolved from the Gradle test working directory, then by walking up. If it cannot be found the
-    // test FAILS — it is never weakened into a skip.
-    private fun mainSourceRoot(): File {
-        var candidate: File? = File(System.getProperty("user.dir")).absoluteFile
-        while (candidate != null) {
-            val root = File(candidate, MAIN_SOURCE_ROOT)
-            if (root.isDirectory) return root
-            candidate = candidate.parentFile
-        }
-        throw AssertionError(
-            "could not resolve $MAIN_SOURCE_ROOT from user.dir=${System.getProperty("user.dir")}. " +
-                "Resolve the path (for example from a system property set in build.gradle.kts) rather " +
-                "than weakening this test into a skip.",
-        )
-    }
-
     private companion object {
-        const val MAIN_SOURCE_ROOT = "src/main/kotlin"
-
         // Measured at 172 .kt files when this test was written. The floor is deliberately well below
         // that: it is here to catch a walk that reaches nothing, not to track the file count.
         const val MIN_EXPECTED_MAIN_FILES = 150

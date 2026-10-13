@@ -6,6 +6,51 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **Two builds from one repository** - the extension now ships as two JARs built from separate
+  source roots. `./gradlew bappJar` builds the BApp Store build, `build/libs/custom-ai-agent-bapp.jar`,
+  from the core alone. `./gradlew fullJar` builds the GitHub full build,
+  `build/libs/Custom-AI-Agent-full-<version>.jar`, which adds the full-only features as plug-ins.
+  `./gradlew shadowJar` and the `-PstoreBuild` flag are gone; `shadowJar` now fails with a message
+  naming the two tasks.
+- **What the BApp Store build leaves out** - the 51 generic MCP tools (it offers the 8
+  extension-native ones), the CLI backends (Claude Code, Codex, Gemini, OpenCode, Copilot), the
+  external MCP client and its External MCP Servers section, and the passive-to-active auto-queue.
+  None of that code is compiled into the store JAR. A store build loaded over a saved CLI backend
+  runs on Burp AI and shows a notice; the saved choice is kept for the full build.
+- **Both builds keep the name "Custom AI Agent"**, so they share Burp's settings and encrypted
+  secrets, and moving between them loses nothing. The Output banner and a new caption at the bottom
+  of Settings > Help name the running build: "Custom AI Agent <version> (BApp Store build)" in the
+  store build and "Custom AI Agent <version> (GitHub full build)" in the full build. Load only one
+  build at a time: the README explains why (one settings node, one MCP port, one
+  `~/.burp-ai-agent` directory).
+- **The auto-queue is opt-in** - in the full build, "Auto-queue passive findings for active testing"
+  is a new setting on the AI Active Scanner tab, OFF by default for every install, existing ones
+  included: an install that had auto-queue on in 1.0.1 starts with it off.
+- **The Ollama CLI command and the Open CLI button are full-build only** - the store build's Ollama
+  card has neither. The Ollama required-field message for a blank base URL is gone from both builds.
+- **The BApp Store build requires Burp's "Use AI" for every provider** - with "Use AI" off, every
+  AI backend is refused, not only Burp AI. The full build keeps the 1.0.1 rule.
+- **Releases carry both builds** - each GitHub release attaches `Custom-AI-Agent-full-<version>.jar`
+  (the GitHub full build) and `Custom-AI-Agent-bapp-<version>.jar` (the BApp Store build,
+  `./gradlew bappJar`), each with a `.sha256` in `sha256sum` format, and the release notes open with
+  a short "Which JAR?" section. CI and the release now build both JARs and fail if the BApp Store JAR
+  contains a full-only class or a CLI backend. One `bom.json` covers both.
+
+### Removed
+
+- Dead code with no caller: the legacy MCP tool registrar and its helpers, the unwired `Alerting`
+  webhook client, the interactive PTY CLI connection, and the auto-restart health monitor with its
+  "auto-restart" setting.
+
+### Known limitations
+
+- Both builds still load drop-in backend JARs from `~/.burp-ai-agent/backends`, so the store build
+  can run backend code that is not part of its JAR.
+- The bundled agent profiles still mention generic MCP tools that the BApp Store build does not
+  offer; calls to them are refused as unknown tools.
+
 ## [1.0.1] - 2026-10-09
 
 ### Changed

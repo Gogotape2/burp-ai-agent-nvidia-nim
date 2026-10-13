@@ -8,7 +8,10 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Answers
 import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
 class AgentSettingsMigrationTest {
@@ -21,7 +24,9 @@ class AgentSettingsMigrationTest {
         val repo = AgentSettingsRepository(apiWith(prefs.mock))
         val loaded = repo.load()
 
-        assertEquals("gemini --output-format text --model gemini-2.5-flash --yolo", loaded.geminiCmd)
+        // Phase 29 / D-08: gemini.cmd is a full-only CLI plug-in key now. The core migration no longer
+        // rewrites the legacy default; the full build's CliSettings normalizes it on read (CliSettingsTest).
+        assertEquals("gemini --output-format text --model gemini-2.5-flash", prefs.strings["gemini.cmd"])
         assertEquals(
             listOf("https://ops.example.com", "http://127.0.0.1"),
             loaded.mcpSettings.allowedOrigins,
@@ -40,6 +45,22 @@ class AgentSettingsMigrationTest {
 
         // PHASE 16: schema v5 is now current (bumped 4→5 in plan 16-02)
         assertEquals(5, prefs.integers["settings.schema.version"])
+    }
+
+    /**
+     * Carried over from the retired ExternalMcpSettingsMigrationTest (29-15): a v4 install is stamped v5.
+     * The v5 branch only stamps the version; the external server blob it was added for belongs to the
+     * full build's external-MCP plug-in since 1.1.0, and the core never touches that key.
+     */
+    @Test
+    fun load_v4InstallIsStampedV5WithoutTouchingTheExternalServerKey() {
+        val prefs = InMemoryPrefs()
+        prefs.integers["settings.schema.version"] = 4
+
+        AgentSettingsRepository(apiWith(prefs.mock)).load()
+
+        assertEquals(5, prefs.integers["settings.schema.version"])
+        assertFalse(prefs.strings.containsKey("mcp.external.servers.v1"), "core creates no external server key")
     }
 
     @Test
@@ -200,10 +221,40 @@ class AgentSettingsMigrationTest {
         }
     }
 
+    /**
+     * DEAD-01 (plan 29-05): the auto-restart setting is gone, and its stored preference is left where
+     * it is. Core neither reads `agent.autorestart` on load nor writes or deletes it on save, so a
+     * value an earlier version stored survives a save byte for byte (D-08 spirit: removed keys stay).
+     */
+    @Test
+    fun storedAutoRestartPreferenceSurvivesSaveAndIsNeverRead() {
+        val prefs = InMemoryPrefs()
+        prefs.booleans[REMOVED_AUTO_RESTART_KEY] = false
+        val repo = AgentSettingsRepository(apiWith(prefs.mock))
+
+        repo.load()
+        // defaultSettings() rather than the loaded snapshot: while the field existed its default (true)
+        // would overwrite the stored false, so this save is what proves the key is no longer written.
+        repo.save(repo.defaultSettings())
+
+        assertEquals(
+            false,
+            prefs.booleans[REMOVED_AUTO_RESTART_KEY],
+            "a save must leave the stored `$REMOVED_AUTO_RESTART_KEY` value untouched",
+        )
+        verify(prefs.mock, never()).getBoolean(eq(REMOVED_AUTO_RESTART_KEY))
+        verify(prefs.mock, never()).setBoolean(eq(REMOVED_AUTO_RESTART_KEY), any())
+        verify(prefs.mock, never()).deleteBoolean(eq(REMOVED_AUTO_RESTART_KEY))
+    }
+
     private fun apiWith(preferences: Preferences): MontoyaApi {
         val api = mock<MontoyaApi>(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
         whenever(api.persistence().preferences()).thenReturn(preferences)
         return api
+    }
+
+    private companion object {
+        const val REMOVED_AUTO_RESTART_KEY = "agent.autorestart"
     }
 
     private class InMemoryPrefs {

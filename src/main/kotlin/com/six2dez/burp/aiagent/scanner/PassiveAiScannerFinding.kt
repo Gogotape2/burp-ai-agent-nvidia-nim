@@ -167,7 +167,7 @@ internal fun PassiveAiScanner.qualifiesForIssue(
 /**
  * Everything recorded once per NEW passive issue, after it was filed (by [handleFinding] through
  * `api.siteMap().add`, or by the Burp Scanner check through its AuditResult): the counter, the Issue
- * Output line, the knowledge-base signal, the auto-queue to the active scanner and the single
+ * Output line, the knowledge-base signal, the suggested-target offer to the sink and the single
  * `passive_ai_issue` audit record of this file.
  */
 internal fun PassiveAiScanner.recordNewIssue(
@@ -194,8 +194,8 @@ internal fun PassiveAiScanner.recordNewIssue(
         ),
     )
 
-    // Auto-queue to active scanner if enabled
-    queueToActiveScanner(requestResponse, title, rawSeverity, detail, confidence, settings)
+    // Offer the suggested active-scan targets to the installed sink, if any (D-02)
+    offerSuggestedTargets(requestResponse, title, rawSeverity, detail, confidence, settings)
 
     audit.logEvent(
         "passive_ai_issue",
@@ -291,7 +291,17 @@ internal fun PassiveAiScanner.hasExistingIssue(
         issues = api.siteMap().issues().map { issue -> issue.name() to issue.baseUrl() },
     )
 
-internal fun PassiveAiScanner.queueToActiveScanner(
+/**
+ * Phase 29 / D-02: builds the suggested active-scan targets of a new finding and offers them, once, to
+ * [PassiveAiScanner.suggestedTargetSink]. It replaces the 1.0.1 function that queued them to the active
+ * scanner directly.
+ *
+ * With no sink installed (the store build) it returns before building anything. The title-to-class
+ * mapping, the passive-only and scan-mode filters, the injection-point extraction and the severity
+ * priority are the 1.0.1 ones. The core applies no settings gate of its own: the sink decides whether
+ * anything is queued (the full build's auto-queue plug-in checks its own toggle and the active scanner).
+ */
+internal fun PassiveAiScanner.offerSuggestedTargets(
     requestResponse: HttpRequestResponse,
     title: String,
     severity: String,
@@ -299,27 +309,23 @@ internal fun PassiveAiScanner.queueToActiveScanner(
     confidence: Int,
     settings: AgentSettings,
 ) {
-    val scanner = activeScanner ?: return
-    if (!settings.activeAiEnabled || !settings.activeAiAutoFromPassive) return
+    val sink = suggestedTargetSink ?: return
 
-    // Map title to VulnClass
-    val vulnClass = mapTitleToVulnClass(title) ?: return
-    if (vulnClass in ScanPolicy.PASSIVE_ONLY_VULN_CLASSES) return
-    if (!ScanPolicy.isAllowedForMode(settings.activeAiScanMode, vulnClass)) return
+    val vulnClass = mapTitleToVulnClass(title)
+    val testable =
+        vulnClass != null &&
+            vulnClass !in ScanPolicy.PASSIVE_ONLY_VULN_CLASSES &&
+            ScanPolicy.isAllowedForMode(settings.activeAiScanMode, vulnClass)
+    if (!testable) return
 
-    // Extract injection points from the request
-    val injectionPoints = extractInjectionPoints(requestResponse)
-    if (injectionPoints.isEmpty()) return
-
-    // Queue each injection point for active testing
-    for (point in injectionPoints) {
-        val hint =
-            VulnHint(
-                vulnClass = vulnClass,
-                confidence = confidence,
-                evidence = detail.take(200),
-            )
-        val target =
+    val hint =
+        VulnHint(
+            vulnClass = vulnClass,
+            confidence = confidence,
+            evidence = detail.take(200),
+        )
+    val targets =
+        extractInjectionPoints(requestResponse).map { point ->
             ActiveScanTarget(
                 originalRequest = requestResponse,
                 injectionPoint = point,
@@ -332,10 +338,8 @@ internal fun PassiveAiScanner.queueToActiveScanner(
                         else -> 40
                     },
             )
-        scanner.queueTarget(target)
-    }
-
-    api.logging().logToOutput("[PassiveAiScanner] Queued to Active Scanner: $title")
+        }
+    if (targets.isNotEmpty()) sink.offer(targets, settings)
 }
 
 internal fun PassiveAiScanner.mapTitleToVulnClass(title: String): VulnClass? {

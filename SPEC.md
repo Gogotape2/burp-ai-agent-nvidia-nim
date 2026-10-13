@@ -156,7 +156,7 @@ When enabled:
 
 ## 10. Acceptance tests
 
-- Build produces a single fat JAR (`./gradlew shadowJar`).
+- Build produces two fat JARs: `./gradlew bappJar` (BApp Store, `build/libs/custom-ai-agent-bapp.jar`) and `./gradlew fullJar` (GitHub full build, `build/libs/Custom-AI-Agent-full-<version>.jar`).
 - Plugin loads in Burp Community and Pro; the `Custom AI Agent` tab is visible.
 - Context menu actions appear on Proxy, Repeater, Site Map, Intruder, and Scanner Issues.
 - Redaction transforms are covered by unit tests (`RedactionTest`).

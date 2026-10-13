@@ -7,6 +7,10 @@ import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.AgentSettingsRepository
 import com.six2dez.burp.aiagent.mcp.McpSupervisor
 import com.six2dez.burp.aiagent.redact.PrivacyMode
+import com.six2dez.burp.aiagent.spi.PluginSettingsStore
+import com.six2dez.burp.aiagent.spi.Plugins
+import com.six2dez.burp.aiagent.spi.SettingsContribution
+import com.six2dez.burp.aiagent.spi.SettingsSlot
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.components.CustomPromptLibraryEditor
 import com.six2dez.burp.aiagent.ui.components.ToggleSwitch
@@ -14,7 +18,6 @@ import com.six2dez.burp.aiagent.ui.design.DesignTokens
 import com.six2dez.burp.aiagent.ui.design.applyAreaStyle
 import com.six2dez.burp.aiagent.ui.panels.BackendConfigPanel
 import com.six2dez.burp.aiagent.ui.panels.BackendConfigState
-import com.six2dez.burp.aiagent.ui.panels.ExternalServersPanel
 import java.util.concurrent.atomic.AtomicLong
 import javax.swing.JButton
 import javax.swing.JCheckBox
@@ -29,6 +32,9 @@ import javax.swing.SpinnerNumberModel
 import javax.swing.SwingUtilities
 import javax.swing.Timer
 
+// Ten parameters since phase 29 added buildIdentity and contributions (UI-SPEC PC-15, D-07): the
+// services MainTab hands down plus the two values App resolves once (ADR-17: no re-baseline).
+@Suppress("LongParameterList")
 class SettingsPanel(
     internal val api: MontoyaApi,
     internal val settingsRepo: AgentSettingsRepository,
@@ -38,6 +44,17 @@ class SettingsPanel(
     internal val mcpSupervisor: McpSupervisor,
     internal val passiveAiScanner: com.six2dez.burp.aiagent.scanner.PassiveAiScanner,
     internal val activeAiScanner: com.six2dez.burp.aiagent.scanner.ActiveAiScanner,
+    /**
+     * UI-SPEC PC-15: the build identity line App resolved once, shown as the Help tab caption. No
+     * default on purpose: a default would let a missed wire silently show the wrong build.
+     */
+    internal val buildIdentity: String,
+    /**
+     * Phase 29 / D-07: the settings contributions to host. Production loads them with the extension's
+     * classloader; the store build ships no provider, so the list is empty there. Tests pass a list
+     * directly and never register a test provider through `META-INF/services`.
+     */
+    contributions: List<SettingsContribution> = Plugins.load(SettingsContribution::class.java),
 ) {
     /**
      * The panel's working copy for fields that have no component (salt, TTLs, context window), not an
@@ -97,14 +114,29 @@ class SettingsPanel(
     internal lateinit var privacyTab: JComponent
     internal lateinit var helpTab: JComponent
 
+    /** The plug-in settings store contributions read and persist through. */
+    internal val pluginSettings: PluginSettingsStore = settingsRepo.pluginSettings()
+
+    /** Every contribution this panel was given, in list order (UI-SPEC H-1). */
+    internal val requestedContributions: List<SettingsContribution> = contributions.toList()
+
+    /**
+     * The contributions whose component was built, each with its component, in list order. EDT only.
+     * A contribution whose `createComponent` threw is absent: no other member of it is ever called
+     * (UI-SPEC PC-10, M4).
+     */
+    internal val contributionComponents = LinkedHashMap<SettingsContribution, JComponent>()
+
+    /** The contributions the host collects, persists, restores and refreshes. EDT only. */
+    internal val activeContributions: List<SettingsContribution>
+        get() = contributionComponents.keys.toList()
+
+    /** The built components of the active contributions in [slot], in list order. EDT only. */
+    internal fun contributedComponents(slot: SettingsSlot): List<JComponent> = contributionComponents.filterKeys { it.slot == slot }.values.toList()
+
     internal val backendConfigPanel =
         BackendConfigPanel(
             BackendConfigState(
-                codexCmd = settings.codexCmd,
-                geminiCmd = settings.geminiCmd,
-                opencodeCmd = settings.opencodeCmd,
-                claudeCmd = settings.claudeCmd,
-                ollamaCliCmd = settings.ollamaCliCmd,
                 ollamaModel = settings.ollamaModel,
                 ollamaUrl = settings.ollamaUrl,
                 ollamaServeCmd = settings.ollamaServeCmd,
@@ -136,7 +168,6 @@ class SettingsPanel(
                 perplexityTimeoutSeconds = settings.perplexityTimeoutSeconds.toString(),
                 anthropicModel = settings.anthropicModel,
                 anthropicApiKey = settings.anthropicApiKey,
-                copilotCmd = settings.copilotCmd,
             ),
         )
     internal val profilePicker =
@@ -149,11 +180,37 @@ class SettingsPanel(
             isVisible = false
         }
     internal val refreshProfilesBtn = JButton("Refresh")
+
+    /**
+     * Phase 29 / D-08: the saved backend id this build does not register, kept while the picker shows
+     * the substituted burp-ai so a Save writes the stored choice back instead of the substitute. `null`
+     * once the user picks a backend, or when the saved id is registered (UI-SPEC state B0).
+     */
+    internal var unavailableSavedBackendId: String? = unavailableBackendId(settings.preferredBackendId, backends)
+
     internal val preferredBackend =
         JComboBox(backends.listAllBackendIds().toTypedArray()).apply {
-            selectedItem = settings.preferredBackendId
+            // UI-SPEC S4 state B1: never blank; burp-ai stands in for an unregistered saved id.
+            selectedItem = if (unavailableSavedBackendId == null) settings.preferredBackendId else BackendRegistry.DEFAULT_BACKEND_ID
             preferredSize = java.awt.Dimension(140, preferredSize.height)
             maximumSize = java.awt.Dimension(140, preferredSize.height)
+        }
+
+    // UI-SPEC S8: the second backend-unavailable notice, first element of the AI Backend section body.
+    // Its row carries the Spacing.sm gap below it and hides with it, so a hidden notice takes no space.
+    internal val unavailableBackendNotice =
+        com.six2dez.burp.aiagent.ui.components
+            .SubtleNotice()
+    internal val unavailableBackendNoticeRow =
+        javax.swing.JPanel(java.awt.BorderLayout()).apply {
+            isOpaque = false
+            border = javax.swing.border.EmptyBorder(0, 0, DesignTokens.Spacing.sm, 0)
+            isVisible = false
+            add(unavailableBackendNotice, java.awt.BorderLayout.CENTER)
+        }
+    internal val aiBackendSectionBody =
+        javax.swing.JPanel(java.awt.BorderLayout()).apply {
+            background = DesignTokens.Colors.surface
         }
 
     internal val privacyMode =
@@ -163,7 +220,6 @@ class SettingsPanel(
             maximumSize = java.awt.Dimension(120, preferredSize.height)
         }
     internal val determinism = ToggleSwitch(settings.determinismMode)
-    internal val autoRestart = ToggleSwitch(settings.autoRestart)
     internal val auditEnabled = ToggleSwitch(settings.auditEnabled)
     internal val auditVerbose = ToggleSwitch(settings.auditVerbose)
 
@@ -224,13 +280,6 @@ class SettingsPanel(
             it.isVisible = false
         }
 
-    // Phase 16-05: External MCP server CRUD panel. Receives plaintext bearerToken values from
-    // AgentSettings.loadExternalMcpServers(); returns plaintext on getServers() for persistence.
-    internal val externalServersPanel =
-        ExternalServersPanel(
-            initialServers = settings.mcpSettings.externalMcpServers,
-            stdioEnabled = settings.mcpSettings.stdioEnabled,
-        )
     internal val mcpEnabled = ToggleSwitch(settings.mcpSettings.enabled)
     internal val mcpHost =
         JTextField(settings.mcpSettings.host, 15).apply {
@@ -472,7 +521,6 @@ class SettingsPanel(
     // Active AI Scanner UI components
     internal val activeAiEnabled = ToggleSwitch(settings.activeAiEnabled)
     internal val activeAiScopeOnly = JCheckBox("In-scope only", settings.activeAiScopeOnly)
-    internal val activeAiAutoFromPassive = JCheckBox("Auto-queue passive findings", settings.activeAiAutoFromPassive)
     internal val activeAiMaxConcurrentSpinner =
         JSpinner(SpinnerNumberModel(settings.activeAiMaxConcurrent, 1, 10, 1)).apply {
             preferredSize = java.awt.Dimension(70, preferredSize.height)

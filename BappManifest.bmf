@@ -1,0 +1,10 @@
+ExtensionType: 1
+Name: Custom AI Agent
+RepoName: burp-ai-agent
+ScreenVersion: 1.0.1
+ProOnly: False
+Author: six2dez
+ShortDescription: AI agent for Burp with privacy redaction, an audit trail and extension-native MCP tools.
+EntryPoint: build/libs/custom-ai-agent-bapp.jar
+BuildCommand: ./gradlew bappJar
+SupportedProducts: Pro, Community

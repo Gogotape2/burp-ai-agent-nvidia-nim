@@ -7,6 +7,7 @@ import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.mcp.McpToolContext
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import io.modelcontextprotocol.kotlin.sdk.TextContent
+import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertInstanceOf
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -49,10 +50,10 @@ class McpToolExecutorEdtGuardTest {
             limiter = McpRequestLimiter(4),
             edition = BurpSuiteEdition.PROFESSIONAL,
             maxBodyBytes = 8192,
-            // Deliberately null. See [theGuardPrecedesTheExternalToolEarlyReturn]: with no manager the
-            // external branch returns a typed error result instead of throwing, so it is the absence of
-            // that result that proves the guard ran first.
-            externalClientManager = null,
+            // The store registry has no dynamic namespace: no provider claims an `ext:` name, so off the
+            // EDT the call returns a typed "Unknown tool" result instead of throwing. It is the absence of
+            // that result on the EDT that proves the guard ran first (see
+            // [theGuardPrecedesTheExternalToolEarlyReturn]). The full build's half is FullExternalEdtGuardTest.
         )
     }
 
@@ -99,13 +100,13 @@ class McpToolExecutorEdtGuardTest {
     }
 
     /**
-     * F-4 — the guard precedes the `ext:` early return, so `routeExternalToolCall` is covered too.
+     * F-4 — the guard precedes the `ext:` early return, so a provider's dynamic namespace is covered too.
      *
-     * **This test distinguishes the two candidate placements rather than passing under either.** The
-     * external branch blocks its own thread waiting on a coroutine, so a guard placed one line lower —
-     * after the early return — would leave that path as the single place the EDT could still freeze. It
-     * would also leave THIS call returning the typed "external client unavailable" result instead of
-     * throwing, which is exactly what the assertions below reject.
+     * **This test distinguishes the two candidate placements rather than passing under either.** The full
+     * build's external branch blocks its own thread waiting on a coroutine, so a guard placed one line
+     * lower — after the early return — would leave that path as the single place the EDT could still
+     * freeze. It would also leave THIS call returning the typed "Unknown tool" result instead of throwing,
+     * which is exactly what the assertions below reject.
      */
     @Test
     fun theGuardPrecedesTheExternalToolEarlyReturn() {
@@ -132,9 +133,10 @@ class McpToolExecutorEdtGuardTest {
     /**
      * The negative half, without which a guard that threw unconditionally would satisfy both tests above.
      *
-     * The external branch is used because its outcome is fully determined by this test's own context: a
-     * null manager produces a typed error RESULT. Getting that result back is proof the call travelled
-     * past the guard and through the early return, on a thread that is not the EDT.
+     * The `ext:` branch is used because its outcome is fully determined by the store classpath: no
+     * provider claims the name, so the executor produces a typed "Unknown tool" RESULT. Getting that
+     * result back is proof the call travelled past the guard and through the dynamic-namespace branch, on
+     * a thread that is not the EDT.
      */
     @Test
     fun theSameCallOffTheEdtReachesPastTheGuard() {
@@ -143,10 +145,12 @@ class McpToolExecutorEdtGuardTest {
         val result = McpToolExecutor.executeToolResult("ext:demo:search", """{"q":"x"}""", context)
 
         val text = result.content.filterIsInstance<TextContent>().joinToString("\n") { it.text?.toString().orEmpty() }
-        assertTrue(
-            text.contains("External MCP client not available"),
-            "Off the EDT the call must reach past the guard and produce the branch's own result. " +
-                "Got: $text.",
+        assertTrue(result.isError == true, "An unclaimed ext: name is an error result. Got: $text.")
+        assertEquals(
+            "Unknown tool: ext:demo:search",
+            text,
+            "Off the EDT the call must reach past the guard; on the store classpath no provider claims " +
+                "the name. Got: $text.",
         )
         assertFalse(
             text.contains("REL-05"),

@@ -4,11 +4,12 @@ import burp.api.montoya.MontoyaApi
 import com.six2dez.burp.aiagent.audit.AiRequestLogger
 import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.config.McpSettings
-import com.six2dez.burp.aiagent.mcp.tools.CollaboratorRegistry
 import com.six2dez.burp.aiagent.mcp.tools.ResponsePreprocessorSettings
-import com.six2dez.burp.aiagent.mcp.tools.ScannerTaskRegistry
+import com.six2dez.burp.aiagent.mcp.tools.ToolRegistry
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
+import com.six2dez.burp.aiagent.spi.PluginSettingsStore
+import com.six2dez.burp.aiagent.spi.ToolProvider
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import java.net.BindException
 import java.net.HttpURLConnection
@@ -47,6 +48,9 @@ class McpSupervisor(
     private val restartDelayMs: Long = DEFAULT_RESTART_DELAY_MS,
     private val takeoverRetryDelayMs: Long = DEFAULT_TAKEOVER_RETRY_DELAY_MS,
 ) {
+    /** The providers whose lifecycle hooks run on apply and stop. A test seam; production uses the catalog's registry. */
+    internal var toolRegistry: () -> ToolRegistry = { McpToolCatalog.registry }
+    private val pluginSettingsRef = AtomicReference<PluginSettingsStore?>(null)
     private val stateRef = AtomicReference<McpServerState>(McpServerState.Stopped)
     private val settingsRef = AtomicReference<McpSettings?>(null)
     private val privacyRef = AtomicReference(PrivacyMode.STRICT)
@@ -73,6 +77,10 @@ class McpSupervisor(
         stdioBridge.setAiRequestLogger(logger)
     }
 
+    fun setPluginSettings(store: PluginSettingsStore) {
+        pluginSettingsRef.set(store)
+    }
+
     fun setAiToolDependencies(
         supervisor: AgentSupervisor,
         passiveScanner: PassiveAiScanner,
@@ -96,10 +104,7 @@ class McpSupervisor(
         privacyRef.set(privacyMode)
         determinismRef.set(determinismMode)
         preprocessRef.set(preprocessSettings)
-        ScannerTaskRegistry.configureTtlMinutes(settings.scanTaskTtlMinutes)
-        CollaboratorRegistry.configureTtlMinutes(settings.collaboratorClientTtlMinutes)
-        ScannerTaskRegistry.setLogger { api.logging().logToOutput("[ScannerTaskRegistry] $it") }
-        CollaboratorRegistry.setLogger { api.logging().logToOutput("[CollaboratorRegistry] $it") }
+        notifySettingsApplied(settings)
 
         if (!settings.enabled) {
             stop()
@@ -141,8 +146,36 @@ class McpSupervisor(
         restartAttempts.set(0)
         takeoverAttempts.set(0)
         stdioBridge.stop()
-        ScannerTaskRegistry.clear()
-        CollaboratorRegistry.clear()
+        toolRegistry().providers().forEach { provider ->
+            runProviderHook(provider, "onMcpServerStopped") { provider.onMcpServerStopped() }
+        }
+    }
+
+    /**
+     * Phase 29 / D-15 — the core names no plug-in state: each provider configures what it owns (the
+     * generic provider: the scanner-task and Collaborator registries and their TTLs) from its own keys.
+     * Skipped until [setPluginSettings] supplied the store; App sets it before the first apply.
+     */
+    private fun notifySettingsApplied(settings: McpSettings) {
+        val store = pluginSettingsRef.get() ?: return
+        val log: (String) -> Unit = { api.logging().logToOutput(it) }
+        toolRegistry().providers().forEach { provider ->
+            runProviderHook(provider, "onMcpSettingsApplied") { provider.onMcpSettingsApplied(settings, store, log) }
+        }
+    }
+
+    /** A provider hook that throws is logged and skipped, so one plug-in cannot stop the others or the server. */
+    @Suppress("TooGenericExceptionCaught") // any plug-in failure, whatever its type, must stay contained here
+    private fun runProviderHook(
+        provider: ToolProvider,
+        hook: String,
+        block: () -> Unit,
+    ) {
+        try {
+            block()
+        } catch (e: Exception) {
+            api.logging().logToError("MCP tool provider ${provider.javaClass.name} failed in $hook: ${e.message}")
+        }
     }
 
     fun shutdown() {

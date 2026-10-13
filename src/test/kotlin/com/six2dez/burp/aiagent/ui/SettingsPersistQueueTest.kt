@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.ui
 
 import burp.api.montoya.MontoyaApi
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.AgentSettingsRepository
 import org.junit.jupiter.api.AfterEach
@@ -12,7 +13,6 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertTimeoutPreemptively
 import org.mockito.Answers
 import org.mockito.kotlin.mock
-import java.io.File
 import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -524,13 +524,8 @@ class SettingsPersistQueueTest {
      * nested comment and swallow the rest of the file.)
      */
     private fun codeLinesOf(path: String): List<String> {
-        val file = File(path)
-        assertTrue(
-            file.isFile,
-            "Expected to find `$path` relative to the test working directory " +
-                "`${System.getProperty("user.dir")}`, resolved as `${file.absolutePath}`. If the build " +
-                "layout changed, fix the path here and in the matching `tasks.test` input declaration.",
-        )
+        // SourceRoots.file fails naming both production roots when the file is in neither or in both.
+        val file = SourceRoots.file(path)
         return file
             .readLines()
             .filterNot { line ->
@@ -564,8 +559,8 @@ class SettingsPersistQueueTest {
     }
 
     private companion object {
-        const val MAIN_TAB_SOURCE = "src/main/kotlin/com/six2dez/burp/aiagent/ui/MainTab.kt"
-        const val PERSIST_QUEUE_SOURCE = "src/main/kotlin/com/six2dez/burp/aiagent/ui/SettingsPersistQueue.kt"
+        const val MAIN_TAB_SOURCE = "com/six2dez/burp/aiagent/ui/MainTab.kt"
+        const val PERSIST_QUEUE_SOURCE = "com/six2dez/burp/aiagent/ui/SettingsPersistQueue.kt"
 
         /** One supersede key shared by the tests that model writes to the same field. */
         const val SAME_FIELD = "same-field"

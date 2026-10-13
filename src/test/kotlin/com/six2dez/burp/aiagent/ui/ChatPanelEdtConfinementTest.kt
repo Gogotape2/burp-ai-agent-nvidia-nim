@@ -1,6 +1,9 @@
 package com.six2dez.burp.aiagent.ui
 
-import burp.api.montoya.proxy.ProxyHttpRequestResponse
+import burp.api.montoya.internal.MontoyaObjectFactory
+import burp.api.montoya.internal.ObjectFactoryLocator
+import burp.api.montoya.scanner.audit.issues.AuditIssue
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.TestSettings
 import com.six2dez.burp.aiagent.audit.ActivityType
 import com.six2dez.burp.aiagent.audit.AuditLogger
@@ -15,12 +18,13 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertTimeoutPreemptively
+import org.mockito.Answers
 import org.mockito.Mockito.mockingDetails
 import org.mockito.kotlin.any
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.atLeast
-import org.mockito.kotlin.doAnswer
+import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
 import org.mockito.kotlin.verify
@@ -28,7 +32,6 @@ import org.mockito.kotlin.whenever
 import java.awt.CardLayout
 import java.awt.Component
 import java.awt.Container
-import java.io.File
 import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
@@ -91,10 +94,10 @@ class ChatPanelEdtConfinementTest {
     @Test
     fun anApprovedChainToolExecutesOnANamedDaemonThread() {
         val toolThread = AtomicReference<Thread?>(null)
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
-        whenever(h.api.proxy().history()).thenAnswer {
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
+        whenever(h.api.siteMap().issues()).thenAnswer {
             toolThread.set(Thread.currentThread())
-            emptyList<ProxyHttpRequestResponse>()
+            emptyList<AuditIssue>()
         }
 
         // A deadlock failsafe, matching ChatPanelToolGateTest.kt:377 — if the dispatch never completes
@@ -143,13 +146,19 @@ class ChatPanelEdtConfinementTest {
      * KDoc already records as *"unavailable in pure-JVM unit tests"*. The assertion would then be red
      * for a reason that has nothing to do with the EDT, which is the one thing a red-before-green gate
      * must never be. `proxy_http_history` is the same trust boundary through a seam that works.
+     *
+     * **Phase 29 (D-16): the sample is now the native CONFIRM tool `issue_create`**, so the store build,
+     * which ships only native tools, runs this file. The double sits on `siteMap().issues()`, the one
+     * Montoya call `issue_create` makes OUTSIDE a `runCatching` — its proxy-history lookup swallows every
+     * throwable, so a refusal placed there could never turn the run status into `error`. Its static
+     * `AuditIssue.auditIssue` is served by the factory double [installObservers] installs.
      */
     @Test
     fun aToolThatRefusesTheEdtCompletesNormally() {
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
-        whenever(h.api.proxy().history()).thenAnswer {
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
+        whenever(h.api.siteMap().issues()).thenAnswer {
             check(!SwingUtilities.isEventDispatchThread()) { BURP_EDT_REFUSAL }
-            emptyList<ProxyHttpRequestResponse>()
+            emptyList<AuditIssue>()
         }
 
         // assertTimeoutPreemptively runs its block on a SEPARATE thread, so the trace id crosses back
@@ -195,15 +204,15 @@ class ChatPanelEdtConfinementTest {
     @Test
     fun theEdtRunsQueuedWorkWhileAToolCallIsMidFlight() {
         val latches = ToolLatches()
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
-        whenever(h.api.proxy().history()).thenAnswer {
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
+        whenever(h.api.siteMap().issues()).thenAnswer {
             latches.entered.countDown()
             // The tool waits on the EDT. This is what makes a FREE EDT a precondition for the tool
             // returning, and therefore what makes a blocked one a deadlock rather than a slow path.
             check(latches.probeRan.await(HANDSHAKE_FAILSAFE_SECONDS, TimeUnit.SECONDS)) {
                 "The EDT never ran a queued runnable while the tool was mid-call — it was blocked inside it."
             }
-            emptyList<ProxyHttpRequestResponse>()
+            emptyList<AuditIssue>()
         }
 
         val traceIdRef = AtomicReference<String>()
@@ -269,7 +278,7 @@ class ChatPanelEdtConfinementTest {
             ChatPanel.MAX_AUTO_TOOL_ITERATIONS,
             "This test's name says eight. If the budget changes, rename the test — do not relax it.",
         )
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("scope_check", """{"url":"http://evil.example/"}"""))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("status", """{}"""))
 
         assertTimeoutPreemptively(Duration.ofSeconds(60)) {
             ChatPanelTestHarness.sendUserMessage(h, "check scope repeatedly")
@@ -317,13 +326,13 @@ class ChatPanelEdtConfinementTest {
     @Test
     fun cancellingARunningToolDiscardsItsResultAndStillAuditsTheCall() {
         val latches = ToolLatches()
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
-        whenever(h.api.proxy().history()).thenAnswer {
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
+        whenever(h.api.siteMap().issues()).thenAnswer {
             latches.entered.countDown()
             check(latches.probeRan.await(HANDSHAKE_FAILSAFE_SECONDS, TimeUnit.SECONDS)) {
                 "The test never released the blocked tool — the cancel window was never opened."
             }
-            emptyList<ProxyHttpRequestResponse>()
+            emptyList<AuditIssue>()
         }
 
         val traceIdRef = AtomicReference<String>()
@@ -362,7 +371,7 @@ class ChatPanelEdtConfinementTest {
             "UI-SPEC C-1: the backend-turn line is FALSE on the tool path — the request was not cancelled.",
         )
         assertFalse(
-            transcript.contains(EMPTY_HISTORY_ROW),
+            transcript.contains(ISSUE_CREATED_ROW),
             "UI-SPEC S4: a superseded run renders no transcript row for its discarded result.",
         )
         // D-07's corollary: the call reached Burp and cannot be recalled, so it stays in the record.
@@ -401,10 +410,10 @@ class ChatPanelEdtConfinementTest {
         val toolThread = AtomicReference<Thread?>(null)
         // A CONFIRM-tier tool, deliberately: an AUTO-tier one raises no card at all, so it could not
         // tell a working gate from a missing one.
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
-        whenever(h.api.proxy().history()).thenAnswer {
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
+        whenever(h.api.siteMap().issues()).thenAnswer {
             toolThread.set(Thread.currentThread())
-            emptyList<ProxyHttpRequestResponse>()
+            emptyList<AuditIssue>()
         }
 
         val traceIdRef = AtomicReference<String>()
@@ -418,7 +427,7 @@ class ChatPanelEdtConfinementTest {
             ChatPanelTestHarness.drainEdt(times = LONG_DRAIN)
         }
 
-        verify(h.api.proxy(), never()).history()
+        verify(h.api.siteMap(), never()).issues()
         assertNull(
             toolThread.get(),
             "SEC-06 / E1: the tool body ran on ${toolThread.get()?.name} after a Deny. A refusal that " +
@@ -478,13 +487,13 @@ class ChatPanelEdtConfinementTest {
     fun deletingASessionSupersedesItsRunningToolAndStillAuditsTheCall() {
         val latches = ToolLatches()
         val discharged = CountDownLatch(1)
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
-        whenever(h.api.proxy().history()).thenAnswer {
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
+        whenever(h.api.siteMap().issues()).thenAnswer {
             latches.entered.countDown()
             check(latches.probeRan.await(HANDSHAKE_FAILSAFE_SECONDS, TimeUnit.SECONDS)) {
                 "The test never released the blocked tool — the delete window was never opened."
             }
-            emptyList<ProxyHttpRequestResponse>()
+            emptyList<AuditIssue>()
         }
 
         val traceIdRef = AtomicReference<String>()
@@ -535,7 +544,7 @@ class ChatPanelEdtConfinementTest {
         // clause is also satisfied by the defect. It is here to fail alongside the two above, never
         // instead of them.
         assertFalse(
-            transcriptText(h).contains(EMPTY_HISTORY_ROW),
+            transcriptText(h).contains(ISSUE_CREATED_ROW),
             "UI-SPEC S4: a superseded run renders no transcript row.",
         )
     }
@@ -561,13 +570,13 @@ class ChatPanelEdtConfinementTest {
     fun aProjectChangeSupersedesTheRunningToolAndNoWriteReachesTheDisposedPanel() {
         val latches = ToolLatches()
         val discharged = CountDownLatch(1)
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
-        whenever(h.api.proxy().history()).thenAnswer {
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
+        whenever(h.api.siteMap().issues()).thenAnswer {
             latches.entered.countDown()
             check(latches.probeRan.await(HANDSHAKE_FAILSAFE_SECONDS, TimeUnit.SECONDS)) {
                 "The test never released the blocked tool — the project-change window was never opened."
             }
-            emptyList<ProxyHttpRequestResponse>()
+            emptyList<AuditIssue>()
         }
 
         val traceIdRef = AtomicReference<String>()
@@ -637,15 +646,15 @@ class ChatPanelEdtConfinementTest {
         val discharged = CountDownLatch(1)
         val toolThread = AtomicReference<Thread?>(null)
         val toolReturned = AtomicBoolean(false)
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
-        whenever(h.api.proxy().history()).thenAnswer {
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
+        whenever(h.api.siteMap().issues()).thenAnswer {
             toolThread.set(Thread.currentThread())
             latches.entered.countDown()
             check(latches.probeRan.await(HANDSHAKE_FAILSAFE_SECONDS, TimeUnit.SECONDS)) {
                 "The test never released the blocked tool — shutdown() must have waited for it."
             }
             toolReturned.set(true)
-            emptyList<ProxyHttpRequestResponse>()
+            emptyList<AuditIssue>()
         }
 
         val traceIdRef = AtomicReference<String>()
@@ -699,89 +708,6 @@ class ChatPanelEdtConfinementTest {
     }
 
     /**
-     * S-09 / CFM 2 / T-23-10 — an approved call that is superseded mid-flight executes EXACTLY ONCE.
-     *
-     * The supersede is a compare-and-set with exactly one winner: whoever takes the token wins, and
-     * the returning worker's `clearIfMatches` loses and discards. The failure this rules out is the
-     * one that would matter most on a security tool — the resolution path and the worker both
-     * proceeding, so a single human `Approve once` click puts two requests on the wire.
-     *
-     * **A genuine `CONFIRM_EACH` tool, not a `CONFIRM` one approved once.** The two behave alike for a
-     * single call, so substituting would have quietly turned a tier-specific claim into a generic one.
-     * `scope_include` is the one CONFIRM_EACH tool that both reaches a stubbable Montoya seam and
-     * completes headlessly: `http1_request` / `http2_request` die in `HttpRequest.httpRequest`, which
-     * `McpScopeFilter.deriveScopeUrl`'s KDoc records as unavailable in pure-JVM unit tests; every
-     * `scan_*` one is Professional-only; `ai_analyze` and `ai_passive_scan` need runtime AI
-     * dependencies the chat context does not carry. Reaching it costs the settings override below,
-     * which is a real user configuration rather than a test hook.
-     *
-     * The two-button assertion is a SETUP assertion: it fails if `scope_include` ever stops being
-     * CONFIRM_EACH, rather than letting this test silently become the CONFIRM case.
-     */
-    @Test
-    fun aSupersededConfirmEachCallReachesBurpExactlyOnce() {
-        val latches = ToolLatches()
-        val h =
-            ChatPanelTestHarness.create(
-                modelResponse = toolCall("scope_include", """{"url":"http://s09.example/"}"""),
-                settings = settingsEnabling("scope_include"),
-            )
-        // Resolved to a local FIRST. `includeInScope` returns void, so the stub has to be written
-        // `doAnswer {}.whenever(mock)`, and leaving the deep-stub `h.api.scope()` call inside the
-        // `whenever(...)` argument makes Mockito read THAT call as the one being stubbed —
-        // UnfinishedStubbingException, measured.
-        val scope = h.api.scope()
-        doAnswer {
-            latches.entered.countDown()
-            check(latches.probeRan.await(HANDSHAKE_FAILSAFE_SECONDS, TimeUnit.SECONDS)) {
-                "The test never released the blocked tool — the supersede window was never opened."
-            }
-            null
-        }.whenever(scope).includeInScope(any<String>())
-
-        val traceIdRef = AtomicReference<String>()
-        assertTimeoutPreemptively(Duration.ofSeconds(30)) {
-            ChatPanelTestHarness.sendUserMessage(h, "add that host to scope")
-            ChatPanelTestHarness.drainEdt()
-            val card = requireNotNull(ChatPanelTestHarness.findApprovalCard(h.panel.root)) { NO_CARD }
-            assertEquals(
-                listOf("Deny", "Approve once"),
-                decisionButtons(card).map { it.text },
-                "Setup: this scenario is about CONFIRM_EACH. Two actions is what that tier offers; four " +
-                    "would mean the tool was re-tiered and this test now proves something else.",
-            )
-            traceIdRef.set(pendingTraceId(h))
-            click(card, "Approve once")
-            assertTrue(
-                latches.entered.await(HANDSHAKE_FAILSAFE_SECONDS, TimeUnit.SECONDS),
-                "The tool worker never started, so there was nothing to supersede.",
-            )
-
-            SwingUtilities.invokeAndWait { cancelButton(h).doClick() }
-
-            latches.probeRan.countDown()
-            ChatPanelTestHarness.awaitToolSettled(label = traceIdRef.get(), count = 1)
-        }
-
-        // THE CLAIM. One click, one call on the wire — read from the Montoya double the tool body
-        // actually reached, not from a counter this test keeps.
-        verify(scope, times(1)).includeInScope(any<String>())
-        // And the loser of the compare-and-set does not re-enter later: drained well past the point a
-        // second dispatch would have landed.
-        ChatPanelTestHarness.drainEdt(times = LONG_DRAIN)
-        verify(scope, times(1)).includeInScope(any<String>())
-
-        val record = decisionsFor(traceIdRef.get()).single()
-        assertEquals(
-            ChatPanel.SUPERSEDED_RUN_STATUS,
-            record["status"],
-            "The superseded call is still audited — it reached Burp and cannot be recalled (D-07).",
-        )
-        assertEquals("approve_once", record["decision"], "The decision the human really made is unchanged by the supersede.")
-        assertOrderedAuditPair(h, record, traceIdRef.get(), extraKeys = setOf(SUPERSEDE_REASON_KEY))
-    }
-
-    /**
      * S-12 / AI-SPEC E9 — a tool body that throws produces a row, a record and a `logToError` line,
      * and leaves the panel usable. Silence is the failure mode being ruled out.
      *
@@ -806,8 +732,8 @@ class ChatPanelEdtConfinementTest {
      */
     @Test
     fun aThrowingToolBodyIsReportedRatherThanSwallowed() {
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
-        whenever(h.api.proxy().history()).thenThrow(InjectedWorkerFailure(INJECTED_FAILURE_MESSAGE))
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
+        whenever(h.api.siteMap().issues()).thenThrow(InjectedWorkerFailure(INJECTED_FAILURE_MESSAGE))
 
         val escaped = AtomicReference<Throwable?>(null)
         val previousHandler = Thread.getDefaultUncaughtExceptionHandler()
@@ -896,20 +822,22 @@ class ChatPanelEdtConfinementTest {
         val slashThread = AtomicReference<Thread?>(null)
         val h =
             ChatPanelTestHarness.create(
-                modelResponse = toolCall("scope_check", """{"url":"http://e10.example/"}"""),
+                modelResponse = toolCall("status", """{}"""),
                 settings = settingsWithSingleMcpPermit(),
             )
-        whenever(h.api.scope().isInScope(any<String>())).thenAnswer {
+        // `version().name()` is read by the AUTO `status` tool body alone (buildToolContext reads edition()).
+        val version = h.api.burpSuite().version()
+        whenever(version.name()).thenAnswer {
             chainThread.set(Thread.currentThread())
             latches.entered.countDown()
             check(latches.probeRan.await(HANDSHAKE_FAILSAFE_SECONDS, TimeUnit.SECONDS)) {
                 "The test never released the blocked chain step — the race window was never opened."
             }
-            false
+            "Burp Suite Community Edition"
         }
-        whenever(h.api.proxy().history()).thenAnswer {
+        whenever(h.api.siteMap().issues()).thenAnswer {
             slashThread.set(Thread.currentThread())
-            emptyList<ProxyHttpRequestResponse>()
+            emptyList<AuditIssue>()
         }
 
         val slashLabelRef = AtomicReference<String>()
@@ -923,7 +851,7 @@ class ChatPanelEdtConfinementTest {
             )
             // The second user action, fired while the first is demonstrably still inside its call and
             // still holding its own limiter permit.
-            ChatPanelTestHarness.sendUserMessage(h, """/tool proxy_http_history {"count":5}""")
+            ChatPanelTestHarness.sendUserMessage(h, SLASH_TOOL_COMMAND)
             val slashLabel = ChatPanelTestHarness.slashToolLabel()
             slashLabelRef.set(slashLabel)
             // WAIT FOR THE /tool WORKER TO FINISH BEFORE RELEASING THE CHAIN, and the ordering is the
@@ -952,9 +880,9 @@ class ChatPanelEdtConfinementTest {
                 "buildToolContext and two independent actions are now coupled. Transcript: $transcript",
         )
         // Both really executed — the negative clause above is worthless if neither call ran.
-        verify(h.api.proxy(), times(1)).history()
+        verify(h.api.siteMap(), times(1)).issues()
         assertTrue(
-            transcript.contains(EMPTY_HISTORY_ROW),
+            transcript.contains(ISSUE_CREATED_ROW),
             "The /tool call must have produced its own result row. Transcript: $transcript",
         )
         // Both off the EDT, read from Threads the production code created.
@@ -1137,13 +1065,13 @@ class ChatPanelEdtConfinementTest {
     @Test
     fun theToolTailWritesIntoItsCapturedPanelWhileTheGuardedMapsMoveUnderneathIt() {
         val latches = ToolLatches()
-        val h = ChatPanelTestHarness.create(modelResponse = toolCall("proxy_http_history", """{"count":5}"""))
-        whenever(h.api.proxy().history()).thenAnswer {
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
+        whenever(h.api.siteMap().issues()).thenAnswer {
             latches.entered.countDown()
             check(latches.probeRan.await(HANDSHAKE_FAILSAFE_SECONDS, TimeUnit.SECONDS)) {
                 "The test never released the blocked tool — the map-mutation window was never opened."
             }
-            emptyList<ProxyHttpRequestResponse>()
+            emptyList<AuditIssue>()
         }
 
         assertTimeoutPreemptively(Duration.ofSeconds(30)) {
@@ -1178,14 +1106,14 @@ class ChatPanelEdtConfinementTest {
             "Expected the original question in exactly one transcript; found it in ${asked.size}.",
         )
         assertTrue(
-            asked.single().contains(EMPTY_HISTORY_ROW),
+            asked.single().contains(ISSUE_CREATED_ROW),
             "REL-01 / E5: the tool result landed somewhere other than the session that asked for it. " +
                 "finishApprovedToolCall must render through `captured.panel` — the SessionPanel frozen " +
                 "into ToolCallCapture on the EDT before dispatch — and never through a live " +
                 "sessionPanels lookup, whose answer changed the moment the user made a new session.",
         )
         assertTrue(
-            cards.none { !it.contains(E5_QUESTION) && it.contains(EMPTY_HISTORY_ROW) },
+            cards.none { !it.contains(E5_QUESTION) && it.contains(ISSUE_CREATED_ROW) },
             "REL-01 / E5: a tool result appeared in a transcript that never asked for it — the row " +
                 "followed the CURRENT session rather than the captured one.",
         )
@@ -1389,9 +1317,9 @@ class ChatPanelEdtConfinementTest {
             "The run status must distinguish a discarded call from one that completed normally — the " +
                 "distinction the audit log could not make before.",
         )
-        assertEquals("proxy_http_history", record.metadata["tool"], "The record must name the tool that was discarded.")
+        assertEquals("issue_create", record.metadata["tool"], "The record must name the tool that was discarded.")
         assertTrue(
-            record.detail.contains("proxy_http_history"),
+            record.detail.contains("issue_create"),
             "An operator reading the detail line must be able to say which tool it was. Detail: ${record.detail}",
         )
     }
@@ -1459,9 +1387,9 @@ class ChatPanelEdtConfinementTest {
         val h =
             ChatPanelTestHarness.create(
                 modelResponse = "no tool call here",
-                settings = settingsEnabling("proxy_http_history"),
+                settings = settingsEnabling("issue_create"),
             )
-        whenever(h.api.proxy().history()).thenReturn(emptyList<ProxyHttpRequestResponse>())
+        whenever(h.api.siteMap().issues()).thenReturn(emptyList<AuditIssue>())
 
         assertTimeoutPreemptively(Duration.ofSeconds(30)) {
             ChatPanelTestHarness.sendUserMessage(h, SLASH_TOOL_COMMAND)
@@ -1470,7 +1398,7 @@ class ChatPanelEdtConfinementTest {
         }
 
         assertTrue(
-            transcriptText(h).contains(EMPTY_HISTORY_ROW),
+            transcriptText(h).contains(ISSUE_CREATED_ROW),
             "Precondition: this control is only meaningful if the call really did run to completion " +
                 "and render its result. Transcript: ${transcriptText(h)}",
         )
@@ -1630,8 +1558,16 @@ class ChatPanelEdtConfinementTest {
      */
     private fun decisionsFor(traceId: String): List<Map<*, *>> = auditEvents.filter { it.first == TOOL_DECISION_EVENT && it.second["traceId"] == traceId }.map { it.second }
 
+    private var savedFactory: MontoyaObjectFactory? = null
+
     @BeforeEach
     fun installObservers() {
+        // Phase 29 (D-16): the CONFIRM sample `issue_create` builds its issue through Montoya's static
+        // `AuditIssue.auditIssue`, which dereferences ObjectFactoryLocator.FACTORY — null outside Burp.
+        // A mock factory lets an approved call complete with status "ok", as `proxy_http_history` did.
+        // Saved and restored, the same pattern as AiScanCheckScanHttpTest.
+        savedFactory = ObjectFactoryLocator.FACTORY
+        ObjectFactoryLocator.FACTORY = mock<MontoyaObjectFactory>(defaultAnswer = Answers.RETURNS_MOCKS)
         auditEvents.clear()
         AuditLogger.registerGlobalEmitter { type, payload ->
             if (payload is Map<*, *>) auditEvents += type to payload
@@ -1646,6 +1582,7 @@ class ChatPanelEdtConfinementTest {
         // ChatPanelToolGateTest.kt:649-654, and for the same reason.
         AuditLogger.registerGlobalEmitter(null)
         ChatPanelTestHarness.releaseSettledObserver()
+        ObjectFactoryLocator.FACTORY = savedFactory
     }
 }
 
@@ -1975,12 +1912,16 @@ private fun settingsWithSingleMcpPermit(): AgentSettings {
 }
 
 /**
- * The BODY text a `proxy_http_history` call produces against an empty-history double.
+ * The BODY text a completed `issue_create` call produces (its own output, `Issue created: [AI] probe ...`).
+ *
+ * Phase 29 (D-16): it was `"Tool executed: proxy_http_history"`, the empty-history output of the generic
+ * tool the store build no longer ships. Only the prefix is pinned: the rest is the issue name and
+ * the two enum values, and the transcript renders it through markdown.
  *
  * **Transcript rows are identified by their body here, never by their header, and that is a measured
  * constraint rather than a preference.** `ChatMessagePanel` renders every non-user role as the
  * literal string `"AI"` (`ChatPanel.kt`), so the role handed to `addMessage` — `"Tool result:
- * proxy_http_history"` — reaches no component at all and appears in no transcript. A
+ * issue_create"` — reaches no component at all and appears in no transcript. A
  * `contains("Tool result: ...")` is therefore FALSE BY CONSTRUCTION, which makes the negative form of
  * it an assertion that cannot fail: it passes just as happily against a superseded run that DID
  * render its row. Found by measurement, not review — the positive form of the same assertion failed
@@ -1988,13 +1929,13 @@ private fun settingsWithSingleMcpPermit(): AgentSettings {
  *
  * This string is the tool's own output, so it appears if and only if the row was really rendered.
  */
-private const val EMPTY_HISTORY_ROW = "Tool executed: proxy_http_history"
+private const val ISSUE_CREATED_ROW = "Issue created: "
 
 /** The exhaustion message `McpTool.runTool` writes when a limiter permit cannot be acquired. */
 private const val LIMITER_EXHAUSTED = "Too many concurrent MCP requests."
 
 /** The message carried by the injected tool failure, so the assertion and the throw cannot drift. */
-private const val INJECTED_FAILURE_MESSAGE = "proxy history exploded"
+private const val INJECTED_FAILURE_MESSAGE = "site map issues exploded"
 
 /**
  * The failure injected into an APPROVED tool call.
@@ -2018,7 +1959,7 @@ private fun loggedErrors(h: ChatPanelTestHarness.Harness): List<String> {
 }
 
 /** Declared as a `tasks.test` input in `build.gradle.kts`; the two must stay in step. */
-private const val CHAT_PANEL_SOURCE = "src/main/kotlin/com/six2dez/burp/aiagent/ui/ChatPanel.kt"
+private const val CHAT_PANEL_SOURCE = "com/six2dez/burp/aiagent/ui/ChatPanel.kt"
 
 /**
  * The source text of one `ChatPanel` function, brace-matched from its declaration.
@@ -2049,19 +1990,10 @@ private fun functionBody(declaration: String): String {
  * `ChatPanel.kt`'s source text.
  *
  * One reader for every structural assertion in this file, so the "does the file exist?" diagnostic is
- * written once. Named and asserted rather than left to surface as a bare `FileNotFoundException`,
- * which is what a build-layout change would otherwise produce here.
+ * written once. Resolved through [SourceRoots.file], which fails naming both production roots rather
+ * than letting a build-layout change surface as a bare `FileNotFoundException`.
  */
-private fun chatPanelSource(): String {
-    val file = File(CHAT_PANEL_SOURCE)
-    assertTrue(
-        file.isFile,
-        "Expected to find `$CHAT_PANEL_SOURCE` relative to the test working directory " +
-            "`${System.getProperty("user.dir")}`, resolved as `${file.absolutePath}`. If the build " +
-            "layout changed, fix the path here and in the matching `tasks.test` input declaration.",
-    )
-    return file.readText()
-}
+private fun chatPanelSource(): String = SourceRoots.file(CHAT_PANEL_SOURCE).readText()
 
 /** Literal (not regex) occurrences of [needle] in [source] — occurrences, never matching lines. */
 private fun occurrencesOf(
@@ -2318,18 +2250,30 @@ private fun click(
 private const val BUSY_REFUSAL = "A request is already running. Cancel it first."
 
 /**
+ * Arguments for the native CONFIRM sample, `issue_create` — the fewest that run it to completion.
+ *
+ * With no `httpRequest` the body looks the base URL up in proxy history (inside a `runCatching`), reads
+ * `siteMap().issues()` for an equivalent issue — the probe this file stubs and verifies — then builds
+ * the issue through the factory double and adds it to the site map.
+ */
+private const val ISSUE_CREATE_ARGS =
+    """{"name":"probe","detail":"d","baseUrl":"https://target.example/","severity":"LOW","confidence":"FIRM"}"""
+
+/**
  * The `/tool` command the CR-05 scenarios drive.
  *
- * `proxy_http_history` because it is the one tool in the catalog that both completes headlessly and
- * reaches a stubbable Montoya seam, which is what lets the double block the worker mid-flight.
+ * `issue_create` because it is the native tool that both completes headlessly (with the factory double)
+ * and reaches a stubbable Montoya seam outside any `runCatching`, `siteMap().issues()`, which is what
+ * lets the double block the worker mid-flight. Phase 29 (D-16): it replaced `proxy_http_history`, which
+ * the store build no longer ships.
  */
-private const val SLASH_TOOL_COMMAND = "/tool proxy_http_history {\"count\":5}"
+private const val SLASH_TOOL_COMMAND = "/tool issue_create $ISSUE_CREATE_ARGS"
 
 /** The label prefix `OffEdtDispatch` receives for BOTH user-originated tool paths. */
 private const val CHAT_TOOL_LABEL_PREFIX = "chat-tool-"
 
 /**
- * A harness whose `proxy_http_history` double blocks until [latches] is released.
+ * A harness whose `issue_create` double (on `siteMap().issues()`) blocks until [latches] is released.
  *
  * Shared by the CR-05 and WR-04 scenarios, all of which need the same thing: a user-originated tool
  * call parked mid-flight so the panel is demonstrably in state S3 while the assertion runs. The tool
@@ -2342,14 +2286,14 @@ private fun harnessForUserOriginatedTool(latches: ToolLatches): ChatPanelTestHar
     val h =
         ChatPanelTestHarness.create(
             modelResponse = "no tool call here",
-            settings = settingsEnabling("proxy_http_history"),
+            settings = settingsEnabling("issue_create"),
         )
-    whenever(h.api.proxy().history()).thenAnswer {
+    whenever(h.api.siteMap().issues()).thenAnswer {
         latches.entered.countDown()
         check(latches.probeRan.await(HANDSHAKE_FAILSAFE_SECONDS, TimeUnit.SECONDS)) {
             "The test never released the blocked tool — the mid-flight window was never opened."
         }
-        emptyList<ProxyHttpRequestResponse>()
+        emptyList<AuditIssue>()
     }
     return h
 }

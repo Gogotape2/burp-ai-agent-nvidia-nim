@@ -11,10 +11,13 @@ import javax.swing.JComponent
 import javax.swing.JPanel
 import javax.swing.border.EmptyBorder
 
+// One injected component per Privacy & Logging row. The constructor was baselined before DEAD-01 (plan
+// 29-05) removed its auto-restart parameter; ADR-17 forbids re-baselining the new signature, so the
+// finding is suppressed here instead. Do not add parameters: compose new controls into an existing row.
+@Suppress("LongParameterList")
 class PrivacyConfigPanel(
     private val privacyMode: JComponent,
     private val auditEnabled: JComponent,
-    private val autoRestart: JComponent,
     private val determinism: JComponent,
     private val rotateSaltBtn: JComponent,
     // Single advisory replaces the previous trio of stacked red labels. Caller manages level
@@ -41,8 +44,6 @@ class PrivacyConfigPanel(
             addRowFull(grid, "Logger max entries", aiLoggerMaxEntries)
             addSpacerRow(grid, 4)
         }
-        addRowFull(grid, "Auto-restart", autoRestart)
-        addSpacerRow(grid, 4)
         addRowFull(grid, "Determinism mode", determinism)
         addSpacerRow(grid, 4)
         addRowFull(grid, "Anonymization", rotateSaltBtn)

@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.ui
 
+import com.six2dez.burp.aiagent.backends.AiBackend
 import com.six2dez.burp.aiagent.backends.nvidia.NvidiaNimBackendFactory
 import com.six2dez.burp.aiagent.backends.perplexity.PerplexityBackendFactory
 import com.six2dez.burp.aiagent.config.AgentSettings
@@ -15,10 +16,6 @@ private val checkedAtFormatter: DateTimeFormatter = DateTimeFormatter.ofPattern(
 private const val DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434"
 private const val DEFAULT_LMSTUDIO_URL = "http://127.0.0.1:1234"
 
-/** Backends whose health check never leaves this machine (process probes / Burp's own AI). */
-private val alwaysLocalBackendIds =
-    setOf("codex-cli", "gemini-cli", "opencode-cli", "claude-cli", "copilot-cli", "burp-ai")
-
 /** Why the AI status pill wants a fresh backend health result. */
 enum class HealthCheckTrigger { STARTUP, PERIODIC, SETTINGS_CHANGED, USER_CLICK }
 
@@ -27,15 +24,23 @@ enum class HealthCheckTrigger { STARTUP, PERIODIC, SETTINGS_CHANGED, USER_CLICK 
  *
  * Remote providers are never polled on a timer: each check is a network call to a third party
  * (and used to be a billable completion), so they are checked only at startup, after a settings or
- * backend change, and when the user clicks the pill. Local backends (CLI tools, Burp AI, HTTP
- * servers on a loopback literal) are cheap to probe and may be polled.
+ * backend change, and when the user clicks the pill. Local backends (a backend whose health check
+ * is local, such as Burp AI or a CLI process probe, and HTTP servers on a loopback literal) are cheap
+ * to probe and may be polled.
  */
 internal object BackendHealthPolicy {
-    fun isLocal(settings: AgentSettings): Boolean {
-        val id = settings.preferredBackendId
+    /**
+     * [backend] is the backend the check would run against. Its own [AiBackend.healthCheckIsLocal]
+     * decides first (Burp AI, the full build's CLI process probes); otherwise the URL of a core HTTP
+     * backend must be a loopback literal. Phase 29 / D-09: core names no full-only backend id here.
+     */
+    fun isLocal(
+        settings: AgentSettings,
+        backend: AiBackend?,
+    ): Boolean {
+        if (backend?.healthCheckIsLocal == true) return true
         val url =
-            when (id) {
-                in alwaysLocalBackendIds -> return true
+            when (settings.preferredBackendId) {
                 "ollama" -> settings.ollamaUrl.ifBlank { DEFAULT_OLLAMA_URL }
                 "lmstudio" -> settings.lmStudioUrl.ifBlank { DEFAULT_LMSTUDIO_URL }
                 "openai-compatible" -> settings.openAiCompatibleUrl
@@ -50,7 +55,8 @@ internal object BackendHealthPolicy {
     fun shouldRun(
         trigger: HealthCheckTrigger,
         settings: AgentSettings,
-    ): Boolean = trigger != HealthCheckTrigger.PERIODIC || isLocal(settings)
+        backend: AiBackend?,
+    ): Boolean = trigger != HealthCheckTrigger.PERIODIC || isLocal(settings, backend)
 
     fun tooltip(
         message: String,

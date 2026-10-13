@@ -19,10 +19,13 @@ import javax.swing.JSpinner
 import javax.swing.border.EmptyBorder
 import javax.swing.border.LineBorder
 
+// The 1.0.1 constructor was baselined as LongParameterList; the baseline keys on the full signature, so
+// the contributions parameter orphaned that entry. Every parameter is a component SettingsPanel owns
+// and binds to its settings field, so grouping them would only move the list (ADR-17: no re-baseline).
+@Suppress("LongParameterList")
 class ActiveScanConfigPanel(
     private val activeAiEnabled: JComponent,
     private val activeAiScopeOnly: JCheckBox,
-    private val activeAiAutoFromPassive: JCheckBox,
     private val activeAiMaxConcurrentSpinner: JSpinner,
     private val activeAiMaxPayloadsSpinner: JSpinner,
     private val activeAiTimeoutSpinner: JSpinner,
@@ -37,6 +40,11 @@ class ActiveScanConfigPanel(
     private val activeAiViewQueue: JButton,
     private val activeAiClearQueue: JButton,
     private val activeAiResetStats: JButton,
+    /**
+     * Phase 29 / D-07: ACTIVE_SCANNER_TAB settings contributions, placed after "Scan parameters" in
+     * the same body (UI-SPEC PC-9). Empty in the store build, where the body is the 1.0.1 one.
+     */
+    private val contributions: List<JComponent> = emptyList(),
 ) : ConfigPanel {
     override fun build(): JPanel {
         activeAiEnabled.font = DesignTokens.Typography.body
@@ -48,11 +56,6 @@ class ActiveScanConfigPanel(
         activeAiScopeOnly.background = DesignTokens.Colors.surface
         activeAiScopeOnly.foreground = DesignTokens.Colors.onSurface
         activeAiScopeOnly.toolTipText = "Only test requests that are in the defined target scope."
-
-        activeAiAutoFromPassive.font = DesignTokens.Typography.body
-        activeAiAutoFromPassive.background = DesignTokens.Colors.surface
-        activeAiAutoFromPassive.foreground = DesignTokens.Colors.onSurface
-        activeAiAutoFromPassive.toolTipText = "Automatically queue passive scanner findings for active testing."
 
         activeAiStatusLabel.font = DesignTokens.Typography.body
         activeAiStatusLabel.foreground = DesignTokens.Colors.onSurfaceVariant
@@ -137,8 +140,6 @@ class ActiveScanConfigPanel(
         addSpacerRow(gridA, DesignTokens.Spacing.xs)
         addRowFull(gridA, "In-scope only", activeAiScopeOnly)
         addSpacerRow(gridA, DesignTokens.Spacing.xs)
-        addRowFull(gridA, "Auto-queue findings", activeAiAutoFromPassive)
-        addSpacerRow(gridA, DesignTokens.Spacing.xs)
         addRowFull(gridA, "Status", activeAiStatusLabel)
         addSpacerRow(gridA, DesignTokens.Spacing.xs)
         addRowFull(gridA, "Actions", actionsPanel)
@@ -187,6 +188,12 @@ class ActiveScanConfigPanel(
                 add(sectionA)
                 add(Box.createRigidArea(Dimension(0, DesignTokens.Spacing.sm)))
                 add(sectionB)
+                // UI-SPEC PC-9: contributions share the accordions' body and left edge, each after the
+                // same Spacing.sm gap. With none (store build) the body is exactly the 1.0.1 one.
+                contributions.forEach { contribution ->
+                    add(Box.createRigidArea(Dimension(0, DesignTokens.Spacing.sm)))
+                    add(contribution)
+                }
             }
         return body
     }

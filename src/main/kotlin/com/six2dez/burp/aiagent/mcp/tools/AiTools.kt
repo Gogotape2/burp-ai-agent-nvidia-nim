@@ -1,12 +1,8 @@
 package com.six2dez.burp.aiagent.mcp.tools
 
-import com.six2dez.burp.aiagent.mcp.McpToolContext
-import io.modelcontextprotocol.kotlin.sdk.server.Server
 import kotlinx.serialization.Serializable
 
-internal fun Server.registerAiTools(context: McpToolContext) {
-    McpToolRegistrations.native.forEach { registerToolHandler(it, context) }
-}
+// Input models of the native AI tools. Their handlers live in NativeTools.kt.
 
 @Serializable
 internal data class AiAnalyzeInput(

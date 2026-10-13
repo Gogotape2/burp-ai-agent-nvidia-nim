@@ -1,8 +1,8 @@
 package com.six2dez.burp.aiagent.ui
 
+import com.six2dez.burp.aiagent.SourceRoots
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.io.File
 
 /**
  * QUAL-07 / SC4 — `ChatPanel`'s EDT check says what it actually does, and keeps saying it.
@@ -268,22 +268,13 @@ class ChatPanelEdtGuardTest {
     /**
      * `ChatPanel.kt`'s source text.
      *
-     * Asserted rather than left to surface as a bare `FileNotFoundException`, which is what a build
-     * layout change would otherwise produce here.
+     * Resolved through [SourceRoots.file], which fails naming both production roots rather than letting
+     * a build-layout change surface as a bare `FileNotFoundException`.
      */
-    private fun chatPanelSource(): String {
-        val file = File(CHAT_PANEL_SOURCE_PATH)
-        assertTrue(
-            file.isFile,
-            "Expected `$CHAT_PANEL_SOURCE_PATH` relative to the test working directory " +
-                "`${System.getProperty("user.dir")}`, resolved as `${file.absolutePath}`. If the build " +
-                "layout changed, fix the path here.",
-        )
-        return file.readText()
-    }
+    private fun chatPanelSource(): String = SourceRoots.file(CHAT_PANEL_SOURCE_PATH).readText()
 
     private companion object {
-        const val CHAT_PANEL_SOURCE_PATH = "src/main/kotlin/com/six2dez/burp/aiagent/ui/ChatPanel.kt"
+        const val CHAT_PANEL_SOURCE_PATH = "com/six2dez/burp/aiagent/ui/ChatPanel.kt"
 
         /** The EDT check's name. Kept in one place so a rename fails loudly here rather than silently. */
         const val HELPER_NAME = "assertEdt"

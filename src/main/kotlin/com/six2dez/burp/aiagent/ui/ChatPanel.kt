@@ -621,8 +621,9 @@ class ChatPanel(
     ) {
         val settings = getSettings()
         updatePrivacyPill()
-        if (supervisor.requiresBurpAiAndDisabled(settings.preferredBackendId)) {
-            showError("Burp AI is disabled in Burp Suite settings. Enable 'Use AI' for extensions, or pick a different backend.")
+        val accessRefusal = supervisor.aiAccessRefusal(settings.preferredBackendId)
+        if (accessRefusal != null) {
+            showError(accessRefusal)
             return
         }
         if (!ensureBackendReady(settings)) return
@@ -2779,24 +2780,24 @@ class ChatPanel(
      * was filed as recognised, so `toolName` took the model's own string and `toolNameSha256` was
      * omitted entirely — bypassing the whole-name digest for precisely the class of names that had
      * nothing else identifying them, while the executor rejected the call with "External MCP client not
-     * available" (WR-04 / UF-1). `ExternalMcpClientManager.availableTools()` is the same source
-     * `McpToolExecutor.describeTools` advertises from, so consulting it is what makes the two agree.
+     * available" (WR-04 / UF-1).
      *
-     * Measured, and stated so it is not rediscovered as a surprise: nothing in the main source set
-     * currently builds an [McpToolContext] carrying an `externalClientManager`, so today every `ext:`
-     * name resolves to `false` here — which is also the only accurate answer, because with no manager
-     * the executor cannot run one. Taking the context rather than assuming its contents is what moves
-     * this function for free on the day one is wired in.
+     * Phase 29 (D-14): a provider's dynamic namespace answers for `ext:` names, through
+     * [com.six2dez.burp.aiagent.mcp.tools.ToolRegistry.isKnown] on the context's registry (the catalog's
+     * in production). In the full build that is the external-MCP plug-in's provider, whose list is the
+     * same source `McpToolExecutor.describeTools` advertises from, so the two agree; in the store build
+     * no provider has a dynamic namespace and every `ext:` name is unknown.
+     *
+     * Measured, and stated so it is not rediscovered as a surprise: the full build's provider has no
+     * client manager wired (1.0.1 parity), so today every `ext:` name resolves to `false` here — which is
+     * also the only accurate answer, because with no manager the executor cannot run one. Taking the
+     * context rather than assuming its contents is what moves this function for free on the day one is
+     * wired in.
      */
     private fun isKnownTool(
         canonicalId: String,
         context: McpToolContext,
-    ): Boolean =
-        McpToolCatalog.all().any { it.id == canonicalId } ||
-            context.externalClientManager
-                ?.availableTools()
-                .orEmpty()
-                .any { it.name == canonicalId }
+    ): Boolean = context.toolRegistry.isKnown(canonicalId, context)
 
     /**
      * The backend an activity-log entry for this session is attributed to.

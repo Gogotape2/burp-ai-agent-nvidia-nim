@@ -7,8 +7,32 @@ import java.io.File
 private const val BASELINE_FILE = "detekt-baseline.xml"
 
 /**
- * The `<ID>` count sealed by phase 26 plan 07, which trimmed the baseline from 1096 entries to this
- * number with a removals-only diff.
+ * The `<ID>` count of the baseline. Phase 26 plan 07 sealed it at 1040 (trimmed from 1096 with a
+ * removals-only diff); phase 29 plan 04 lowered it to 1032 in the commit that deleted the legacy MCP
+ * registrar and its eight entries, then to 1031 in the commit that deleted Alerting and its one; phase
+ * 29 plan 05 lowered it to 1018 in the commit that deleted CliConnection (eleven entries) and the
+ * always-true launch-mode parameter of buildLaunchConfig (two entries, replaced by a local suppression),
+ * then to 1011 in the commit that deleted the auto-restart monitor and the worker pool (seven entries),
+ * then to 1010 in the commit that removed the auto-restart setting (PrivacyConfigPanel's constructor
+ * entry, replaced by a local suppression), then to 1002 in the commit that replaced the executor's
+ * dispatch `when` with the tool registry (plan 29-06: the executeToolResult / inputSchema complexity
+ * entries, two executor magic numbers, parseArgsObject, the swallowed MissingFieldException and the
+ * deleted McpToolRegistrations object), then to 1000 in the commit that moved the utility, history,
+ * site-map, config and editor tools into handler files (the executor's `500` and its annotate loop;
+ * the moved loop carries a local suppression instead), then to 994 in the commit that moved the
+ * request, scanner and collaborator tools out of the executor (its LargeClass, TooManyFunctions and
+ * four SpreadOperator entries; the moved spreads carry local suppressions instead), then to 992 in
+ * the commit that extracted the core issue_create support out of McpToolHelpers.kt (the ReturnCount
+ * entries of executeIssueCreate and withAiIssuePrefix; both carry local suppressions instead), then to
+ * 988 in the commit that moved the CLI PATH capture out of AgentSupervisor's companion (plan 29-12: its
+ * `5` second timeout became a named constant in the full build's CliEnvironment, and its three
+ * ReturnCount entries carry local suppressions instead), then to 986 in the commit that replaced the
+ * TokenTracker CLI ratios with backend-published ones (its `3.5` and `3.7` entries), then to 985 in
+ * the commit that gave ActiveScanConfigPanel its settings-contribution parameter (plan 29-13: its
+ * constructor's LongParameterList entry, replaced by a local suppression), then, after later plans
+ * brought the baseline to 973, to 972 in the commit that replaced the passive scanner's direct
+ * active-scanner queueing with the suggested-target sink (plan 29-16: the old function's ReturnCount
+ * entry; the new offerSuggestedTargets passes on its own).
  *
  * This is a CEILING, not a target. ADR-17 clause 1 says the baseline may lose entries and may never
  * gain them, so the only edit this constant is ever allowed to receive is a DOWNWARD one, made in the
@@ -16,7 +40,7 @@ private const val BASELINE_FILE = "detekt-baseline.xml"
  * somebody would otherwise have had to answer into a finding nobody will ever see again — which is
  * precisely the inversion ADR-17 clause 1 exists to forbid.
  */
-private const val MAX_BASELINE_ENTRIES = 1040
+private const val MAX_BASELINE_ENTRIES = 972
 
 /**
  * QUAL-07 / SC3 gate on ADR-17 clause 1 — "`detekt-baseline.xml` shrinks and is never appended to".
