@@ -81,6 +81,26 @@ class StoreJarInspectorTest {
     }
 
     @Test
+    fun okHttpOkioAndMockWebServerAreReportedAsBundledLibraries() {
+        // Phase 31 / NET-01: OkHttp is a test-only dependency, so the store JAR holds none of it.
+        assertEachReported(Rule.BUNDLED_LIBRARY, *OKHTTP_PLANTED.toTypedArray())
+    }
+
+    @Test
+    fun okHttpLookAlikesAndTheMontoyaTransportAreNeverReported() {
+        OKHTTP_LOOK_ALIKES.forEach { entry ->
+            assertEquals(emptyList<Violation>(), inspect(BASELINE + (entry to ""), emptySet()), "$entry is legitimate store content")
+        }
+    }
+
+    @Test
+    fun okHttpEntriesReturnsExactlyTheOkHttpOkioAndMockWebServerEntriesSorted() {
+        val entries = (OKHTTP_LOOK_ALIKES + OKHTTP_PLANTED.reversed() + BASELINE.keys).shuffled(java.util.Random(31L))
+        assertEquals(OKHTTP_PLANTED.sorted(), StoreJarInspector.okHttpEntries(entries))
+        assertEquals(emptyList<String>(), StoreJarInspector.okHttpEntries(OKHTTP_LOOK_ALIKES + BASELINE.keys))
+    }
+
+    @Test
     fun pluginServicesFilesAreReported() {
         val spi = listOf("ToolProvider", "SettingsContribution", "ExtensionPlugin", "BackendModelHint", "FlavorProfile", "AiAccessPolicy")
         assertEachReported(
@@ -237,6 +257,25 @@ class StoreJarInspectorTest {
     }
 
     private companion object {
+        /** One entry per OkHttp-family prefix: the OkHttp, Okio and MockWebServer trees and both META-INF forms. */
+        val OKHTTP_PLANTED: List<String> =
+            listOf(
+                "okhttp3/OkHttpClient.class",
+                "okio/Buffer.class",
+                "mockwebserver3/MockWebServer.class",
+                "META-INF/okhttp.kotlin_module",
+                "META-INF/native-image/okhttp/okhttp/resource-config.json",
+            )
+
+        /** Store content that must not be reported: the prefixes match at the start of the entry name only. */
+        val OKHTTP_LOOK_ALIKES: List<String> =
+            listOf(
+                "io/ktor/network/sockets/Socket.class",
+                "com/six2dez/burp/aiagent/backends/http/MontoyaHttpTransport.class",
+                "com/example/vendored/okhttp3/Shim.class",
+                "META-INF/maven/com.example/not-okhttp/pom.properties",
+            )
+
         val BASELINE: Map<String, String> =
             linkedMapOf(
                 "com/six2dez/burp/aiagent/BurpAiAgentExtension.class" to "",

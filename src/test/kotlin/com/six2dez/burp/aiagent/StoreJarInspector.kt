@@ -28,6 +28,15 @@ internal object StoreJarInspector {
     /** System property carrying the src/full class directories, joined with [File.pathSeparator]. */
     const val FULL_CLASS_DIRS_PROPERTY = "burp.aiagent.fullClassDirs"
 
+    /** System property carrying the absolute path of the JAR fullJar writes (Phase 31 / NET-01, OkHttp check only). */
+    const val FULL_JAR_PROPERTY = "burp.aiagent.fullJar"
+
+    /** OkHttp, Okio and MockWebServer path prefixes; neither JAR may hold an entry under them (Phase 31 / NET-01). */
+    val OKHTTP_PREFIXES: List<String> = emptyList()
+
+    /** The entries of [entries] under an [OKHTTP_PREFIXES] prefix, sorted. */
+    fun okHttpEntries(entries: List<String>): List<String> = emptyList()
+
     const val FACTORY_SERVICES_ENTRY = "META-INF/services/com.six2dez.burp.aiagent.backends.AiBackendFactory"
 
     /** The six HTTP backend factories the store JAR registers (the 29-17 baseline). A new HTTP backend updates this set. */
