@@ -1,6 +1,8 @@
 package com.six2dez.burp.aiagent.backends
 
 import burp.api.montoya.MontoyaApi
+import burp.api.montoya.internal.MontoyaObjectFactory
+import burp.api.montoya.internal.ObjectFactoryLocator
 import burp.api.montoya.logging.Logging
 import burp.api.montoya.persistence.Preferences
 import com.six2dez.burp.aiagent.audit.AuditLogger
@@ -30,6 +32,7 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.junit.jupiter.api.assertThrows
 import org.mockito.Answers
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
@@ -205,6 +208,40 @@ class UnknownBackendFallbackTest {
             ),
             lines,
         )
+    }
+
+    /**
+     * Phase 31 / D-14b (Phase 29 D-08, T-31-23): a CLI id carried over from a full install starts no
+     * process in the store build. With Use AI on, the start resolves to burp-ai and runs it, the
+     * registry has no such backend, the store classpath has no CLI backend class, and the substitution
+     * line is logged once however often the id is started.
+     */
+    @Test
+    fun storeStartOverACarriedOverCliIdRunsBurpAiAndStartsNoProcess() {
+        val fixture = Fixture("codex-cli")
+        whenever(fixture.api.ai().isEnabled()).thenReturn(true)
+        // The Burp AI connection builds its PromptOptions through Montoya's static factory, which is
+        // null outside Burp; a mock factory stands in, saved and restored as in ChatPanelToolGateTest.
+        val savedFactory = ObjectFactoryLocator.FACTORY
+        ObjectFactoryLocator.FACTORY = mock<MontoyaObjectFactory>(defaultAnswer = Answers.RETURNS_MOCKS)
+        val supervisor = AgentSupervisor(fixture.api, fixture.registry, mock<AuditLogger>(), StoreAiAccessPolicy())
+        try {
+            assertTrue(supervisor.startOrAttach("codex-cli"), "the start succeeds on the substitute: ${supervisor.lastStartError()}")
+            assertTrue(supervisor.startOrAttach("codex-cli"), "a second start attaches to the running substitute")
+
+            assertEquals("burp-ai", supervisor.status().backendId, "burp-ai runs, not the saved CLI id")
+            assertNull(fixture.registry.get("codex-cli"), "the store registry has no CLI backend")
+            assertThrows<ClassNotFoundException> { Class.forName("com.six2dez.burp.aiagent.backends.cli.CliBackend") }
+            assertEquals(
+                listOf("[AgentSupervisor] Saved backend 'codex-cli' is not registered in this build; using burp-ai."),
+                fixture.output.filter { it.contains("is not registered in this build") },
+                "one substitution line",
+            )
+            assertFalse(fixture.output.any { it.startsWith("Launching backend codex-cli") }, "no CLI launch: ${fixture.output}")
+        } finally {
+            supervisor.stop()
+            ObjectFactoryLocator.FACTORY = savedFactory
+        }
     }
 
     private fun sendTo(
