@@ -140,6 +140,9 @@ class MontoyaHttpTransport private constructor(
         const val UNBOUND_REFUSAL = "AI request refused: the HTTP transport is not bound to a backend."
         const val NO_GATE_REFUSAL = "AI request refused: this HTTP transport has no access gate."
 
+        /** Phase 31 / NET-01: the fail-fast message of every HTTP backend adapter that was given no transport. */
+        const val TRANSPORT_UNAVAILABLE = "MontoyaHttpTransport unavailable; AI HTTP backends require Burp's HTTP stack."
+
         private val NO_GATE = ProviderEgressGate { NO_GATE_REFUSAL }
 
         // Extra grace over the request's own response timeout before the off-EDT worker join gives up.

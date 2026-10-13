@@ -11,6 +11,7 @@ import com.six2dez.burp.aiagent.backends.HttpTransportAware
 import com.six2dez.burp.aiagent.backends.JsonModeCapable
 import com.six2dez.burp.aiagent.backends.TokenUsage
 import com.six2dez.burp.aiagent.backends.UsageAwareConnection
+import com.six2dez.burp.aiagent.backends.http.AiAccessRefusedException
 import com.six2dez.burp.aiagent.backends.http.CircuitBreaker
 import com.six2dez.burp.aiagent.backends.http.ConversationHistory
 import com.six2dez.burp.aiagent.backends.http.HttpBackendSupport
@@ -18,9 +19,6 @@ import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
 import com.six2dez.burp.aiagent.backends.http.recordHttpFailureIfRetryable
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.util.HeaderParser
-import okhttp3.MediaType.Companion.toMediaType
-import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -35,9 +33,9 @@ class OllamaBackend :
     private val mapper = ObjectMapper().registerKotlinModule()
 
     /**
-     * Optional, supervisor-injected [MontoyaHttpTransport] used by [healthCheck]. Null only on the
-     * unit-test path (tests construct backends directly without a supervisor); production wiring
-     * lives in [com.six2dez.burp.aiagent.backends.BackendRegistry] (re-applied on every reload).
+     * Supervisor-injected [MontoyaHttpTransport] used by [healthCheck]; production wiring lives in
+     * [com.six2dez.burp.aiagent.backends.BackendRegistry] (re-applied on every reload). Every request
+     * of this backend, chat and health alike, goes through a Montoya transport and its egress gate.
      */
     @Volatile
     private var healthCheckTransport: MontoyaHttpTransport? = null
@@ -50,31 +48,35 @@ class OllamaBackend :
 
     companion object {
         private const val DEFAULT_CONTEXT_WINDOW = 8192
+
+        // Bound for the one /api/show request that resolves the context window on the first send.
+        private const val SHOW_TIMEOUT_MS = 5_000L
+
+        private val NUM_CTX_PARAMETER = Regex("""num_ctx\s+(\d+)""")
     }
 
+    /**
+     * Phase 31 / D-08 / GATE-02: launching sends nothing. The context window is resolved by the
+     * connection on its first send (see `OllamaConnection.contextWindowFor`), through the same bound
+     * transport and egress gate as the chat request itself.
+     */
     override fun launch(config: BackendLaunchConfig): AgentConnection {
         val baseUrl = config.baseUrl?.trimEnd('/') ?: "http://127.0.0.1:11434"
         val model = config.model?.ifBlank { "llama3.1" } ?: "llama3.1"
         val timeoutSeconds = (config.requestTimeoutSeconds ?: 120L).coerceIn(30L, 3600L)
-        val client = HttpBackendSupport.sharedClient(baseUrl, timeoutSeconds)
 
-        val resolvedContextWindow =
-            if (config.contextWindow == null || config.contextWindow == DEFAULT_CONTEXT_WINDOW) {
-                detectContextWindow(baseUrl, model, config.headers, config.contextWindow, config.transport)
-            } else {
-                BackendDiagnostics.log("[ollama] Using user-configured context window: ${config.contextWindow}")
-                config.contextWindow
-            }
+        if (config.contextWindow != null && config.contextWindow != DEFAULT_CONTEXT_WINDOW) {
+            BackendDiagnostics.log("[ollama] Using user-configured context window: ${config.contextWindow}")
+        }
 
         return OllamaConnection(
-            client = client,
             mapper = mapper,
             baseUrl = baseUrl,
             model = model,
             headers = config.headers,
             determinismMode = config.determinismMode,
             sessionId = config.sessionId,
-            contextWindow = resolvedContextWindow,
+            configuredContextWindow = config.contextWindow,
             circuitBreaker = HttpBackendSupport.newCircuitBreaker(),
             transport = config.transport,
             timeoutSeconds = timeoutSeconds,
@@ -94,8 +96,8 @@ class OllamaBackend :
                 HeaderParser.parse(settings.ollamaHeaders),
             )
         val url = "${baseUrl.trimEnd('/')}/api/tags"
-        // BUG-69-01: prefer supervisor-injected MontoyaHttpTransport so health check honors Burp's
-        // upstream proxy / SOCKS / cert store. Fall through to OkHttp only on the unit-test path.
+        // BUG-69-01: the supervisor-injected MontoyaHttpTransport makes the health check honor Burp's
+        // upstream proxy / SOCKS / cert store and the egress gate.
         val transport = healthCheckTransport
         return if (transport != null) {
             transport.healthCheckGet(url, headers, timeoutMs = 3_000)
@@ -107,106 +109,17 @@ class OllamaBackend :
         }
     }
 
-    private fun detectContextWindow(
-        baseUrl: String,
-        model: String,
-        headers: Map<String, String>,
-        fallback: Int?,
-        transport: MontoyaHttpTransport? = null,
-    ): Int? {
-        try {
-            val requestJson = mapper.writeValueAsString(mapOf("name" to model))
-            val showUrl = "$baseUrl/api/show"
-
-            val body: String
-            if (transport != null) {
-                val resp = transport.post(showUrl, headers, requestJson, 5_000)
-                if (!resp.isSuccessful) {
-                    BackendDiagnostics.log(
-                        "[ollama] /api/show returned HTTP ${resp.statusCode}, using fallback: $fallback",
-                    )
-                    return fallback
-                }
-                body = resp.body
-            } else {
-                val client = HttpBackendSupport.sharedClient(baseUrl, 5L)
-                val request =
-                    Request
-                        .Builder()
-                        .url(showUrl)
-                        .post(requestJson.toRequestBody("application/json".toMediaType()))
-                        .apply {
-                            headers.forEach { (name, value) -> header(name, value) }
-                        }.build()
-
-                val okResp = client.newCall(request).execute()
-                okResp.use { resp ->
-                    if (!resp.isSuccessful) {
-                        BackendDiagnostics.log(
-                            "[ollama] /api/show returned HTTP ${resp.code}, using fallback: $fallback",
-                        )
-                        return fallback
-                    }
-                    body = resp.body?.string().orEmpty()
-                }
-            }
-
-            if (body.isBlank()) return fallback
-
-            val root = mapper.readTree(body)
-
-            // Priority 1: explicit num_ctx in parameters (user Modelfile override)
-            val parameters = root.path("parameters").asText("")
-            val numCtxMatch = Regex("""num_ctx\s+(\d+)""").find(parameters)
-            if (numCtxMatch != null) {
-                val detected = numCtxMatch.groupValues[1].toIntOrNull()
-                if (detected != null && detected > 0) {
-                    BackendDiagnostics.log(
-                        "[ollama] Detected context window from Modelfile parameters: $detected",
-                    )
-                    return detected
-                }
-            }
-
-            // Priority 2: *.context_length in model_info (model default)
-            val modelInfo = root.path("model_info")
-            if (modelInfo.isObject) {
-                val iter = modelInfo.fields()
-                while (iter.hasNext()) {
-                    val entry = iter.next()
-                    if (entry.key.endsWith(".context_length")) {
-                        val detected = entry.value.asInt(-1)
-                        if (detected > 0) {
-                            BackendDiagnostics.log(
-                                "[ollama] Detected context window from model_info: $detected",
-                            )
-                            return detected
-                        }
-                    }
-                }
-            }
-
-            BackendDiagnostics.log(
-                "[ollama] No context window found in /api/show response, using fallback: $fallback",
-            )
-            return fallback
-        } catch (e: Exception) {
-            BackendDiagnostics.log(
-                "[ollama] Failed to detect context window: ${e.message}, using fallback: $fallback",
-            )
-            return fallback
-        }
-    }
-
+    // ADR-17: twelve per-connection settings; a holder object would add an indirection on every send,
+    // and re-baselining the finding is forbidden.
+    @Suppress("LongParameterList")
     private class OllamaConnection(
-        private val client: okhttp3.OkHttpClient,
         private val mapper: ObjectMapper,
         private val baseUrl: String,
         private val model: String,
         private val headers: Map<String, String>,
         private val determinismMode: Boolean,
         private val sessionId: String?,
-        private val contextWindow: Int?,
+        private val configuredContextWindow: Int?,
         private val circuitBreaker: CircuitBreaker,
         private val transport: MontoyaHttpTransport?,
         private val timeoutSeconds: Long,
@@ -222,6 +135,10 @@ class OllamaBackend :
             }
         private val conversationHistory = ConversationHistory(20)
         private val lastTokenUsageRef = AtomicReference<TokenUsage?>(null)
+
+        // D-08: a context window detected through /api/show, memoized for this connection. Only a
+        // successful detection is stored; a failure or a refusal leaves it empty for the next send.
+        private val detectedContextWindow = AtomicReference<Int?>(null)
 
         override fun isAlive(): Boolean = alive.get()
 
@@ -266,6 +183,13 @@ class OllamaBackend :
                             return@submit
                         }
                         try {
+                            // NET-01: Ollama MUST route through MontoyaHttpTransport so Burp's upstream
+                            // proxy / SOCKS / cert store and the egress gate apply. A null transport
+                            // means the supervisor's wiring is broken: fail fast, never send directly.
+                            val boundTransport = checkNotNull(transport) { MontoyaHttpTransport.TRANSPORT_UNAVAILABLE }
+                            // D-08 / GATE-02: resolved here, on the worker, before the first chat
+                            // request; a refusal propagates as AiAccessRefusedException (never retried).
+                            val numCtx = contextWindowFor(boundTransport)
                             debugLog("serialize start (model=$model, baseUrl=$baseUrl)")
                             // Add user message to conversation history
                             conversationHistory.addUser(text)
@@ -275,7 +199,7 @@ class OllamaBackend :
                                     model = model,
                                     stream = false,
                                     temperature = if (determinismMode) 0.0 else null,
-                                    numCtx = contextWindow,
+                                    numCtx = numCtx,
                                     formatJson = jsonMode,
                                     numPredict = maxOutputTokens,
                                 )
@@ -292,43 +216,18 @@ class OllamaBackend :
 
                             debugLog("request -> $endpointUrl (stream=false)")
 
-                            val body: String
-                            if (transport != null) {
-                                val resp = transport.post(endpointUrl, allHeaders, json, timeoutSeconds * 1000)
-                                if (!resp.isSuccessful) {
-                                    errorLog("HTTP ${resp.statusCode}: ${resp.body.take(500)}")
-                                    circuitBreaker.recordHttpFailureIfRetryable(resp.statusCode)
-                                    // WR-04: bound the surfaced body (matches OpenAI/Anthropic .take(800))
-                                    // so a large/secret-laden error envelope isn't echoed wholesale into the
-                                    // chat bubble and persisted session.messages.
-                                    onComplete(IllegalStateException("Ollama HTTP ${resp.statusCode}: ${resp.body.take(800)}"))
-                                    return@submit
-                                }
-                                debugLog("response <- HTTP ${resp.statusCode}")
-                                body = resp.body
-                            } else {
-                                val req =
-                                    Request
-                                        .Builder()
-                                        .url(endpointUrl)
-                                        .post(json.toRequestBody("application/json".toMediaType()))
-                                        .apply {
-                                            allHeaders.forEach { (name, value) ->
-                                                header(name, value)
-                                            }
-                                        }.build()
-                                val okResp = client.newCall(req).execute()
-                                okResp.use { resp ->
-                                    if (!resp.isSuccessful) {
-                                        val bodyText = resp.body?.string().orEmpty()
-                                        errorLog("HTTP ${resp.code}: ${bodyText.take(500)}")
-                                        onComplete(IllegalStateException("Ollama HTTP ${resp.code}: $bodyText"))
-                                        return@submit
-                                    }
-                                    debugLog("response <- HTTP ${resp.code}")
-                                    body = resp.body?.string().orEmpty()
-                                }
+                            val resp = boundTransport.post(endpointUrl, allHeaders, json, timeoutSeconds * 1000)
+                            if (!resp.isSuccessful) {
+                                errorLog("HTTP ${resp.statusCode}: ${resp.body.take(500)}")
+                                circuitBreaker.recordHttpFailureIfRetryable(resp.statusCode)
+                                // WR-04: bound the surfaced body (matches OpenAI/Anthropic .take(800))
+                                // so a large/secret-laden error envelope isn't echoed wholesale into the
+                                // chat bubble and persisted session.messages.
+                                onComplete(IllegalStateException("Ollama HTTP ${resp.statusCode}: ${resp.body.take(800)}"))
+                                return@submit
                             }
+                            debugLog("response <- HTTP ${resp.statusCode}")
+                            val body = resp.body
 
                             if (body.isBlank()) {
                                 onComplete(IllegalStateException("Ollama response body was empty"))
@@ -417,6 +316,79 @@ class OllamaBackend :
                     }
                 }
             }
+        }
+
+        /**
+         * D-08: the window sent as `num_ctx`. A configured value other than the 8192 default is used
+         * as is; otherwise the window detected on an earlier send of this connection, else one
+         * detection now (memoized on success), else the configured value.
+         */
+        private fun contextWindowFor(transport: MontoyaHttpTransport): Int? {
+            val configured = configuredContextWindow
+            if (configured != null && configured != DEFAULT_CONTEXT_WINDOW) return configured
+            val detected = detectedContextWindow.get() ?: detectContextWindow(transport)?.also { detectedContextWindow.set(it) }
+            return detected ?: configured
+        }
+
+        /**
+         * Posts `/api/show` through the connection's transport and reads the model's context window:
+         * `num_ctx` from the Modelfile `parameters` first, then `*.context_length` from `model_info`.
+         * Returns null when nothing usable came back. A refusal is rethrown so the send fails with the
+         * policy's text; any other failure is logged and answered with null (the caller's fallback).
+         *
+         * ADR-17: the broad catch is deliberate; detection is best effort, and a malformed or failed
+         * answer must fall back to the configured window instead of failing the chat request.
+         */
+        @Suppress("TooGenericExceptionCaught")
+        private fun detectContextWindow(transport: MontoyaHttpTransport): Int? {
+            val fallback = configuredContextWindow
+            return try {
+                val requestJson = mapper.writeValueAsString(mapOf("name" to model))
+                val resp = transport.post("$baseUrl/api/show", headers, requestJson, SHOW_TIMEOUT_MS)
+                if (resp.isSuccessful) {
+                    parseContextWindow(resp.body).also { detected ->
+                        if (detected == null) {
+                            debugLog("No context window found in /api/show response, using fallback: $fallback")
+                        }
+                    }
+                } else {
+                    debugLog("/api/show returned HTTP ${resp.statusCode}, using fallback: $fallback")
+                    null
+                }
+            } catch (e: AiAccessRefusedException) {
+                throw e
+            } catch (e: Exception) {
+                debugLog("Failed to detect context window: ${e.message}, using fallback: $fallback")
+                null
+            }
+        }
+
+        private fun parseContextWindow(body: String): Int? {
+            if (body.isBlank()) return null
+            val root = mapper.readTree(body)
+            // Priority 1: explicit num_ctx in parameters (user Modelfile override)
+            val fromParameters =
+                NUM_CTX_PARAMETER
+                    .find(root.path("parameters").asText(""))
+                    ?.groupValues
+                    ?.get(1)
+                    ?.toIntOrNull()
+                    ?.takeIf { it > 0 }
+            // Priority 2: *.context_length in model_info (model default)
+            val fromModelInfo =
+                root
+                    .path("model_info")
+                    .takeIf { it.isObject }
+                    ?.fields()
+                    ?.asSequence()
+                    ?.firstNotNullOfOrNull { (key, value) ->
+                        value.asInt(-1).takeIf { key.endsWith(".context_length") && it > 0 }
+                    }
+            when {
+                fromParameters != null -> debugLog("Detected context window from Modelfile parameters: $fromParameters")
+                fromModelInfo != null -> debugLog("Detected context window from model_info: $fromModelInfo")
+            }
+            return fromParameters ?: fromModelInfo
         }
 
         private fun buildChatJson(
