@@ -54,12 +54,13 @@ class OpenAiCompatibleBackend(
     private val mapper = ObjectMapper().registerKotlinModule()
 
     /**
-     * Optional [MontoyaHttpTransport] used by [healthCheck] and passed to factory-specific
-     * health-check providers (NVIDIA NIM, Perplexity). [com.six2dez.burp.aiagent.backends.BackendRegistry]
-     * injects it via [HttpTransportAware] and re-applies it after every reload, so the
-     * [AiBackend.healthCheck] signature stays unchanged. Null only on the unit-test path (tests
-     * construct backends directly without a registry transport); there the generic check falls
-     * back to [HttpBackendSupport.healthCheckGet] and the NIM / Perplexity providers return Unknown.
+     * [MontoyaHttpTransport] used by [healthCheck] and passed to factory-specific health-check
+     * providers (NVIDIA NIM, Perplexity). [com.six2dez.burp.aiagent.backends.BackendRegistry] injects
+     * it via [HttpTransportAware] and re-applies it after every reload, so the [AiBackend.healthCheck]
+     * signature stays unchanged. Production and tests both go through a Montoya transport. With none
+     * set (a test that never injected one), the generic check returns
+     * Unavailable([MontoyaHttpTransport.TRANSPORT_UNAVAILABLE]) and the NIM / Perplexity providers
+     * return Unknown, which the registry's egress gate answers before mapping it.
      */
     @Volatile
     private var healthCheckTransport: MontoyaHttpTransport? = null
@@ -111,18 +112,15 @@ class OpenAiCompatibleBackend(
             )
         val modelsUrl = buildModelsUrl(baseUrl)
         val timeoutSeconds = timeoutSelector(settings).coerceIn(1, 30).toLong()
-        // BUG-69-01: prefer the supervisor-injected MontoyaHttpTransport so the health check
-        // honors Burp's upstream proxy / SOCKS / cert store. Fall through to OkHttp only on the
-        // unit-test path (no supervisor present → transport stays null).
+        // BUG-69-01 / NET-01: the supervisor-injected MontoyaHttpTransport makes the health check
+        // honor Burp's upstream proxy / SOCKS / cert store and the egress gate. Without one the wiring
+        // is broken: report Unavailable (never Unknown, which the registry could map to Healthy) and
+        // send nothing.
         val transport = healthCheckTransport
         return if (transport != null) {
             transport.healthCheckGet(modelsUrl, headers, timeoutMs = timeoutSeconds * 1000)
         } else {
-            HttpBackendSupport.healthCheckGet(
-                url = modelsUrl,
-                headers = headers,
-                timeoutSeconds = timeoutSeconds,
-            )
+            HealthCheckResult.Unavailable(MontoyaHttpTransport.TRANSPORT_UNAVAILABLE)
         }
     }
 
@@ -196,16 +194,12 @@ class OpenAiCompatibleBackend(
                             return@submit
                         }
                         try {
-                            // BUG-69-01: AI HTTP backends MUST go through MontoyaHttpTransport in
-                            // production so Burp's upstream proxy / SOCKS / cert store participate.
-                            // Reaching this branch with transport == null means the supervisor's
-                            // wiring is broken — fail fast instead of silently bypassing Burp via
-                            // OkHttp. See HttpBackendSupport.buildClient KDoc for the test-only path.
+                            // BUG-69-01 / NET-01: AI HTTP backends go through MontoyaHttpTransport in
+                            // production and in tests, so Burp's upstream proxy / SOCKS / cert store
+                            // and the egress gate participate. Reaching this branch with transport ==
+                            // null means the supervisor's wiring is broken: fail fast, never send directly.
                             if (transport == null) {
-                                throw IllegalStateException(
-                                    "MontoyaHttpTransport unavailable; AI HTTP backends require Burp's HTTP stack " +
-                                        "(see HttpBackendSupport.buildClient KDoc for the test-only path)",
-                                )
+                                throw IllegalStateException(MontoyaHttpTransport.TRANSPORT_UNAVAILABLE)
                             }
                             conversationHistory.addUser(text)
                             val messages = conversationHistory.snapshot()

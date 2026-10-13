@@ -32,9 +32,9 @@ class LmStudioBackend :
     private val mapper = ObjectMapper().registerKotlinModule()
 
     /**
-     * Optional, supervisor-injected [MontoyaHttpTransport] used by [healthCheck]. Null only on the
-     * unit-test path (tests construct backends directly without a supervisor); production wiring
-     * lives in [com.six2dez.burp.aiagent.backends.BackendRegistry] (re-applied on every reload).
+     * Supervisor-injected [MontoyaHttpTransport] used by [healthCheck]; production wiring lives in
+     * [com.six2dez.burp.aiagent.backends.BackendRegistry] (re-applied on every reload). Production and
+     * tests both go through a Montoya transport; with none, [healthCheck] reports it and sends nothing.
      */
     @Volatile
     private var healthCheckTransport: MontoyaHttpTransport? = null
@@ -75,16 +75,15 @@ class LmStudioBackend :
                 HeaderParser.parse(settings.lmStudioHeaders),
             )
         val url = "${baseUrl.trimEnd('/')}/v1/models"
-        // BUG-69-01: prefer supervisor-injected MontoyaHttpTransport so health check honors Burp's
-        // upstream proxy / SOCKS / cert store. Fall through to OkHttp only on the unit-test path.
+        // BUG-69-01 / NET-01: the supervisor-injected MontoyaHttpTransport makes the health check honor
+        // Burp's upstream proxy / SOCKS / cert store and the egress gate. Without one the wiring is
+        // broken: report Unavailable (never Unknown, which the registry could map to Healthy) and send
+        // nothing.
         val transport = healthCheckTransport
         return if (transport != null) {
             transport.healthCheckGet(url, headers, timeoutMs = 3_000)
         } else {
-            HttpBackendSupport.healthCheckGet(
-                url = url,
-                headers = headers,
-            )
+            HealthCheckResult.Unavailable(MontoyaHttpTransport.TRANSPORT_UNAVAILABLE)
         }
     }
 
@@ -152,16 +151,12 @@ class LmStudioBackend :
                             return@submit
                         }
                         try {
-                            // BUG-69-01: LM Studio MUST route through MontoyaHttpTransport in
-                            // production so Burp's upstream proxy / SOCKS / cert store participate.
-                            // Reaching this branch with transport == null means the supervisor's
-                            // wiring is broken — fail fast instead of silently bypassing Burp via
-                            // OkHttp. See HttpBackendSupport.buildClient KDoc for the test-only path.
+                            // BUG-69-01 / NET-01: LM Studio routes through MontoyaHttpTransport in
+                            // production and in tests, so Burp's upstream proxy / SOCKS / cert store
+                            // and the egress gate participate. Reaching this branch with transport ==
+                            // null means the supervisor's wiring is broken: fail fast, never send directly.
                             if (transport == null) {
-                                throw IllegalStateException(
-                                    "MontoyaHttpTransport unavailable; AI HTTP backends require Burp's HTTP stack " +
-                                        "(see HttpBackendSupport.buildClient KDoc for the test-only path)",
-                                )
+                                throw IllegalStateException(MontoyaHttpTransport.TRANSPORT_UNAVAILABLE)
                             }
                             // Add user message to conversation history
                             conversationHistory.addUser(text)

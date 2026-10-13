@@ -96,16 +96,15 @@ class OllamaBackend :
                 HeaderParser.parse(settings.ollamaHeaders),
             )
         val url = "${baseUrl.trimEnd('/')}/api/tags"
-        // BUG-69-01: the supervisor-injected MontoyaHttpTransport makes the health check honor Burp's
-        // upstream proxy / SOCKS / cert store and the egress gate.
+        // BUG-69-01 / NET-01: the supervisor-injected MontoyaHttpTransport makes the health check honor
+        // Burp's upstream proxy / SOCKS / cert store and the egress gate. Without one the wiring is
+        // broken: report Unavailable (never Unknown, which the registry could map to Healthy) and send
+        // nothing.
         val transport = healthCheckTransport
         return if (transport != null) {
             transport.healthCheckGet(url, headers, timeoutMs = 3_000)
         } else {
-            HttpBackendSupport.healthCheckGet(
-                url = url,
-                headers = headers,
-            )
+            HealthCheckResult.Unavailable(MontoyaHttpTransport.TRANSPORT_UNAVAILABLE)
         }
     }
 

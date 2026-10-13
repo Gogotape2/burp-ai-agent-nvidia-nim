@@ -21,9 +21,9 @@ import java.util.concurrent.atomic.AtomicReference
 /**
  * Native Anthropic Messages API backend (CAP-01).
  *
- * SC2: all production HTTP routed through the injected [MontoyaHttpTransport].
+ * SC2: all HTTP, in production and in tests, routed through the injected [MontoyaHttpTransport].
  * SC2c: no direct HTTP client construction on this path (verified by AnthropicBackendTransportRoutingTest).
- * transport == null → fail fast (AnthropicBackendTransportRoutingTest SC2b).
+ * transport == null → fail fast with [MontoyaHttpTransport.TRANSPORT_UNAVAILABLE] (AnthropicBackendTransportRoutingTest SC2b).
  * SC3: a 400 whose body contains "model" surfaces the exact CONTEXT.md error string.
  */
 class AnthropicBackend : AiBackend {
@@ -122,16 +122,12 @@ class AnthropicBackend : AiBackend {
                             return@submit
                         }
                         try {
-                            // BUG-69-01: AI HTTP backends MUST go through MontoyaHttpTransport in
-                            // production so Burp's upstream proxy / SOCKS / cert store participate.
-                            // Reaching this branch with transport == null means the supervisor's
-                            // wiring is broken — fail fast instead of silently bypassing Burp via
-                            // OkHttp. See HttpBackendSupport.buildClient KDoc for the test-only path.
+                            // BUG-69-01 / NET-01: AI HTTP backends go through MontoyaHttpTransport in
+                            // production and in tests, so Burp's upstream proxy / SOCKS / cert store
+                            // and the egress gate participate. Reaching this branch with transport ==
+                            // null means the supervisor's wiring is broken: fail fast, never send directly.
                             if (transport == null) {
-                                throw IllegalStateException(
-                                    "MontoyaHttpTransport unavailable; AI HTTP backends require Burp's HTTP stack " +
-                                        "(see HttpBackendSupport.buildClient KDoc for the test-only path)",
-                                )
+                                throw IllegalStateException(MontoyaHttpTransport.TRANSPORT_UNAVAILABLE)
                             }
 
                             // DIVERGENCE 1 — system prompt: Anthropic has NO system role in messages[].
