@@ -174,7 +174,8 @@ class SettingsSingleSourceOfTruthTest {
      */
     @Test
     fun aSaveOutsideTheSettingsTabReachesTheSupervisorThroughTheRepository() {
-        val repo = AgentSettingsRepository(newApi())
+        val api = newApi()
+        val repo = AgentSettingsRepository(api)
         val supervisor: AgentSupervisor = mock(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
         mirrorAppliedSettingsInto(repo, supervisor)
         val snapshot = repo.defaultSettings().copy(passiveAiEnabled = true, preferredBackendId = "ollama")
@@ -185,7 +186,15 @@ class SettingsSingleSourceOfTruthTest {
         saver.join()
 
         verify(supervisor).applySettings(snapshot)
-        assertEquals(snapshot, provider(), "The scanners' provider must return the saved snapshot.")
+        assertEquals(
+            snapshot,
+            provider(),
+            "The scanners' provider must return the saved snapshot, session passive scanner value included (D-06).",
+        )
+        assertFalse(
+            AgentSettingsRepository(api).load().passiveAiEnabled,
+            "D-06: the passive scanner switch is session-only, so a new load must start it OFF.",
+        )
     }
 
     /**
