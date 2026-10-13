@@ -1195,14 +1195,7 @@ class ChatPanel(
         val state = sessionStates.getOrPut(session.id) { ToolSessionState() }
         val settings = getSettings()
         val context = buildToolContext(settings, session.id)
-        val availableTools =
-            McpToolCatalog
-                .all()
-                .filter { descriptor ->
-                    val enabled = context.isToolEnabled(descriptor.id) && context.isUnsafeToolAllowed(descriptor.id)
-                    val proAllowed = !descriptor.proOnly || context.edition == burp.api.montoya.core.BurpSuiteEdition.PROFESSIONAL
-                    enabled && proAllowed
-                }
+        val availableTools = ChatToolSurface.offeredChatTools(context)
 
         if (availableTools.isEmpty()) {
             showError("No enabled MCP tools are available with current settings.")
@@ -1321,7 +1314,7 @@ class ChatPanel(
 
     private fun showToolsMenu() {
         val menu = javax.swing.JPopupMenu()
-        val tools = McpToolCatalog.all()
+        val tools = ChatToolSurface.menuTools()
         val settings = getSettings()
         val sessionId = sessionsList.selectedValue?.id ?: activeSessionId ?: "preview"
         val context = buildToolContext(settings, sessionId)
@@ -1329,13 +1322,8 @@ class ChatPanel(
         tools.groupBy { it.category }.forEach { (category, categoryTools) ->
             val submenu = javax.swing.JMenu(category)
             categoryTools.sortedBy { it.title }.forEach { tool ->
-                val canRun =
-                    context.isToolEnabled(tool.id) &&
-                        context.isUnsafeToolAllowed(tool.id) &&
-                        (!tool.proOnly || context.edition == burp.api.montoya.core.BurpSuiteEdition.PROFESSIONAL)
-
                 val item = javax.swing.JMenuItem(tool.title)
-                item.isEnabled = canRun
+                item.isEnabled = ChatToolSurface.canRun(tool, context)
                 item.toolTipText = tool.description
                 item.addActionListener {
                     inputArea.text = "/tool ${tool.id} {}"
@@ -2774,7 +2762,7 @@ class ChatPanel(
     }
 
     /** `null` means the model named a tool with no catalog entry; the card renders its unknown-tool line. */
-    private fun catalogTitleFor(canonicalId: String): String? = McpToolCatalog.all().firstOrNull { it.id == canonicalId }?.title
+    private fun catalogTitleFor(canonicalId: String): String? = McpToolCatalog.available().firstOrNull { it.id == canonicalId }?.title
 
     /**
      * Whether the canonical ID names something this extension recognises — SC3's `knownTool`.
