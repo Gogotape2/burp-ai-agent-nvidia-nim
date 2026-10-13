@@ -19,9 +19,10 @@ import com.six2dez.burp.aiagent.util.TokenTracker
 import java.util.ServiceLoader
 import java.util.concurrent.ConcurrentHashMap
 
-// TooManyFunctions: Phase 29 / D-08 added isRegistered and resolve, the registry's lookup API, which
-// took it from 10 to 12 functions; splitting the lookup off the class that owns the map would not
-// make either part simpler. Suppressed locally because ADR-17 forbids new baseline entries.
+// TooManyFunctions: Phase 29 / D-08 added isRegistered and resolve, the registry's lookup API; splitting
+// the lookup off the class that owns the map would not make either part simpler. Phase 31 / D-14 moved
+// the drop-in loader's two functions to src/full and added guardedSource, so detekt counts 14 (was 15)
+// against its threshold of 11. Suppressed locally because ADR-17 forbids new baseline entries.
 @Suppress("TooManyFunctions")
 class BackendRegistry(
     private val api: MontoyaApi,
