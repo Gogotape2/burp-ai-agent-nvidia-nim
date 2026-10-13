@@ -2,6 +2,8 @@ package com.six2dez.burp.aiagent.ui
 
 import burp.api.montoya.MontoyaApi
 import burp.api.montoya.core.BurpSuiteEdition
+import com.six2dez.burp.aiagent.agents.BundledProfileToolNamesTest.Companion.GENERIC_TOOL_IDS
+import com.six2dez.burp.aiagent.agents.BundledProfileToolNamesTest.Companion.NATIVE_IDS
 import com.six2dez.burp.aiagent.mcp.McpRequestLimiter
 import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.mcp.McpToolContext
@@ -51,7 +53,7 @@ class StoreToolSurfaceTest {
     @Test
     fun genericIdsResolveToTheFailClosedTierAndAreUnknownToTheExecutor() {
         val context = unsafeOnContext()
-        GENERIC_IDS.forEach { id ->
+        GENERIC_TOOL_IDS.forEach { id ->
             assertEquals(SecTier.CONFIRM_EACH, ToolApprovalGate.tierFor(id), "tier of $id")
         }
         listOf("http1_request", "intruder", "user_options_set").forEach { id ->
@@ -70,7 +72,7 @@ class StoreToolSurfaceTest {
 
     @Test
     fun everyToggleOffOffersNoTool() {
-        val allOff = unsafeOnContext().copy(toolToggles = (NATIVE_IDS + GENERIC_IDS).associateWith { false })
+        val allOff = unsafeOnContext().copy(toolToggles = (NATIVE_IDS + GENERIC_TOOL_IDS).associateWith { false })
 
         assertEquals(emptyList<String>(), ChatToolSurface.offeredChatTools(allOff).map { it.id })
         assertEquals(NATIVE_IDS, ChatToolSurface.menuTools().map { it.id }.toSet(), "the menu still lists the tools, disabled")
@@ -93,7 +95,7 @@ class StoreToolSurfaceTest {
         assertEquals(NATIVE_IDS, ChatToolSurface.menuTools().map { it.id }.toSet(), "menu, $label")
         assertEquals(NATIVE_IDS, ChatToolSurface.offeredChatTools(context).map { it.id }.toSet(), "dialog, $label")
         assertEquals(NATIVE_IDS, preambleIds(context), "preamble, $label")
-        GENERIC_IDS.forEach { assertEquals(SecTier.CONFIRM_EACH, ToolApprovalGate.tierFor(it), "tier of $it, $label") }
+        GENERIC_TOOL_IDS.forEach { assertEquals(SecTier.CONFIRM_EACH, ToolApprovalGate.tierFor(it), "tier of $it, $label") }
     }
 
     private fun preambleIds(context: McpToolContext): Set<String> {
@@ -126,40 +128,13 @@ class StoreToolSurfaceTest {
             privacyMode = PrivacyMode.STRICT,
             determinismMode = false,
             hostSalt = "test-salt",
-            toolToggles = (NATIVE_IDS + GENERIC_IDS).associateWith { true },
+            toolToggles = (NATIVE_IDS + GENERIC_TOOL_IDS).associateWith { true },
             unsafeEnabled = true,
             unsafeTools = McpToolCatalog.unsafeToolIds(),
-            enabledUnsafeTools = GENERIC_IDS,
+            enabledUnsafeTools = GENERIC_TOOL_IDS,
             limiter = McpRequestLimiter(4),
             edition = BurpSuiteEdition.PROFESSIONAL,
             maxBodyBytes = 8192,
         )
-    }
-
-    private companion object {
-        val NATIVE_IDS =
-            setOf(
-                "status",
-                "issue_create",
-                "ai_analyze",
-                "ai_passive_scan",
-                "ai_findings_recent",
-                "redact_preview",
-                "ai_audit_query",
-                "ai_backends_list",
-            )
-
-        /** Generic tools of the full build; the shared, complete list arrives with the profile pin. */
-        val GENERIC_IDS =
-            setOf(
-                "http1_request",
-                "http2_request",
-                "intruder",
-                "intruder_prepare",
-                "project_options_set",
-                "user_options_set",
-                "proxy_http_history",
-                "scanner_issues",
-            )
     }
 }
