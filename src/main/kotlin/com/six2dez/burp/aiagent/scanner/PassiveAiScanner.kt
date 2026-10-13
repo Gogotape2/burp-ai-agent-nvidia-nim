@@ -255,15 +255,41 @@ class PassiveAiScanner(
         }
     }
 
+    /** Phase 31 / D-02: set by the first refusal of this extension load; never reset during the load. */
+    private val aiGateRefusalLogged = AtomicBoolean(false)
+
+    /**
+     * Phase 31 / D-02 — whether the injected AI access policy allows the backend this scanner would
+     * really run (the saved id, resolved the way the supervisor resolves it). Asked before any
+     * executor submit, so a refused item is skipped and dropped: it never reaches
+     * [ensureBackendRunning] or `startOrAttach`, nothing logs per item and nothing is retried later.
+     *
+     * RESEARCH Pitfall 5: this asks [AgentSupervisor.refusalForSavedBackend], which answers with no
+     * backend running. The running-backend check is false while the supervisor is idle, which let the
+     * first refused item reach `startOrAttach` and log per item.
+     *
+     * The first refusal of the load writes one Output line carrying the policy's refusal text; later
+     * refusals write nothing (the scanner panel shows the live paused state instead). The transport
+     * choke point (plan 31-01) still refuses any provider request that slips past this pre-check.
+     */
+    private fun aiGateOpen(settings: AgentSettings): Boolean {
+        val refusal = supervisor.refusalForSavedBackend(settings.preferredBackendId) ?: return true
+        if (aiGateRefusalLogged.compareAndSet(false, true)) {
+            api.logging().logToOutput("[PassiveAiScanner] Paused: $refusal")
+        }
+        return false
+    }
+
     /**
      * The AI half's gates for Burp Scanner check work: the scanner is on, the token budget is not
-     * paused and the AI access policy allows the running backend. Shared by [enqueueForScanCheck] and [recordScanCheckFindings].
+     * paused and the AI access policy allows the saved backend ([aiGateOpen]). Shared by
+     * [enqueueForScanCheck] and [recordScanCheckFindings].
      */
     private fun acceptsScanCheckWork(): Boolean =
         enabled.get() &&
             // CAP-04: no-op when paused (does NOT clear KB or flip enabled)
             !budgetPaused.get() &&
-            !supervisor.isBlockedByAiAccessPolicy()
+            aiGateOpen(getSettings())
 
     /**
      * Enqueues a request/response for asynchronous AI deep-analysis.
@@ -281,7 +307,7 @@ class PassiveAiScanner(
      * AuditResult (quick 261009-1ao): counter, Output line, knowledge-base signal, auto-queue,
      * `passive_ai_issue` audit record and findings buffer, once per new issue, consolidated on repeats.
      * Same gates as the AI half ([acceptsScanCheckWork]): nothing is recorded while the scanner is off,
-     * the token budget is paused or the AI access policy refuses the running backend.
+     * the token budget is paused or the AI access policy refuses the saved backend.
      *
      * Runs synchronously, before doCheck returns: the consolidation check reads the site map, and on the
      * executor it would race Burp adding the check's own, same-named issue and usually see it, dropping
@@ -322,6 +348,8 @@ class PassiveAiScanner(
             issuesFound = issuesFound.get(),
             lastAnalysisTime = lastAnalysisTime.get(),
             queueSize = 0, // Single-threaded executor
+            // Phase 31 / D-02: computed from the live policy on every refresh (local, no request).
+            aiGatePaused = enabled.get() && supervisor.refusalForSavedBackend(getSettings().preferredBackendId) != null,
         )
 
     fun getLastFindings(n: Int): List<PassiveAiFinding> {
@@ -379,6 +407,8 @@ class PassiveAiScanner(
             api.logging().logToOutput("[PassiveAiScanner] Manual scan skipped — token hard cap reached")
             return 0
         }
+        // Phase 31 / D-02: a refused manual scan queues nothing and is not retried later.
+        if (!aiGateOpen(getSettings())) return 0
 
         val total = requests.size
         manualScanTotal.set(total)

@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.ui
 
+import com.six2dez.burp.aiagent.scanner.PassiveAiScannerStatus
 import com.six2dez.burp.aiagent.scanner.PayloadRisk
 import com.six2dez.burp.aiagent.scanner.ScanMode
 import com.six2dez.burp.aiagent.scanner.applyOptimizationSettings
@@ -49,35 +50,54 @@ internal fun SettingsPanel.passiveAiScannerSection(): JPanel =
         tokenBudgetHardCapField = tokenBudgetHardCapField,
     ).build()
 
+/** Phase 31 / D-02: the scanner panel segment shown while a scanner is ON and the AI gate refuses it. */
+const val AI_GATE_PAUSED_TEXT = "Paused: Use AI is off"
+
+/**
+ * The passive scanner status line, pure so it can be tested without Swing. [lastTime] is the already
+ * formatted last-analysis time ("Never" when nothing ran). While the scanner is ON and
+ * [PassiveAiScannerStatus.aiGatePaused] is set, [AI_GATE_PAUSED_TEXT] follows the ON marker; the rest
+ * of the line is unchanged.
+ */
+internal fun passiveAiStatusText(
+    status: PassiveAiScannerStatus,
+    manualInProgress: Boolean,
+    manualCompleted: Int,
+    manualTotal: Int,
+    lastTime: String,
+): String =
+    buildString {
+        if (manualInProgress) {
+            append("Manual scan: $manualCompleted/$manualTotal | ")
+        }
+        if (status.enabled) {
+            append("Passive: ON | ")
+            if (status.aiGatePaused) {
+                append("$AI_GATE_PAUSED_TEXT | ")
+            }
+            append("Analyzed: ${status.requestsAnalyzed} | Issues: ${status.issuesFound} | Last: $lastTime")
+        } else {
+            append("Passive: OFF")
+            if (!manualInProgress) {
+                append(" | Total issues: ${status.issuesFound}")
+            }
+        }
+    }
+
 internal fun SettingsPanel.refreshPassiveAiStatus() {
     val status = passiveAiScanner.getStatus()
     val (manualInProgress, manualCompleted, manualTotal) = passiveAiScanner.getManualScanProgress()
-
-    val statusText =
-        buildString {
-            if (manualInProgress) {
-                append("Manual scan: $manualCompleted/$manualTotal | ")
-            }
-            if (status.enabled) {
-                val lastTime =
-                    if (status.lastAnalysisTime > 0) {
-                        val formatter =
-                            DateTimeFormatter
-                                .ofPattern("HH:mm:ss")
-                                .withZone(ZoneId.systemDefault())
-                        formatter.format(Instant.ofEpochMilli(status.lastAnalysisTime))
-                    } else {
-                        "Never"
-                    }
-                append("Passive: ON | Analyzed: ${status.requestsAnalyzed} | Issues: ${status.issuesFound} | Last: $lastTime")
-            } else {
-                append("Passive: OFF")
-                if (!manualInProgress) {
-                    append(" | Total issues: ${status.issuesFound}")
-                }
-            }
+    val lastTime =
+        if (status.lastAnalysisTime > 0) {
+            val formatter =
+                DateTimeFormatter
+                    .ofPattern("HH:mm:ss")
+                    .withZone(ZoneId.systemDefault())
+            formatter.format(Instant.ofEpochMilli(status.lastAnalysisTime))
+        } else {
+            "Never"
         }
-    passiveAiStatusLabel.text = statusText
+    passiveAiStatusLabel.text = passiveAiStatusText(status, manualInProgress, manualCompleted, manualTotal, lastTime)
 }
 
 internal fun SettingsPanel.applyPassiveAiSettings() {

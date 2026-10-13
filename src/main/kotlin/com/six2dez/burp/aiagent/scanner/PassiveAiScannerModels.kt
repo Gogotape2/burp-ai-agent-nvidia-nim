@@ -17,6 +17,8 @@ data class PassiveAiScannerStatus(
     val issuesFound: Int,
     val lastAnalysisTime: Long,
     val queueSize: Int,
+    /** Phase 31 / D-02: the scanner is on but the AI access policy refuses its saved backend. */
+    val aiGatePaused: Boolean = false,
 )
 
 internal data class LocalFinding(
