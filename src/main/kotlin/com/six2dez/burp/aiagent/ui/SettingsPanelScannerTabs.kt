@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.ui
 
+import com.six2dez.burp.aiagent.scanner.ActiveScannerStatus
 import com.six2dez.burp.aiagent.scanner.PassiveAiScannerStatus
 import com.six2dez.burp.aiagent.scanner.PayloadRisk
 import com.six2dez.burp.aiagent.scanner.ScanMode
@@ -201,29 +202,30 @@ internal fun SettingsPanel.updateActiveRiskDescription() {
         }
 }
 
-internal fun SettingsPanel.refreshActiveAiStatus() {
-    val status = activeAiScanner.getStatus()
-    val statusText =
-        buildString {
-            if (status.enabled) {
-                append("Active: ON")
-                if (status.scanning) {
-                    append(" | Scanning")
-                    status.currentTarget?.let { target ->
-                        append(" (${target.take(40)}...)")
-                    }
-                }
-                append(" | Queue: ${status.queueSize}")
-                append(" | Scans: ${status.scansCompleted}")
-                append(" | Confirmed: ${status.vulnsConfirmed}")
-            } else {
-                append("Active: OFF")
-                if (status.vulnsConfirmed > 0) {
-                    append(" | Confirmed: ${status.vulnsConfirmed}")
+/** The active scanner status line, pure so it can be tested without Swing. */
+internal fun activeAiStatusText(status: ActiveScannerStatus): String =
+    buildString {
+        if (status.enabled) {
+            append("Active: ON")
+            if (status.scanning) {
+                append(" | Scanning")
+                status.currentTarget?.let { target ->
+                    append(" (${target.take(40)}...)")
                 }
             }
+            append(" | Queue: ${status.queueSize}")
+            append(" | Scans: ${status.scansCompleted}")
+            append(" | Confirmed: ${status.vulnsConfirmed}")
+        } else {
+            append("Active: OFF")
+            if (status.vulnsConfirmed > 0) {
+                append(" | Confirmed: ${status.vulnsConfirmed}")
+            }
         }
-    activeAiStatusLabel.text = statusText
+    }
+
+internal fun SettingsPanel.refreshActiveAiStatus() {
+    activeAiStatusLabel.text = activeAiStatusText(activeAiScanner.getStatus())
 }
 
 internal fun SettingsPanel.applyActiveAiSettings() {

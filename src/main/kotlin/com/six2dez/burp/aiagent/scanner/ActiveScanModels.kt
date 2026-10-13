@@ -392,4 +392,6 @@ data class ActiveScannerStatus(
     val scansCompleted: Int,
     val vulnsConfirmed: Int,
     val currentTarget: String?,
+    /** Phase 31 / D-02: the scanner is on but the AI access policy refuses its saved backend. */
+    val aiGatePaused: Boolean = false,
 )
