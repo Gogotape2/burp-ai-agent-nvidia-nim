@@ -12,10 +12,10 @@ import com.six2dez.burp.aiagent.backends.openai.OpenAiCompatibleBackendFactory
 import com.six2dez.burp.aiagent.backends.perplexity.PerplexityBackendFactory
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.AgentSettingsRepository
+import com.six2dez.burp.aiagent.spi.ExternalBackendSource
 import com.six2dez.burp.aiagent.spi.PluginSettingsStore
+import com.six2dez.burp.aiagent.spi.Plugins
 import com.six2dez.burp.aiagent.util.TokenTracker
-import java.io.File
-import java.net.URLClassLoader
 import java.util.ServiceLoader
 import java.util.concurrent.ConcurrentHashMap
 
@@ -28,9 +28,6 @@ class BackendRegistry(
 ) {
     private val backends = ConcurrentHashMap<String, AiBackend>()
     private val availabilityCache = ConcurrentHashMap<Pair<String, Int>, Boolean>()
-    private var externalClassLoader: URLClassLoader? = null
-
-    private val externalBackendDir = File(System.getProperty("user.home"), ".burp-ai-agent/backends").also { it.mkdirs() }
 
     // BUG-69-01: Burp's HTTP transport for HTTP backends' health checks. The registry owns it so
     // reload() (the Settings save path) re-applies it to the freshly created instances. Phase 31 /
@@ -46,6 +43,12 @@ class BackendRegistry(
     // declared above `init` for the same reason.
     @Volatile
     private var pluginSettings: PluginSettingsStore? = null
+
+    // Phase 31 / D-14 (WR-05, ADR-18 OQ8): sources of backends loaded from outside the extension JAR.
+    // Only the full build registers one, the drop-in loader (src/full); the store classpath has no
+    // provider, so the store build never creates, lists or loads a drop-in directory. Declared above
+    // `init` for the same declaration-order reason as the HTTP transport.
+    private val externalSources: List<ExternalBackendSource> = Plugins.load(ExternalBackendSource::class.java)
 
     init {
         reload()
@@ -69,7 +72,6 @@ class BackendRegistry(
     fun reload() {
         backends.clear()
         availabilityCache.clear()
-        closeExternalClassLoader()
 
         // Built-ins (same extension JAR). Pass the extension's classloader explicitly — Burp loads
         // each extension under its own classloader, so the default `Thread.currentThread()
@@ -110,8 +112,20 @@ class BackendRegistry(
             api.logging().logToOutput("Burp AI backend not available: ${e.message}")
         }
 
-        // Optional drop-in backend JARs
-        loadExternalBackendJars()
+        // Phase 31 / D-14: backends from outside the extension JAR, after the built-ins and Burp AI as in
+        // 1.0.1. Each source first releases what its previous load opened, so repeated Settings saves do
+        // not leak class loaders. None is registered in the store build.
+        externalSources.forEach { source ->
+            guardedSource(source) {
+                source.close()
+                source
+                    .load(
+                        parent = this::class.java.classLoader,
+                        log = { api.logging().logToOutput(it) },
+                        logError = { api.logging().logToError(it) },
+                    ).forEach { b -> backends[b.id] = b }
+            }
+        }
 
         applyHttpTransport()
         applyPluginSettings()
@@ -210,7 +224,7 @@ class BackendRegistry(
         }
         backends.clear()
         availabilityCache.clear()
-        closeExternalClassLoader()
+        externalSources.forEach { source -> guardedSource(source) { source.close() } }
         HttpBackendSupport.shutdownSharedClients()
     }
 
@@ -232,34 +246,17 @@ class BackendRegistry(
         }
     }
 
-    private fun loadExternalBackendJars() {
-        val jars = externalBackendDir.listFiles { f -> f.isFile && f.extension.lowercase() == "jar" }?.toList().orEmpty()
-        if (jars.isEmpty()) return
-
-        val cl = URLClassLoader(jars.map { it.toURI().toURL() }.toTypedArray(), this::class.java.classLoader)
+    // TooGenericExceptionCaught: an external source is plug-in code and may throw anything; one broken
+    // source must not abort a reload or an unload, and the built-in backends stay registered.
+    @Suppress("TooGenericExceptionCaught")
+    private fun guardedSource(
+        source: ExternalBackendSource,
+        action: () -> Unit,
+    ) {
         try {
-            ServiceLoader.load(AiBackendFactory::class.java, cl).forEach { f ->
-                val b = f.create()
-                backends[b.id] = b
-            }
-            externalClassLoader = cl
-            api.logging().logToOutput("Loaded external backend JARs: ${jars.joinToString { it.name }}")
+            action()
         } catch (e: Exception) {
-            try {
-                cl.close()
-            } catch (_: Exception) {
-            }
-            api.logging().logToError("Failed loading external backend JARs: ${e.message}")
-        }
-    }
-
-    private fun closeExternalClassLoader() {
-        val cl = externalClassLoader ?: return
-        externalClassLoader = null
-        try {
-            cl.close()
-        } catch (e: Exception) {
-            api.logging().logToError("Failed closing backend classloader: ${e.message}")
+            api.logging().logToError("External backend source ${source.javaClass.name} failed: ${e.message}")
         }
     }
 }
