@@ -1,4 +1,8 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.result.ResolvedComponentResult
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
+import org.gradle.api.artifacts.result.UnresolvedDependencyResult
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
@@ -43,6 +47,16 @@ dependencies {
     implementation("io.modelcontextprotocol:kotlin-sdk:0.5.0") {
         exclude(group = "io.ktor", module = "ktor-client-cio")
         exclude(group = "io.ktor", module = "ktor-server-cio")
+    }
+    // Phase 30 / CI-02 (review finding CR-01): the SDK's ktor-server-websockets 3.0.2 requests
+    // ktor-websocket-serialization 3.0.2. In the full build ktor-client-core 3.1.3 lifts it to 3.1.3, but the
+    // store classpath, which has had no Ktor client since NET-02, kept 3.0.2, so bom.json named a version the
+    // BApp Store JAR did not ship. These constraints give both classpaths 3.1.3, the version 1.0.1 shipped.
+    // storeJarContentTest fails, naming the module, if any store module resolves differently in
+    // sbomSourceConfiguration.
+    constraints {
+        implementation("io.ktor:ktor-websocket-serialization:3.1.3")
+        implementation("io.ktor:ktor-websocket-serialization-jvm:3.1.3")
     }
     implementation("io.ktor:ktor-server-core:3.1.3")
     implementation("io.ktor:ktor-server-netty:3.1.3")
@@ -123,6 +137,55 @@ abstract class StoreJarInspectionArgs : CommandLineArgumentProvider {
             "-Dburp.aiagent.storeJar=${storeJar.get().asFile.absolutePath}",
             "-Dburp.aiagent.fullClassDirs=" + fullClassDirs.files.joinToString(File.pathSeparator) { it.absolutePath },
         )
+}
+
+// Phase 30 / CI-02 (review finding CR-01): the resolved module lists storeJarContentTest compares, handed to
+// its JVM as system properties. The release publishes one bom.json for both JARs, generated from the full
+// runtime classpath. Gradle resolves each configuration's conflicts on its own, so extendsFrom never made the
+// two classpaths agree: the store classpath kept ktor-websocket-serialization 3.0.2 while the SBOM listed
+// 3.1.3. The check therefore compares the store classpath with the SBOM source classpath module by module.
+// Both resolution results are @Input values, so a dependency change re-runs the check instead of being
+// served from cache, and they are configuration-cache safe (the planner's spike stored and reused the entry).
+abstract class StoreSbomAlignmentArgs : CommandLineArgumentProvider {
+    @get:Input
+    abstract val storeClasspath: Property<ResolvedComponentResult>
+
+    @get:Input
+    abstract val sbomClasspath: Property<ResolvedComponentResult>
+
+    @get:Input
+    abstract val sbomConfiguration: Property<String>
+
+    override fun asArguments(): Iterable<String> =
+        listOf(
+            "-Dburp.aiagent.storeModules=" + modules(storeClasspath.get()),
+            "-Dburp.aiagent.sbomModules=" + modules(sbomClasspath.get()),
+            "-Dburp.aiagent.sbomConfiguration=" + sbomConfiguration.get(),
+        )
+
+    // Walks the whole graph breadth-first, transitive modules and platforms included, visiting each component
+    // once. A dependency that does not resolve fails the build: it must never vanish from the list.
+    private fun modules(root: ResolvedComponentResult): String {
+        val seen = mutableSetOf(root.id)
+        val queue = ArrayDeque(listOf(root))
+        val found = mutableListOf<String>()
+        while (queue.isNotEmpty()) {
+            val component = queue.removeFirst()
+            val id = component.id
+            if (id is ModuleComponentIdentifier) found += "${id.group}:${id.module}:${id.version}"
+            component.dependencies.forEach { dependency ->
+                when (dependency) {
+                    is ResolvedDependencyResult -> {
+                        val selected = dependency.selected
+                        if (seen.add(selected.id)) queue.addLast(selected)
+                    }
+                    is UnresolvedDependencyResult ->
+                        throw GradleException("Unresolved dependency ${dependency.requested.displayName}")
+                }
+            }
+        }
+        return found.distinct().sorted().joinToString(",")
+    }
 }
 
 val generateBuildFlags by tasks.registering(GenerateBuildFlagsTask::class) {
@@ -514,10 +577,24 @@ val fullTest =
 //
 // The store JAR is referenced only through bappJar's archiveFile provider: BappManifestTest pins the store
 // file name to a single occurrence in this script, the archive-name setter inside bappJar.
+//
+// Phase 30 / CI-02 (CR-01): the same task also checks that sbomSourceConfiguration, the classpath bom.json is
+// generated from, resolves every module runtimeClasspath (what bappJar packages) holds at the same version.
+// It fails naming each module whose version differs or that the SBOM source lacks, so the release gate
+// catches a drift before cyclonedxBom runs. It compares Gradle's resolution results, never bom.json, because
+// cyclonedxBom is not configuration-cache compatible.
 // Run it locally with: ./gradlew bappJar storeJarContentTest
+
+// The one place that names the configuration bom.json is generated from: cyclonedxBom and the alignment
+// check in storeJarContentTest both read it, so the check always compares against the classpath bom.json
+// describes.
+val sbomSourceConfiguration = "fullRuntimeClasspath"
+
 val storeJarContentTest =
     tasks.register<Test>("storeJarContentTest") {
-        description = "Inspects the BApp Store JAR for full-only and CLI content (CI-01)."
+        description =
+            "Inspects the BApp Store JAR for full-only and CLI content and checks that bom.json's source " +
+            "classpath resolves every store module at the store JAR's version (CI-01, CI-02)."
         group = "verification"
         useJUnitPlatform()
         val testSourceSet = sourceSets.test.get()
@@ -529,6 +606,13 @@ val storeJarContentTest =
             objects.newInstance<StoreJarInspectionArgs>().apply {
                 storeJar.set(bappJar.flatMap { it.archiveFile })
                 fullClassDirs.from(fullSourceSet.output.classesDirs)
+            },
+        )
+        jvmArgumentProviders.add(
+            objects.newInstance<StoreSbomAlignmentArgs>().apply {
+                storeClasspath.set(configurations.runtimeClasspath.flatMap { it.incoming.resolutionResult.rootComponent })
+                sbomClasspath.set(configurations.named(sbomSourceConfiguration).flatMap { it.incoming.resolutionResult.rootComponent })
+                sbomConfiguration.set(sbomSourceConfiguration)
             },
         )
         filter { includeTestsMatching("*StoreJarContentTest") }
@@ -820,10 +904,14 @@ tasks.named("check") {
 }
 
 tasks.named<org.cyclonedx.gradle.CycloneDxTask>("cyclonedxBom") {
-    // The release publishes both JARs with one SBOM (Phase 30 / CI-02, SBOM decision):
-    // fullRuntimeClasspath extends the store runtime classpath (fullImplementation and fullRuntimeOnly
-    // extend implementation and runtimeOnly), so this bom.json lists every dependency of both assets.
-    includeConfigs.set(listOf("fullRuntimeClasspath"))
+    // The release publishes both JARs with one SBOM (Phase 30 / CI-02, SBOM decision), generated from
+    // sbomSourceConfiguration. That classpath holds every module bappJar packages plus the full-only ones.
+    // Inheritance alone does not make the versions match: each configuration resolves its conflicts on its
+    // own, which is how CR-01 found ktor-websocket-serialization at 3.0.2 in the BApp Store JAR and 3.1.3
+    // here. The claim that bom.json lists every BApp Store dependency at the version that JAR packages
+    // therefore rests on the ktor-websocket-serialization constraints in the dependencies block and on
+    // storeJarContentTest's alignment check, which fails on any difference.
+    includeConfigs.set(listOf(sbomSourceConfiguration))
     outputFormat.set("json")
     outputName.set("bom")
     destination.set(
