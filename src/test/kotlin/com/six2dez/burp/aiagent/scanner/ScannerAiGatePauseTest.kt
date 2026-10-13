@@ -4,8 +4,13 @@ import burp.api.montoya.MontoyaApi
 import burp.api.montoya.http.message.HttpRequestResponse
 import burp.api.montoya.http.message.requests.HttpRequest
 import burp.api.montoya.logging.Logging
+import com.six2dez.burp.aiagent.InMemoryPreferences
 import com.six2dez.burp.aiagent.TestSettings
 import com.six2dez.burp.aiagent.audit.AuditLogger
+import com.six2dez.burp.aiagent.backends.BackendRegistry
+import com.six2dez.burp.aiagent.backends.http.RecordingMontoya
+import com.six2dez.burp.aiagent.config.AgentSettings
+import com.six2dez.burp.aiagent.spi.StoreAiAccessPolicy
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -41,11 +46,18 @@ class ScannerAiGatePauseTest {
         }
     private val supervisor = mock<AgentSupervisor>()
     private val passiveScanners = mutableListOf<PassiveAiScanner>()
+    private val activeScanners = mutableListOf<ActiveAiScanner>()
+    private val closeables = mutableListOf<AutoCloseable>()
 
     @AfterEach
     fun tearDown() {
         passiveScanners.forEach { it.shutdown() }
         passiveScanners.clear()
+        // Shut every ActiveAiScanner down (TargetTrafficTlsTest pattern): each one owns worker pools.
+        activeScanners.forEach { it.shutdown() }
+        activeScanners.clear()
+        closeables.asReversed().forEach { it.close() }
+        closeables.clear()
     }
 
     // --- Passive scanner ---------------------------------------------------------------------------
@@ -113,6 +125,72 @@ class ScannerAiGatePauseTest {
         assertTrue(outputLines().none { it.contains("Paused: ") }, "no paused line while the policy allows the backend")
     }
 
+    // --- Active scanner ----------------------------------------------------------------------------
+
+    @Test
+    fun twentyRefusedActiveTargetsQueueNothingAndWriteOneOutputLine() {
+        refuseSavedBackend()
+        val scanner = activeScanner(api, supervisor) { TestSettings.baselineSettings("lmstudio") }
+        scanner.setEnabled(true)
+
+        repeat(20) { scanner.queueTarget(target("https://target.example/active/$it")) }
+
+        assertEquals(0, scanner.getStatus().queueSize, "a refused target is dropped, never queued")
+        assertTrue(outputLines().none { it.startsWith("[ActiveAiScanner] Queued:") }, "no target was queued")
+        val refusalLines = outputLines().filter { it.contains(REFUSAL) }
+        assertEquals(1, refusalLines.size, "exactly one Output line for 20 refused targets: $refusalLines")
+        assertTrue(refusalLines.single().startsWith("[ActiveAiScanner] Paused: "), refusalLines.single())
+        assertTrue(scanner.getStatus().aiGatePaused, "an ON active scanner the policy refuses is paused")
+    }
+
+    @Test
+    fun activeStatusIsPausedOnlyWhileOnAndRefused() {
+        refuseSavedBackend()
+        val scanner = activeScanner(api, supervisor) { TestSettings.baselineSettings("lmstudio") }
+        assertFalse(scanner.getStatus().aiGatePaused, "an OFF scanner is not shown as paused")
+
+        scanner.setEnabled(true)
+        assertTrue(scanner.getStatus().aiGatePaused)
+
+        allowSavedBackend()
+        assertFalse(scanner.getStatus().aiGatePaused, "the paused state follows the live policy")
+    }
+
+    // --- SC1 scanner rows over a real AgentSupervisor ------------------------------------------------
+
+    @Test
+    fun refusedPassiveScannerSendsNoProviderRequestOverARealSupervisor() {
+        val (recording, realSupervisor) = realStoreSupervisor()
+        val scanner = PassiveAiScanner(recording.api, realSupervisor, mock<AuditLogger>()) { realSettings() }.also { passiveScanners += it }
+        scanner.setEnabled(true)
+
+        repeat(5) { scanner.enqueueForScanCheck(requestResponse("https://target.example/sc1/passive/$it")) }
+        val queued = scanner.manualScan(List(5) { requestResponse("https://target.example/sc1/manual/$it") })
+        drain(scanner)
+
+        assertEquals(0, queued)
+        assertEquals(0, recording.sendCount(), "zero provider requests while Use AI is off")
+        assertEquals("Idle", realSupervisor.status().state, "no backend was started")
+        assertTrue(scanner.getStatus().aiGatePaused)
+    }
+
+    @Test
+    fun refusedActiveScannerSendsNoProviderRequestOverARealSupervisor() {
+        val (recording, realSupervisor) = realStoreSupervisor()
+        val scanner = activeScanner(recording.api, realSupervisor) { realSettings() }
+        scanner.setEnabled(true)
+
+        repeat(5) { scanner.queueTarget(target("https://target.example/sc1/active/$it")) }
+        val queueSize = scanner.getStatus().queueSize
+        val paused = scanner.getStatus().aiGatePaused
+        scanner.shutdown() // waits for any in-flight work before counting
+
+        assertEquals(0, queueSize, "a refused target is dropped, never queued")
+        assertTrue(paused)
+        assertEquals(0, recording.sendCount(), "zero requests of any kind while Use AI is off")
+        assertEquals("Idle", realSupervisor.status().state, "no backend was started")
+    }
+
     // --- Helpers -----------------------------------------------------------------------------------
 
     private fun refuseSavedBackend() {
@@ -126,6 +204,41 @@ class ScannerAiGatePauseTest {
     private fun passiveScanner(): PassiveAiScanner =
         PassiveAiScanner(api, supervisor, mock<AuditLogger>()) { TestSettings.baselineSettings("lmstudio") }
             .also { passiveScanners += it }
+
+    private fun activeScanner(
+        montoya: MontoyaApi,
+        agentSupervisor: AgentSupervisor,
+        settings: () -> AgentSettings,
+    ): ActiveAiScanner =
+        ActiveAiScanner(montoya, agentSupervisor, mock<AuditLogger>(), settings).also {
+            // The policy, not the scope check, must be what stops the target.
+            it.scopeOnly = false
+            it.requestDelayMs = 0
+            activeScanners += it
+        }
+
+    /** RecordingMontoya ("Use AI" off), a real BackendRegistry and a real supervisor under the store policy. */
+    private fun realStoreSupervisor(): Pair<RecordingMontoya, AgentSupervisor> {
+        val recording = RecordingMontoya().also { closeables += it }
+        whenever(recording.api.persistence().preferences()).thenReturn(InMemoryPreferences())
+        val realSupervisor = AgentSupervisor(recording.api, BackendRegistry(recording.api), mock<AuditLogger>(), StoreAiAccessPolicy())
+        closeables += AutoCloseable { realSupervisor.shutdown() }
+        realSupervisor.applySettings(realSettings())
+        return recording to realSupervisor
+    }
+
+    private fun realSettings(): AgentSettings =
+        TestSettings.baselineSettings("lmstudio").copy(
+            lmStudioUrl = "http://127.0.0.1:1234",
+            lmStudioModel = "test-model",
+        )
+
+    private fun target(url: String): ActiveScanTarget =
+        ActiveScanTarget(
+            originalRequest = requestResponse(url),
+            injectionPoint = InjectionPoint(InjectionType.URL_PARAM, "id", "1"),
+            vulnHint = VulnHint(VulnClass.SQLI, 80, "test"),
+        )
 
     /** The scanner executor is single-threaded and FIFO: once this barrier ran, every earlier task ran. */
     private fun drain(scanner: PassiveAiScanner) {

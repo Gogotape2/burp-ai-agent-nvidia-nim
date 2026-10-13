@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.ui
 
+import com.six2dez.burp.aiagent.scanner.ActiveScannerStatus
 import com.six2dez.burp.aiagent.scanner.PassiveAiScannerStatus
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -45,6 +46,42 @@ class ScannerStatusTextTest {
         assertFalse(text.contains(AI_GATE_PAUSED_TEXT), text)
         assertEquals("Passive: OFF | Total issues: 2", text)
     }
+
+    @Test
+    fun pausedActiveScannerShowsThePausedSegmentRightAfterTheOnMarker() {
+        assertEquals(
+            "Active: ON | Paused: Use AI is off | Queue: 0 | Scans: 4 | Confirmed: 1",
+            activeAiStatusText(active(enabled = true, paused = true)),
+        )
+    }
+
+    @Test
+    fun unpausedActiveScannerKeepsTodaysFormat() {
+        assertEquals("Active: ON | Queue: 0 | Scans: 4 | Confirmed: 1", activeAiStatusText(active(enabled = true, paused = false)))
+        assertEquals(
+            "Active: ON | Scanning (https://target.example/a...) | Queue: 0 | Scans: 4 | Confirmed: 1",
+            activeAiStatusText(active(enabled = true, paused = false).copy(scanning = true, currentTarget = "https://target.example/a")),
+        )
+        assertEquals("Active: OFF | Confirmed: 1", activeAiStatusText(active(enabled = false, paused = false)))
+    }
+
+    @Test
+    fun anOffActiveScannerNeverShowsThePausedText() {
+        assertEquals("Active: OFF | Confirmed: 1", activeAiStatusText(active(enabled = false, paused = true)))
+    }
+
+    private fun active(
+        enabled: Boolean,
+        paused: Boolean,
+    ) = ActiveScannerStatus(
+        enabled = enabled,
+        queueSize = 0,
+        scanning = false,
+        scansCompleted = 4,
+        vulnsConfirmed = 1,
+        currentTarget = null,
+        aiGatePaused = paused,
+    )
 
     private fun passive(
         enabled: Boolean,
