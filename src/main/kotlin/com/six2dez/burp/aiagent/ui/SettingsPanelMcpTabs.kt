@@ -627,7 +627,8 @@ private data class McpNoticeItem(
 private fun SettingsPanel.mcpNoticeItems(): List<McpNoticeItem> {
     val selectedPrivacy = privacyMode.selectedItem as? PrivacyMode ?: PrivacyMode.STRICT
     val external = mcpExternal.isSelected
-    val unsafeEnabled = mcpUnsafe.isSelected
+    // Phase 31 / D-13 / Pitfall 8: a carried-over Unsafe value means nothing without unsafe tools.
+    val unsafeEnabled = mcpUnsafe.isSelected && McpToolCatalog.hasUnsafeTools()
     val tokenBlank = mcpToken.text.trim().isBlank()
     val hasAllowedOrigins = parseAllowedOriginsInput(mcpAllowedOrigins.text).isNotEmpty()
 

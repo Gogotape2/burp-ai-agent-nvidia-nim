@@ -68,18 +68,17 @@ class SafetySummaryTest {
     /** With unsafe tools present the level equals the 1.0.1 rule for every combination of flags. */
     @Test
     fun withUnsafeToolsEveryLevelMatchesTheOneZeroOneRule() {
-        var cases = 0
-        for (mcp in listOf(true, false)) {
-            for (external in listOf(true, false)) {
-                for (unsafe in listOf(true, false)) {
-                    for (privacy in PrivacyMode.entries) {
-                        val s = settings(mcp = mcp, external = external, unsafe = unsafe, privacy = privacy)
-                        assertEquals(legacyLevel(s), SafetySummary.safetyLevel(s, hasUnsafeTools = true), "Case $s")
-                        cases++
-                    }
+        // Every (mcp, external, unsafe) bit pattern crossed with every privacy mode.
+        val matrix =
+            (0 until 8).flatMap { bits ->
+                PrivacyMode.entries.map { privacy ->
+                    settings(mcp = bits and 1 != 0, external = bits and 2 != 0, unsafe = bits and 4 != 0, privacy = privacy)
                 }
             }
+        matrix.forEach { s ->
+            assertEquals(legacyLevel(s), SafetySummary.safetyLevel(s, hasUnsafeTools = true), "Case $s")
         }
+        val cases = matrix.size
         assertTrue(cases >= 24, "Anti-vacuity: the whole flag matrix ran.")
     }
 

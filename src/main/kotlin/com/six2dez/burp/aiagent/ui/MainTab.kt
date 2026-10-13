@@ -9,7 +9,7 @@ import com.six2dez.burp.aiagent.config.AgentSettingsRepository
 import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.context.ContextCapture
 import com.six2dez.burp.aiagent.mcp.McpSupervisor
-import com.six2dez.burp.aiagent.redact.PrivacyMode
+import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.scanner.ScanKnowledgeBase
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.components.DependencyBanner
@@ -848,40 +848,12 @@ class MainTab(
         // pill. Reading the applied snapshot also means this 1 Hz tick no longer re-runs every custom
         // pattern's SafeRegex probe on the EDT.
         val settings = settingsRepo.load()
-        val privacy = settings.privacyMode.name
-        val mcpExposure =
-            when {
-                !settings.mcpSettings.enabled -> "MCP off"
-                settings.mcpSettings.externalEnabled -> "MCP external"
-                else -> "MCP local"
-            }
-        val unsafe = if (settings.mcpSettings.unsafeEnabled) "Unsafe on" else "Unsafe off"
-        val scanners = "Passive ${if (settings.passiveAiEnabled) "on" else "off"} / Active ${if (settings.activeAiEnabled) "on" else "off"}"
-
-        val level =
-            when {
-                settings.mcpSettings.enabled &&
-                    settings.mcpSettings.externalEnabled &&
-                    settings.mcpSettings.unsafeEnabled ->
-                    com.six2dez.burp.aiagent.ui.components.SafetyIndicator.Level.RISK
-                settings.privacyMode == PrivacyMode.OFF && settings.mcpSettings.enabled ->
-                    com.six2dez.burp.aiagent.ui.components.SafetyIndicator.Level.RISK
-                settings.privacyMode == PrivacyMode.OFF ||
-                    settings.mcpSettings.externalEnabled ||
-                    settings.mcpSettings.unsafeEnabled ->
-                    com.six2dez.burp.aiagent.ui.components.SafetyIndicator.Level.WARN
-                else -> com.six2dez.burp.aiagent.ui.components.SafetyIndicator.Level.OK
-            }
-        // HTML tooltip so the four flags wrap onto separate lines instead of one long string.
-        val tooltip =
-            "<html><b>Safety</b><br>" +
-                "Privacy: $privacy<br>" +
-                "MCP: $mcpExposure<br>" +
-                unsafe +
-                "<br>" +
-                scanners +
-                "</html>"
-        safetyIndicator.setSummary(level, tooltip)
+        // Phase 31 / D-13: Unsafe counts only when the catalog has unsafe tools (data, not flavor).
+        val hasUnsafeTools = McpToolCatalog.hasUnsafeTools()
+        safetyIndicator.setSummary(
+            SafetySummary.safetyLevel(settings, hasUnsafeTools),
+            SafetySummary.tooltip(settings, hasUnsafeTools),
+        )
     }
 
     /**
