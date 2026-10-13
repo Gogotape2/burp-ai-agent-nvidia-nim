@@ -166,8 +166,7 @@ class BurpAiEgressTest {
     )
 
     // The production gate shape: the store policy applied to a live read of Use AI.
-    private fun storeGatedTransport(): MontoyaHttpTransport =
-        MontoyaHttpTransport(recording.api) { id -> StoreAiAccessPolicy().refusal(id, recording.aiEnabled.get()) }
+    private fun storeGatedTransport(): MontoyaHttpTransport = MontoyaHttpTransport(recording.api) { id -> StoreAiAccessPolicy().refusal(id, recording.aiEnabled.get()) }
 
     private fun send(transport: MontoyaHttpTransport?): SendResult {
         val connection =
