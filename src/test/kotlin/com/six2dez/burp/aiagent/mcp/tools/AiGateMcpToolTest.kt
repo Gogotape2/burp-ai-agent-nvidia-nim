@@ -16,10 +16,15 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 
 /**
- * Wave-0 stub tests for the AI gate on MCP tools.
- * aiAnalyze_returnsErrorWhenIsEnabledFalse and aiPassiveScan_returnsErrorWhenIsEnabledFalse
- * will fail red until Wave 2 implements the ai_analyze and ai_passive_scan handlers.
- * aiAnalyze_doesNotGateNonAiTool will fail red until Wave 2 implements redact_preview.
+ * The AI gate on MCP tools, seen through the chat `/tool` path ([McpToolExecutor.executeTool]).
+ *
+ * Phase 31 / D-03, D-16: the gate is the executor's, not the handlers'. A descriptor flagged
+ * `requiresBurpAi` (ai_analyze, ai_passive_scan) is refused before its handler runs whenever
+ * `AgentSupervisor.aiToolRefusal()` answers a refusal, and the refusal comes back as an MCP tool error
+ * carrying that text. The supervisor here is a mock, so the two gated tests stub `aiToolRefusal()` with
+ * the 1.0.1 text ([AgentSupervisor.AI_TOOLS_REQUIRE_BURP_AI]); McpAiToolRefusalTest drives a real
+ * supervisor and counts the provider requests. A tool that sends no AI request (redact_preview) is not
+ * gated.
  *
  * Every `executeTool` call below declares [ToolCallOrigin.UserSlashCommand]. These tests exercise the
  * EXECUTOR, not the SEC-06 gate: the origin is a declaration the type system requires (plan 22-07), not
@@ -33,6 +38,7 @@ class AiGateMcpToolTest {
         whenever(api.burpSuite().version().edition()).thenReturn(BurpSuiteEdition.PROFESSIONAL)
         val supervisor = mock<AgentSupervisor>()
         whenever(supervisor.isAiEnabled()).thenReturn(false)
+        whenever(supervisor.aiToolRefusal()).thenReturn(AgentSupervisor.AI_TOOLS_REQUIRE_BURP_AI)
 
         val context = buildContext(api, supervisor)
         val result = McpToolExecutor.executeTool("ai_analyze", """{"text":"test"}""", context, ToolCallOrigin.UserSlashCommand)
@@ -50,6 +56,7 @@ class AiGateMcpToolTest {
         whenever(api.burpSuite().version().edition()).thenReturn(BurpSuiteEdition.PROFESSIONAL)
         val supervisor = mock<AgentSupervisor>()
         whenever(supervisor.isAiEnabled()).thenReturn(false)
+        whenever(supervisor.aiToolRefusal()).thenReturn(AgentSupervisor.AI_TOOLS_REQUIRE_BURP_AI)
 
         val context = buildContext(api, supervisor)
         val result = McpToolExecutor.executeTool("ai_passive_scan", """{}""", context, ToolCallOrigin.UserSlashCommand)

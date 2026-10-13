@@ -2,6 +2,7 @@ package com.six2dez.burp.aiagent.mcp.tools
 
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.audit.Hashing
+import com.six2dez.burp.aiagent.backends.http.AiAccessRefusedException
 import com.six2dez.burp.aiagent.mcp.McpToolContext
 import io.modelcontextprotocol.kotlin.sdk.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.TextContent
@@ -104,6 +105,22 @@ internal fun runTool(
         )
         CallToolResult(
             content = listOf(TextContent(cleanMsg)),
+            isError = true,
+        )
+    } catch (e: AiAccessRefusedException) {
+        // Phase 31 / D-03: a policy outcome, not a failure. The text is the policy's own user-facing
+        // refusal, so it is returned verbatim (no sanitizing, no truncation) and no stack trace is logged.
+        emitToolTelemetry(
+            MCP_TOOL_EVENT_END,
+            baseTelemetry +
+                mapOf(
+                    "outcome" to "refused",
+                    "errorType" to "ai_access_refused",
+                    "durationMs" to elapsedMs(startedAtNanos),
+                ),
+        )
+        CallToolResult(
+            content = listOf(TextContent(e.message.orEmpty())),
             isError = true,
         )
     } catch (e: Exception) {

@@ -43,6 +43,11 @@ data class McpToolDescriptor(
     val defaultEnabled: Boolean,
     val proOnly: Boolean = false,
     val unsafeOnly: Boolean = false,
+    /**
+     * Phase 31 / D-16 — the tool sends AI requests and requires Burp's "Use AI" in every build, applied
+     * by the executor on top of the backend policy (`AgentSupervisor.aiToolRefusal`), not by the handler.
+     */
+    val requiresBurpAi: Boolean = false,
     // D-03: deliberately has NO default value. A default is how a new tool silently inherits a tier
     // nobody chose; the compile error at the catalog site is the control.
     val secTier: SecTier,

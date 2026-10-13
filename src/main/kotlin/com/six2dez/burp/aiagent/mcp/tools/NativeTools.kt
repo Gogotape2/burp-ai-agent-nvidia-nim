@@ -28,10 +28,6 @@ private const val AI_ANALYZE_TIMEOUT_SECONDS = 120L
 /** Per-finding cap on the detail text `ai_findings_recent` returns. */
 private const val FINDING_DETAIL_MAX_CHARS = 500
 
-private const val AI_UNAVAILABLE_MESSAGE =
-    "AI features unavailable: check that your Burp edition supports AI " +
-        "and the 'Use AI' toggle is enabled. Non-AI backends remain usable via the chat panel."
-
 private val statusHandler: ToolHandler =
     toolHandler(
         descriptor =
@@ -79,6 +75,8 @@ private val aiAnalyzeHandler: ToolHandler =
                 description = "Sends text to the active AI backend and returns the analysis result.",
                 category = "AI",
                 defaultEnabled = true,
+                // Phase 31 / D-16: the executor refuses the call before this handler runs while Use AI is off.
+                requiresBurpAi = true,
                 // CONFIRM_EACH while NOT unsafeOnly — D-01's independence claim made concrete: binding the trust boundary to unsafeOnly would leave this ungated.
                 secTier = SecTier.CONFIRM_EACH,
             ),
@@ -88,9 +86,6 @@ private val aiAnalyzeHandler: ToolHandler =
         val supervisor =
             context.supervisor
                 ?: return@toolHandler "AI tools not initialized."
-        if (!supervisor.isAiEnabled()) {
-            return@toolHandler AI_UNAVAILABLE_MESSAGE
-        }
         val responseBuffer = StringBuilder()
         val completionLatch = CountDownLatch(1)
         val errorRef = AtomicReference<String?>(null)
@@ -124,17 +119,16 @@ private val aiPassiveScanHandler: ToolHandler =
                 description = "Queues requests for AI passive security analysis and returns the count enqueued.",
                 category = "AI",
                 defaultEnabled = true,
+                // Phase 31 / D-16: the executor refuses the call before this handler runs while Use AI is off.
+                requiresBurpAi = true,
                 // CONFIRM_EACH while NOT unsafeOnly — D-01's independence claim made concrete: binding the trust boundary to unsafeOnly would leave this ungated.
                 secTier = SecTier.CONFIRM_EACH,
             ),
         schema = { AiPassiveScanInput::class.asInputSchema() },
     ) { args, context ->
         val input = decodeToolArgs<AiPassiveScanInput>(args)
-        val supervisor = context.supervisor
-        // B2 fix: check AI gate BEFORE passiveScanner null check
-        if (supervisor == null || !supervisor.isAiEnabled()) {
-            return@toolHandler AI_UNAVAILABLE_MESSAGE
-        }
+        // The AI gate itself is the executor's (requiresBurpAi above), applied before this body runs.
+        context.supervisor ?: return@toolHandler "AI tools not initialized."
         val scanner =
             context.passiveScanner
                 ?: return@toolHandler "Passive scanner not available."
