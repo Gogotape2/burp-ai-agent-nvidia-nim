@@ -269,10 +269,25 @@ internal fun SettingsPanel.privacySection(): JPanel =
         patternsFeedback = patternsFeedbackLabel,
     ).build()
 
-/** Phase 31 / D-12 (RED stub): replaced by the policy check in the GREEN commit. */
-internal fun SettingsPanel.connectionTestRefusal(backendId: String): String? = null
+/**
+ * Phase 31 / D-12: Test connection is a provider request; in the store build it is refused while Use AI
+ * is off, and the GATE-01 choke point stays the backstop. The policy judges the resolved backend, so an
+ * unregistered saved id (a CLI id carried over from a full install) is judged as burp-ai.
+ */
+internal fun SettingsPanel.connectionTestRefusal(backendId: String): String? = supervisor.aiAccessRefusal(backends.resolve(backendId))
 
 internal fun SettingsPanel.testBackendConnection(backendId: String) {
+    // D-12: asked on the EDT before any thread or request; a refusal shows the policy's own text.
+    val refusal = connectionTestRefusal(backendId)
+    if (refusal != null) {
+        JOptionPane.showMessageDialog(
+            dialogParentComponent(),
+            refusal,
+            "Backend health: $backendId",
+            JOptionPane.ERROR_MESSAGE,
+        )
+        return
+    }
     val settingsSnapshot = currentSettings()
     Thread {
         val result = backends.healthCheck(backendId, settingsSnapshot)
