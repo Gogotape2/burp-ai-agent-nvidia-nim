@@ -8,6 +8,7 @@ import com.six2dez.burp.aiagent.mcp.McpRequestLimiter
 import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.mcp.McpToolContext
 import com.six2dez.burp.aiagent.redact.PrivacyMode
+import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
 import com.six2dez.burp.aiagent.spi.StoreAiAccessPolicy
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import io.modelcontextprotocol.kotlin.sdk.CallToolResult
@@ -15,6 +16,7 @@ import io.modelcontextprotocol.kotlin.sdk.TextContent
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
@@ -35,11 +37,17 @@ class McpAiToolRefusalTest {
     private val recording = RecordingMontoya()
 
     init {
-        whenever(recording.api.burpSuite().version().edition()).thenReturn(BurpSuiteEdition.PROFESSIONAL)
+        whenever(
+            recording.api
+                .burpSuite()
+                .version()
+                .edition(),
+        ).thenReturn(BurpSuiteEdition.PROFESSIONAL)
     }
 
-    private val supervisor =
-        AgentSupervisor(recording.api, BackendRegistry(recording.api), mock<AuditLogger>(), StoreAiAccessPolicy())
+    private val registry = BackendRegistry(recording.api)
+
+    private val supervisor = AgentSupervisor(recording.api, registry, mock<AuditLogger>(), StoreAiAccessPolicy())
 
     private val storeRefusal: String = requireNotNull(StoreAiAccessPolicy().refusal("burp-ai", false))
 
@@ -73,9 +81,69 @@ class McpAiToolRefusalTest {
         assertNotEquals(AgentSupervisor.AI_TOOLS_REQUIRE_BURP_AI, textOf(result))
     }
 
+    @Test
+    fun aiPassiveScanWithUseAiOffIsRefusedBeforeTheScannerIsAsked() {
+        recording.aiEnabled.set(false)
+        val scanner = mock<PassiveAiScanner>()
+
+        val result = McpToolExecutor.executeToolResult("ai_passive_scan", "{}", context(passiveScanner = scanner))
+
+        assertEquals(true, result.isError, "a refused AI tool must be an MCP tool error")
+        assertEquals(storeRefusal, textOf(result), "the refusal text is the store policy's, verbatim")
+        verify(scanner, never()).manualScan(any(), any())
+        assertEquals(0, recording.sendCount(), "no provider request may leave Burp while Use AI is off")
+        verify(recording.api.logging(), never()).logToError(any<Throwable>())
+    }
+
+    @Test
+    fun theToolListIsTheSameWithUseAiOnAndOff() {
+        recording.aiEnabled.set(true)
+        val withUseAiOn = McpToolExecutor.describeTools(context(), includeSchemas = false)
+        recording.aiEnabled.set(false)
+        val withUseAiOff = McpToolExecutor.describeTools(context(), includeSchemas = false)
+
+        assertEquals(withUseAiOn, withUseAiOff, "D-03: the tool list must not change with Use AI")
+        AI_TOOL_IDS.forEach { id ->
+            assertTrue(withUseAiOff.lines().any { it.startsWith("- $id: ") }, "$id must stay listed while Use AI is off")
+        }
+    }
+
+    @Test
+    fun toolsThatSendNoAiRequestAreNotGatedByUseAi() {
+        recording.aiEnabled.set(false)
+        val calls =
+            mapOf(
+                "status" to "{}",
+                "redact_preview" to """{"text":"secret@example.com","mode":"STRICT"}""",
+                "ai_backends_list" to "{}",
+            )
+
+        calls.forEach { (tool, args) ->
+            val result = McpToolExecutor.executeToolResult(tool, args, context())
+            val text = textOf(result)
+            assertNotEquals(true, result.isError, "$tool must not be an MCP error while Use AI is off, got: $text")
+            assertNotEquals(storeRefusal, text, "$tool must not carry the AI refusal")
+            assertNotEquals(AgentSupervisor.AI_TOOLS_REQUIRE_BURP_AI, text, "$tool must not carry the AI refusal")
+        }
+    }
+
+    @Test
+    fun theGateIsReadOnEveryCallSoTurningUseAiOffRefusesTheNextCall() {
+        recording.aiEnabled.set(true)
+        val first = McpToolExecutor.executeToolResult("ai_analyze", """{"text":"x"}""", context())
+        assertNotEquals(storeRefusal, textOf(first), "with Use AI on the first call is not refused")
+
+        recording.aiEnabled.set(false)
+        val next = McpToolExecutor.executeToolResult("ai_analyze", """{"text":"x"}""", context())
+
+        assertEquals(true, next.isError, "D-04: the call after Use AI turns off is refused")
+        assertEquals(storeRefusal, textOf(next))
+        assertEquals(0, recording.sendCount(), "no provider request left Burp on either call")
+    }
+
     // --- Helpers ---------------------------------------------------------------------------------
 
-    private fun context(): McpToolContext =
+    private fun context(passiveScanner: PassiveAiScanner? = null): McpToolContext =
         McpToolContext(
             api = recording.api,
             privacyMode = PrivacyMode.STRICT,
@@ -89,8 +157,13 @@ class McpAiToolRefusalTest {
             edition = BurpSuiteEdition.PROFESSIONAL,
             maxBodyBytes = 8192,
             supervisor = supervisor,
+            passiveScanner = passiveScanner,
+            backendRegistry = registry,
         )
 
-    private fun textOf(result: CallToolResult): String =
-        result.content.filterIsInstance<TextContent>().joinToString("\n") { it.text.orEmpty() }
+    private fun textOf(result: CallToolResult): String = result.content.filterIsInstance<TextContent>().joinToString("\n") { it.text.orEmpty() }
+
+    private companion object {
+        val AI_TOOL_IDS = listOf("ai_analyze", "ai_passive_scan")
+    }
 }
