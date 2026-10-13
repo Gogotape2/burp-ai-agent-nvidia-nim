@@ -31,11 +31,27 @@ internal object StoreJarInspector {
     /** System property carrying the absolute path of the JAR fullJar writes (Phase 31 / NET-01, OkHttp check only). */
     const val FULL_JAR_PROPERTY = "burp.aiagent.fullJar"
 
-    /** OkHttp, Okio and MockWebServer path prefixes; neither JAR may hold an entry under them (Phase 31 / NET-01). */
-    val OKHTTP_PREFIXES: List<String> = emptyList()
+    /**
+     * OkHttp, Okio and MockWebServer path prefixes; neither JAR may hold an entry under them (Phase 31 / NET-01:
+     * OkHttp is a test-only dependency and every provider request goes through Burp's networking). Matched at
+     * the start of the entry name only, so a nested `.../okhttp3/...` path or a name that merely contains
+     * `okhttp` is not reported.
+     */
+    val OKHTTP_PREFIXES: List<String> =
+        listOf(
+            "okhttp3/",
+            "okio/",
+            "mockwebserver3/",
+            "META-INF/okhttp",
+            "META-INF/okio",
+            "META-INF/native-image/okhttp/",
+        )
 
-    /** The entries of [entries] under an [OKHTTP_PREFIXES] prefix, sorted. */
-    fun okHttpEntries(entries: List<String>): List<String> = emptyList()
+    /**
+     * The entries of [entries] under an [OKHTTP_PREFIXES] prefix, sorted. The full-JAR check uses this alone:
+     * the other store rules cannot apply to the full JAR, which legitimately holds full classes.
+     */
+    fun okHttpEntries(entries: List<String>): List<String> = entries.filter { entry -> OKHTTP_PREFIXES.any { entry.startsWith(it) } }.sorted()
 
     const val FACTORY_SERVICES_ENTRY = "META-INF/services/com.six2dez.burp.aiagent.backends.AiBackendFactory"
 
@@ -81,8 +97,9 @@ internal object StoreJarInspector {
 
     /**
      * Layer B3: libraries the store build does not ship. The whole Ktor client tree (the store JAR has no entry
-     * there), the Ktor server CIO engine, Ktor TLS and the MCP SDK client. `io/ktor/network/{selector,sockets,util}`
-     * stay allowed: the Netty-based store MCP server uses them.
+     * there), the Ktor server CIO engine, Ktor TLS, the MCP SDK client, and (Phase 31 / NET-01) OkHttp, Okio and
+     * MockWebServer through [OKHTTP_PREFIXES]. `io/ktor/network/{selector,sockets,util}` stay allowed: the
+     * Netty-based store MCP server uses them.
      */
     private val BUNDLED_LIBRARY_PREFIXES =
         listOf(
@@ -92,7 +109,7 @@ internal object StoreJarInspector {
             "io/modelcontextprotocol/kotlin/sdk/client/",
             "META-INF/ktor-client-",
             "META-INF/ktor-network-tls",
-        )
+        ) + OKHTTP_PREFIXES
 
     private const val OWN_SERVICES_PREFIX = "META-INF/services/com.six2dez."
     private const val KTOR_CLIENT_SERVICES_PREFIX = "META-INF/services/io.ktor.client."
@@ -104,7 +121,7 @@ internal object StoreJarInspector {
         DERIVED_FULL_CLASS("compiled from src/full; the store JAR packages src/main only"),
         FULL_ONLY_PACKAGE("inside a full-only package (full/, backends/cli/, mcp/external/, alerts/)"),
         FULL_ONLY_NAME("a full-only class name (generic MCP tools, external MCP client, auto-queue, CLI backend)"),
-        BUNDLED_LIBRARY("a library the store build does not ship (Ktor client or CIO, Ktor TLS, MCP SDK client)"),
+        BUNDLED_LIBRARY("a library the store build does not ship (Ktor client or CIO, Ktor TLS, MCP SDK client, OkHttp, Okio)"),
         SERVICES_FILE("a plug-in services file; the store JAR registers only the HTTP backend factories"),
         FACTORY_LIST("the AiBackendFactory services file must list exactly the six HTTP backend factories"),
     }

@@ -32,6 +32,12 @@ import kotlin.test.fail
  * [StoreSbomAlignment.SBOM_MODULES_PROPERTY]. [sbomSourceResolvesEveryStoreModuleAtTheStoreJarVersion] fails
  * naming every store module the SBOM source resolves to another version or lacks, and
  * [alignmentReadsBothResolvedClasspaths] proves both lists are the real, full classpaths.
+ *
+ * Phase 31 / NET-01 (ROADMAP SC3): OkHttp is a test-only dependency, so neither JAR ships OkHttp, Okio or
+ * MockWebServer. The store JAR is covered by the BUNDLED_LIBRARY rule and by [storeJarHoldsNoOkHttp]; the
+ * full JAR, whose path arrives as [StoreJarInspector.FULL_JAR_PROPERTY], is read only for
+ * [fullJarHoldsNoOkHttp]: the store rules cannot apply to it because it legitimately holds full classes. A
+ * missing property, a missing file or a full JAR that is not a real fullJar output fails, never passes.
  */
 class StoreJarContentTest {
     @Test
@@ -76,6 +82,27 @@ class StoreJarContentTest {
     }
 
     @Test
+    fun storeJarHoldsNoOkHttp() {
+        val jar = storeJar()
+        val found = StoreJarInspector.okHttpEntries(StoreJarInspector.entryNames(jar))
+        assertTrue(found.isEmpty(), okHttpReport(jar, found))
+    }
+
+    @Test
+    fun fullJarHoldsNoOkHttp() {
+        val jar = fullJar()
+        val names = StoreJarInspector.entryNames(jar)
+        // Non-vacuity: an empty or wrong file would hold no OkHttp entry either.
+        assertTrue(
+            names.size >= MIN_JAR_ENTRIES,
+            "${jar.absolutePath} has only ${names.size} entries; expected at least $MIN_JAR_ENTRIES. Run: $RUN_COMMAND",
+        )
+        assertTrue(FULL_PROFILE_CLASS in names, "${jar.absolutePath} does not contain $FULL_PROFILE_CLASS; it is not the full JAR")
+        val found = StoreJarInspector.okHttpEntries(names)
+        assertTrue(found.isEmpty(), okHttpReport(jar, found))
+    }
+
+    @Test
     fun sbomSourceResolvesEveryStoreModuleAtTheStoreJarVersion() {
         val store = StoreSbomAlignment.parse(requiredProperty(StoreSbomAlignment.STORE_MODULES_PROPERTY))
         val sbom = StoreSbomAlignment.parse(requiredProperty(StoreSbomAlignment.SBOM_MODULES_PROPERTY))
@@ -111,6 +138,21 @@ class StoreJarContentTest {
         if (!jar.isFile) fail("The store JAR ${jar.absolutePath} does not exist. Run: $RUN_COMMAND")
         return jar
     }
+
+    private fun fullJar(): File {
+        val jar = File(requiredProperty(StoreJarInspector.FULL_JAR_PROPERTY))
+        if (!jar.isFile) fail("The full JAR ${jar.absolutePath} does not exist. Run: $RUN_COMMAND")
+        return jar
+    }
+
+    private fun okHttpReport(
+        jar: File,
+        found: List<String>,
+    ): String =
+        "The JAR ships OkHttp, Okio or MockWebServer (Phase 31 / NET-01): ${jar.absolutePath}\n" +
+            "OkHttp is a test-only dependency; provider traffic goes only through Burp's networking. Keep " +
+            "com.squareup.okhttp3 on testImplementation; never allowlist an entry.\n" +
+            found.joinToString("\n") { "  $it" }
 
     private fun fullOnly(): Set<String> {
         val dirs =
@@ -165,7 +207,7 @@ class StoreJarContentTest {
     }
 
     private companion object {
-        const val RUN_COMMAND = "./gradlew bappJar storeJarContentTest"
+        const val RUN_COMMAND = "./gradlew bappJar fullJar storeJarContentTest"
         const val MIN_JAR_ENTRIES = 1_000
         const val MIN_FULL_ENTRIES = 100
         const val MIN_STORE_MODULES = 50

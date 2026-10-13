@@ -132,10 +132,17 @@ abstract class StoreJarInspectionArgs : CommandLineArgumentProvider {
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val fullClassDirs: ConfigurableFileCollection
 
+    // Phase 31 / NET-01: the full JAR, read only for the OkHttp check. An @InputFile like storeJar, so a
+    // rebuilt full JAR re-runs the inspection and the task always runs after fullJar has written it.
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val fullBuildJar: RegularFileProperty
+
     override fun asArguments(): Iterable<String> =
         listOf(
             "-Dburp.aiagent.storeJar=${storeJar.get().asFile.absolutePath}",
             "-Dburp.aiagent.fullClassDirs=" + fullClassDirs.files.joinToString(File.pathSeparator) { it.absolutePath },
+            "-Dburp.aiagent.fullJar=${fullBuildJar.get().asFile.absolutePath}",
         )
 }
 
@@ -563,8 +570,8 @@ val fullTest =
     }
 
 // Phase 30 / CI-01 (ADR-18: "checked by content, not by intent"): opens the JAR bappJar writes and fails,
-// naming each entry and its rule, on any full-only class, CLI backend, Ktor client / CIO or MCP SDK client
-// class, plug-in services file or CLI factory line. It automates the manual 29-17 check.
+// naming each entry and its rule, on any full-only class, CLI backend, Ktor client / CIO, MCP SDK client or
+// OkHttp / Okio class, plug-in services file or CLI factory line. It automates the manual 29-17 check.
 //
 // It is its own task rather than a class in `test` on purpose: inside plain `test`, every unit run would
 // have to build the store JAR first, and the coverage job's dry-run guard would find a packaging check in
@@ -578,12 +585,17 @@ val fullTest =
 // The store JAR is referenced only through bappJar's archiveFile provider: BappManifestTest pins the store
 // file name to a single occurrence in this script, the archive-name setter inside bappJar.
 //
+// Phase 31 / NET-01: the full JAR is read only for the OkHttp check; the store rules cannot apply to it
+// because it legitimately holds full classes. The task depends on fullJar as well as bappJar, and both JARs
+// are @InputFile inputs of StoreJarInspectionArgs, so it never reads a JAR still being written, under
+// --parallel too. The full JAR is referenced only through fullJar's archiveFile provider.
+//
 // Phase 30 / CI-02 (CR-01): the same task also checks that sbomSourceConfiguration, the classpath bom.json is
 // generated from, resolves every module runtimeClasspath (what bappJar packages) holds at the same version.
 // It fails naming each module whose version differs or that the SBOM source lacks, so the release gate
 // catches a drift before cyclonedxBom runs. It compares Gradle's resolution results, never bom.json, because
 // cyclonedxBom is not configuration-cache compatible.
-// Run it locally with: ./gradlew bappJar storeJarContentTest
+// Run it locally with: ./gradlew bappJar fullJar storeJarContentTest
 
 // The one place that names the configuration bom.json is generated from: cyclonedxBom and the alignment
 // check in storeJarContentTest both read it, so the check always compares against the classpath bom.json
@@ -594,7 +606,8 @@ val storeJarContentTest =
     tasks.register<Test>("storeJarContentTest") {
         description =
             "Inspects the BApp Store JAR for full-only and CLI content and checks that bom.json's source " +
-            "classpath resolves every store module at the store JAR's version (CI-01, CI-02)."
+            "classpath resolves every store module at the store JAR's version (CI-01, CI-02); checks both " +
+            "the store JAR and the full JAR hold no OkHttp or Okio (NET-01)."
         group = "verification"
         useJUnitPlatform()
         val testSourceSet = sourceSets.test.get()
@@ -602,10 +615,12 @@ val storeJarContentTest =
         classpath = testSourceSet.runtimeClasspath
         jvmArgs("-ea", "-Djava.awt.headless=true")
         dependsOn(bappJar)
+        dependsOn(fullJar)
         jvmArgumentProviders.add(
             objects.newInstance<StoreJarInspectionArgs>().apply {
                 storeJar.set(bappJar.flatMap { it.archiveFile })
                 fullClassDirs.from(fullSourceSet.output.classesDirs)
+                fullBuildJar.set(fullJar.flatMap { it.archiveFile })
             },
         )
         jvmArgumentProviders.add(
