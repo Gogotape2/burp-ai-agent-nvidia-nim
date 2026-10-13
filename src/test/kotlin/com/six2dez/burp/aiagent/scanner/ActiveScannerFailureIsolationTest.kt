@@ -47,9 +47,11 @@ import java.util.concurrent.atomic.AtomicInteger
  * `[ActiveAiScanner] Error: <exception message>` and carried no target identifier at all. The two
  * are asserted as a pair; only the second is a gate.
  *
- * **The fault-injection lever is the constructor's `getSettings` lambda.** It is called at exactly
- * one place — the first line of `executeScan`, which runs on a scan worker thread — and is NOT
- * called by `queueTarget`. No new production seam was added for this suite.
+ * **The fault-injection lever is the constructor's `getSettings` lambda, scoped to scan worker
+ * threads.** On a scan worker it is called at exactly one place — the first line of `executeScan`.
+ * Since Phase 31 / D-02 `queueTarget` (the AI-gate pre-check) and `getStatus` (the paused state) also
+ * read it, on the caller's thread, so the lever only throws when [onScanWorker] is true. No new
+ * production seam was added for this suite.
  *
  * **No test here compares an elapsed duration to a threshold.** Progress is awaited by polling a
  * monotone counter inside [assertTimeoutPreemptively], whose failure mode is a categorical timeout
@@ -91,7 +93,7 @@ class ActiveScannerFailureIsolationTest {
         val invocations = AtomicInteger(0)
         val live =
             newScanner {
-                if (invocations.incrementAndGet() == 1) error("induced settings failure on the first target scanned")
+                if (onScanWorker() && invocations.incrementAndGet() == 1) error("induced settings failure on the first target scanned")
                 TestSettings.baselineSettings()
             }
         live.setEnabled(true)
@@ -128,7 +130,7 @@ class ActiveScannerFailureIsolationTest {
      */
     @Test
     fun theFailureLogLineNamesTheTargetItFailedOn() {
-        val live = newScanner { error("induced settings failure") }
+        val live = newScanner { if (onScanWorker()) error("induced settings failure") else TestSettings.baselineSettings() }
         live.setEnabled(true)
 
         val failing = target(FAILING_TARGET_ID)
@@ -258,6 +260,9 @@ class ActiveScannerFailureIsolationTest {
         return created
     }
 
+    /** True on the scanner's scan worker threads, the only threads that run `executeScan`. */
+    private fun onScanWorker(): Boolean = Thread.currentThread().name.startsWith(SCAN_WORKER_THREAD_PREFIX)
+
     /** Blocks until [scanner] has recorded [expected] completed scans. Caller supplies the timeout. */
     private fun awaitScansCompleted(
         scanner: ActiveAiScanner,
@@ -301,6 +306,7 @@ class ActiveScannerFailureIsolationTest {
 
     private companion object {
         const val LOG_PREFIX = "[ActiveAiScanner] "
+        const val SCAN_WORKER_THREAD_PREFIX = "burp-ai-agent-scan-worker-"
         const val EXECUTOR_FIELD = "executor"
         const val PROCESS_QUEUE_METHOD = "processQueue"
         const val TARGET_COUNT = 3

@@ -202,11 +202,18 @@ internal fun SettingsPanel.updateActiveRiskDescription() {
         }
 }
 
-/** The active scanner status line, pure so it can be tested without Swing. */
+/**
+ * The active scanner status line, pure so it can be tested without Swing. While the scanner is ON and
+ * [ActiveScannerStatus.aiGatePaused] is set, [AI_GATE_PAUSED_TEXT] follows the ON marker; the rest of
+ * the line is unchanged.
+ */
 internal fun activeAiStatusText(status: ActiveScannerStatus): String =
     buildString {
         if (status.enabled) {
             append("Active: ON")
+            if (status.aiGatePaused) {
+                append(" | $AI_GATE_PAUSED_TEXT")
+            }
             if (status.scanning) {
                 append(" | Scanning")
                 status.currentTarget?.let { target ->

@@ -170,6 +170,30 @@ class ActiveAiScanner(
 
     fun isEnabled(): Boolean = enabled.get()
 
+    /** Phase 31 / D-02: set by the first refusal of this extension load; never reset during the load. */
+    private val aiGateRefusalLogged = AtomicBoolean(false)
+
+    /**
+     * Phase 31 / D-02 — whether the injected AI access policy allows the backend this scanner's AI
+     * calls would really use (the saved id, resolved the way the supervisor resolves it). Asked in
+     * [queueTarget] before anything is queued, so a refused target is dropped and never retried.
+     *
+     * RESEARCH Pitfall 5: [AgentSupervisor.refusalForSavedBackend] answers with no backend running;
+     * the running-backend check is false while the supervisor is idle and let refused work through.
+     *
+     * The first refusal of the load writes one Output line carrying the policy's refusal text; later
+     * refusals write nothing (the scanner panel shows the live paused state). The transport choke
+     * point (plan 31-01) still refuses any provider request that slips past this pre-check. Targets
+     * already in flight when Use AI turns off finish (D-04); nothing is cancelled here.
+     */
+    private fun aiGateOpen(settings: AgentSettings): Boolean {
+        val refusal = supervisor.refusalForSavedBackend(settings.preferredBackendId) ?: return true
+        if (aiGateRefusalLogged.compareAndSet(false, true)) {
+            api.logging().logToOutput("[ActiveAiScanner] Paused: $refusal")
+        }
+        return false
+    }
+
     fun getStatus(): ActiveScannerStatus =
         ActiveScannerStatus(
             enabled = enabled.get(),
@@ -178,6 +202,8 @@ class ActiveAiScanner(
             scansCompleted = scansCompleted.get(),
             vulnsConfirmed = vulnsConfirmed.get(),
             currentTarget = currentTarget.get(),
+            // Phase 31 / D-02: computed from the live policy on every refresh (local, no request).
+            aiGatePaused = enabled.get() && supervisor.refusalForSavedBackend(getSettings().preferredBackendId) != null,
         )
 
     fun getRecentConfirmations(n: Int): List<ActiveAiFinding> {
@@ -192,7 +218,7 @@ class ActiveAiScanner(
      * Called by PassiveAiScanner when it detects a potential vulnerability
      */
     fun queueTarget(target: ActiveScanTarget) {
-        if (!enabled.get() || supervisor.isBlockedByAiAccessPolicy()) return
+        if (!enabled.get() || !aiGateOpen(getSettings())) return
         if (target.vulnHint.vulnClass in ScanPolicy.PASSIVE_ONLY_VULN_CLASSES) return
         if (!ScanPolicy.isAllowedForMode(scanMode, target.vulnHint.vulnClass)) return
 
