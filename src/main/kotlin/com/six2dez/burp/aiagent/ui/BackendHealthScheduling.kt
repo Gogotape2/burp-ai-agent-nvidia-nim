@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.ui
 
 import com.six2dez.burp.aiagent.backends.AiBackend
+import com.six2dez.burp.aiagent.backends.HealthCheckResult
 import com.six2dez.burp.aiagent.backends.nvidia.NvidiaNimBackendFactory
 import com.six2dez.burp.aiagent.backends.perplexity.PerplexityBackendFactory
 import com.six2dez.burp.aiagent.config.AgentSettings
@@ -101,6 +102,10 @@ internal object BackendPill {
     const val UNCHECKED_LEGACY = "AI: ?"
 
     fun idleText(unpromptedAllowed: Boolean): String = if (unpromptedAllowed) UNCHECKED_LEGACY else NOT_CHECKED
+
+    fun isRefusal(error: Throwable?): Boolean = false
+
+    fun healthOfTurn(error: Throwable?): HealthCheckResult = HealthCheckResult.Healthy
 }
 
 /**

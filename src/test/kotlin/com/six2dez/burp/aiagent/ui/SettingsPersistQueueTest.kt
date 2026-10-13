@@ -540,6 +540,37 @@ class SettingsPersistQueueTest {
         )
     }
 
+    /**
+     * Phase 31 / D-01, D-10, T-31-13 — the pill reports "AI disabled in Burp" from a LOCAL policy read
+     * and refreshing it sends nothing.
+     *
+     * `requestHealthCheck` asks `supervisor.aiAccessRefusal(` before it can reach `healthGate.submit`,
+     * so a refused backend paints the disabled state and submits no check. `updateBackendBadge`, which
+     * the existing 1 Hz `mcpStatusTimer` calls, re-reads the policy and names no health check at all
+     * (Research OQ4: a local re-read is acceptable only because it sends no request).
+     */
+    @Test
+    fun thePillRefusalIsLocalAndTheBadgeRefreshSendsNothing() {
+        val source = codeLinesOf(MAIN_TAB_SOURCE).joinToString("\n")
+
+        val request = functionBodyOf(source, "private fun requestHealthCheck(")
+        val refusalAt = request.indexOf("supervisor.aiAccessRefusal(")
+        val submitAt = request.indexOf("healthGate.submit")
+        assertTrue(refusalAt >= 0, "requestHealthCheck must ask supervisor.aiAccessRefusal( first.")
+        assertTrue(submitAt >= 0, "requestHealthCheck must still submit through healthGate.")
+        assertTrue(refusalAt < submitAt, "requestHealthCheck must ask the policy before healthGate.submit.")
+        assertTrue(
+            request.indexOf("renderAiDisabled(") in (refusalAt + 1) until submitAt,
+            "A refusal must paint the disabled pill before (instead of) any submit.",
+        )
+
+        val badge = functionBodyOf(source, "private fun updateBackendBadge(")
+        assertTrue(badge.contains("supervisor.aiAccessRefusal("), "updateBackendBadge must re-read the policy locally; body:\n$badge")
+        listOf("requestHealthCheck(", "healthGate.", "backendHealth(", "healthCheck(").forEach { token ->
+            assertFalse(badge.contains(token), "updateBackendBadge must never name `$token`: it runs every second.")
+        }
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Fixture
     // ---------------------------------------------------------------------------------------------
