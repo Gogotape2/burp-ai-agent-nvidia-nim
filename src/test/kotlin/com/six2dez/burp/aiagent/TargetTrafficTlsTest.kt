@@ -12,7 +12,7 @@ import burp.api.montoya.internal.ObjectFactoryLocator
 import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPoint
 import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPointType
 import com.six2dez.burp.aiagent.audit.AuditLogger
-import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
+import com.six2dez.burp.aiagent.backends.http.TestTransports
 import com.six2dez.burp.aiagent.scanner.ActiveAiScanner
 import com.six2dez.burp.aiagent.scanner.ActiveScanResult
 import com.six2dez.burp.aiagent.scanner.ActiveScanTarget
@@ -171,7 +171,7 @@ class TargetTrafficTlsTest {
         val http = mock<Http> { on { sendRequest(any<HttpRequest>(), any<RequestOptions>()) } doReturn requestResponse }
         val api = mock<MontoyaApi> { on { http() } doReturn http }
 
-        MontoyaHttpTransport(api).post(PROVIDER_URL, emptyMap(), "{}")
+        TestTransports.open(api).post(PROVIDER_URL, emptyMap(), "{}")
 
         assertEquals(1, tlsOptionCalls(), "the AI-provider transport must keep requiring upstream TLS verification")
         verify(http).sendRequest(any<HttpRequest>(), eq(options))

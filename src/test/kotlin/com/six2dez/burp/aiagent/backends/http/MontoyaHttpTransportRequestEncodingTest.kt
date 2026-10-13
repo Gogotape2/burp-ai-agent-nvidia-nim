@@ -66,7 +66,7 @@ class MontoyaHttpTransportRequestEncodingTest {
     fun `post hands Burp the exact UTF-8 bytes and never the String body`() {
         val json = jacksonFixture()
 
-        MontoyaHttpTransport(api).post(URL, emptyMap(), json)
+        TestTransports.open(api).post(URL, emptyMap(), json)
 
         assertArrayEquals(json.toByteArray(Charsets.UTF_8), capturedBodyBytes())
         verify(request).withBody(bodyBytes)
@@ -79,7 +79,7 @@ class MontoyaHttpTransportRequestEncodingTest {
         val lowByteProjection = ByteArray(json.length) { json[it].code.toByte() }
         assertFalse(lowByteProjection.contentEquals(json.toByteArray(Charsets.UTF_8)))
 
-        MontoyaHttpTransport(api).post(URL, emptyMap(), json)
+        TestTransports.open(api).post(URL, emptyMap(), json)
 
         val decoded = strictUtf8(capturedBodyBytes())
         assertEquals(json, decoded)
@@ -91,7 +91,7 @@ class MontoyaHttpTransportRequestEncodingTest {
     fun `unpaired surrogate is sent as a question mark, never as invalid UTF-8`() {
         val json = "{\"content\":\"broken \uD83D pair\"}"
 
-        MontoyaHttpTransport(api).post(URL, emptyMap(), json)
+        TestTransports.open(api).post(URL, emptyMap(), json)
 
         assertEquals(json.replace('\uD83D', '?'), strictUtf8(capturedBodyBytes()))
     }
@@ -99,7 +99,7 @@ class MontoyaHttpTransportRequestEncodingTest {
     @Test
     fun `post declares charset utf-8 and keeps caller headers`() {
         val result =
-            MontoyaHttpTransport(api).post(URL, mapOf("Authorization" to "Bearer test"), "{}")
+            TestTransports.open(api).post(URL, mapOf("Authorization" to "Bearer test"), "{}")
 
         verify(request, times(1)).withAddedHeader("Content-Type", "application/json; charset=utf-8")
         verify(request).withAddedHeader("Authorization", "Bearer test")

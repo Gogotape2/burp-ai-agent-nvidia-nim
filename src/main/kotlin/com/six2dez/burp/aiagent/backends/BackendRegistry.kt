@@ -33,7 +33,9 @@ class BackendRegistry(
     private val externalBackendDir = File(System.getProperty("user.home"), ".burp-ai-agent/backends").also { it.mkdirs() }
 
     // BUG-69-01: Burp's HTTP transport for HTTP backends' health checks. The registry owns it so
-    // reload() (the Settings save path) re-applies it to the freshly created instances. Declared
+    // reload() (the Settings save path) re-applies it to the freshly created instances. Phase 31 /
+    // GATE-01: each HttpTransportAware backend receives a view bound to its own id (forBackend), so the
+    // egress gate judges the id core assigned, never one a backend reports. Declared
     // above `init` on purpose: Kotlin runs initializers in declaration order, so a property placed
     // after `init { reload() }` would be initialized after the first reload.
     @Volatile
@@ -203,7 +205,7 @@ class BackendRegistry(
         val transport = httpTransport ?: return
         backends.values.forEach { backend ->
             if (backend is HttpTransportAware) {
-                backend.setHealthCheckTransport(transport)
+                backend.setHealthCheckTransport(transport.forBackend(backend.id))
             }
         }
     }

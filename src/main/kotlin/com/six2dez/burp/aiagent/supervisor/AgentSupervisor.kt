@@ -9,6 +9,7 @@ import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.backends.HealthCheckResult
 import com.six2dez.burp.aiagent.backends.LaunchRequest
+import com.six2dez.burp.aiagent.backends.http.AiAccessRefusedException
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
@@ -73,7 +74,12 @@ class AgentSupervisor(
     private val settingsRef = AtomicReference<AgentSettings?>(null)
     private val lastErrorRef = AtomicReference<String?>(null)
     private val chatSessionManager = ChatSessionManager()
-    internal val httpTransport = MontoyaHttpTransport(api)
+
+    // Phase 31 / GATE-01: the one transport production builds, unbound and gated by the injected
+    // policy. aiAccessRefusal re-reads Burp's "Use AI" on every call, so each request is judged when it
+    // is about to leave (D-04), with no watcher. Backends only ever receive views bound by core.
+    internal val httpTransport = MontoyaHttpTransport(api) { backendId -> aiAccessRefusal(backendId) }
+
     private val services = java.util.concurrent.ConcurrentHashMap<String, Process>()
     private val lifecycleLock = ReentrantLock()
 
@@ -303,7 +309,7 @@ class AgentSupervisor(
         }
         val refusal = aiAccessRefusal(current.backendId)
         if (refusal != null) {
-            onComplete(IllegalStateException(refusal))
+            onComplete(AiAccessRefusedException(refusal))
             return
         }
 
@@ -432,7 +438,7 @@ class AgentSupervisor(
         val resolvedId = resolveBackendId(backendId)
         val refusal = aiAccessRefusal(resolvedId)
         if (refusal != null) {
-            onComplete(IllegalStateException(refusal))
+            onComplete(AiAccessRefusedException(refusal))
             return null
         }
 
@@ -628,6 +634,8 @@ class AgentSupervisor(
                 "BURP_AI_AGENT_SESSION_ID" to sessionId,
                 "BURP_AI_AGENT_DETERMINISM" to determinism.toString(),
             )
+        // Phase 31 / GATE-01: core binds the backend id the egress gate judges; no backend chooses it.
+        val transport = httpTransport.forBackend(backendId)
 
         return when (backendId) {
             "burp-ai" ->
@@ -637,6 +645,7 @@ class AgentSupervisor(
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = baseEnv,
+                    transport = transport,
                 )
             "ollama" -> {
                 val url = (settings?.ollamaUrl ?: prefs.getString("ollama.url") ?: "http://127.0.0.1:11434").trim()
@@ -666,7 +675,7 @@ class AgentSupervisor(
                     contextWindow =
                         settings?.ollamaContextWindow
                             ?: prefs.getInteger("ollama.contextWindow"),
-                    transport = httpTransport,
+                    transport = transport,
                 )
             }
             "lmstudio" -> {
@@ -693,7 +702,7 @@ class AgentSupervisor(
                     determinismMode = determinism,
                     env = baseEnv,
                     cliSessionId = cliSessionId,
-                    transport = httpTransport,
+                    transport = transport,
                 )
             }
             "openai-compatible" -> {
@@ -720,7 +729,7 @@ class AgentSupervisor(
                     determinismMode = determinism,
                     env = baseEnv,
                     cliSessionId = cliSessionId,
-                    transport = httpTransport,
+                    transport = transport,
                 )
             }
             "nvidia-nim" -> {
@@ -748,9 +757,9 @@ class AgentSupervisor(
                     env = baseEnv,
                     cliSessionId = cliSessionId,
                     // BUG-69-01: NVIDIA NIM is an OpenAiCompatibleBackend instance whose send()
-                    // now fails fast on transport == null. Pass httpTransport so production calls
+                    // now fails fast on transport == null. Pass the bound transport so production calls
                     // route through Burp's HTTP stack (issue #69) instead of throwing.
-                    transport = httpTransport,
+                    transport = transport,
                 )
             }
             "perplexity" -> {
@@ -778,9 +787,9 @@ class AgentSupervisor(
                     env = baseEnv,
                     cliSessionId = cliSessionId,
                     // BUG-69-01: Perplexity is also an OpenAiCompatibleBackend instance whose
-                    // send() now fails fast on transport == null. Pass httpTransport for the same
+                    // send() now fails fast on transport == null. Pass the bound transport for the same
                     // reason as NVIDIA NIM.
-                    transport = httpTransport,
+                    transport = transport,
                 )
             }
             "anthropic" -> {
@@ -802,7 +811,7 @@ class AgentSupervisor(
                     env = baseEnv,
                     cliSessionId = cliSessionId,
                     // BUG-69-01: route through Burp's HTTP stack so traffic appears in Proxy history (SC2).
-                    transport = httpTransport,
+                    transport = transport,
                 )
             }
             else ->

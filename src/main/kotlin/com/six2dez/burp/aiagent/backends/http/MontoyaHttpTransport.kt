@@ -17,9 +17,46 @@ data class TransportResponse(
     val isSuccessful: Boolean,
 )
 
-class MontoyaHttpTransport(
+/**
+ * Phase 31 / GATE-01 — the single egress choke point for AI-provider HTTP traffic.
+ *
+ * [post], [get] and [healthCheckGet] reach Montoya only through the private `execute`, whose FIRST
+ * statement is [requireEgress]: before a thread is chosen and before any Montoya call, the injected
+ * [ProviderEgressGate] is asked, on every request, whether a request for [boundBackendId] may leave
+ * Burp now. A refused request throws [AiAccessRefusedException] and is never sent or queued.
+ *
+ * Core, never a backend, chooses the bound id: the supervisor builds one unbound root and hands each
+ * backend [forBackend] views (the launch configuration and the registry's health-check injection).
+ * An unbound transport refuses every request ([UNBOUND_REFUSAL]), so a wiring mistake fails closed.
+ */
+class MontoyaHttpTransport private constructor(
     private val api: MontoyaApi,
+    private val gate: ProviderEgressGate,
+    val boundBackendId: String?,
 ) {
+    /** The unbound root. Production builds exactly one, in the supervisor, with the policy gate. */
+    constructor(api: MontoyaApi, gate: ProviderEgressGate) : this(api, gate, null)
+
+    /**
+     * Gate-less and fail closed: its gate refuses every request with [NO_GATE_REFUSAL], also after
+     * [forBackend]. It exists only so test spies that stub [post] / [get] keep compiling; production
+     * code never uses it, and it can never let a request through.
+     */
+    constructor(api: MontoyaApi) : this(api, NO_GATE, null)
+
+    /** A view bound to [backendId] that shares this transport's Montoya API and gate. */
+    fun forBackend(backendId: String): MontoyaHttpTransport = MontoyaHttpTransport(api, gate, backendId)
+
+    /**
+     * Throws [AiAccessRefusedException] unless the gate allows a request for [boundBackendId] now:
+     * with [UNBOUND_REFUSAL] when this transport was never bound, otherwise with the gate's own text.
+     * Reads the gate on every call (D-04); it makes no Montoya call of its own.
+     */
+    fun requireEgress() {
+        val backendId = boundBackendId ?: throw AiAccessRefusedException(UNBOUND_REFUSAL)
+        gate.refusal(backendId)?.let { throw AiAccessRefusedException(it) }
+    }
+
     fun post(
         url: String,
         headers: Map<String, String>,
@@ -73,6 +110,8 @@ class MontoyaHttpTransport(
         request: HttpRequest,
         timeoutMs: Long,
     ): TransportResponse {
+        // GATE-01: FIRST statement, above the thread choice, so a refused request starts no thread.
+        requireEgress()
         val options =
             RequestOptions
                 .requestOptions()
@@ -98,6 +137,11 @@ class MontoyaHttpTransport(
     }
 
     companion object {
+        const val UNBOUND_REFUSAL = "AI request refused: the HTTP transport is not bound to a backend."
+        const val NO_GATE_REFUSAL = "AI request refused: this HTTP transport has no access gate."
+
+        private val NO_GATE = ProviderEgressGate { NO_GATE_REFUSAL }
+
         // Extra grace over the request's own response timeout before the off-EDT worker join gives up.
         private const val EDT_OFFLOAD_GRACE_MS = 5_000L
 
