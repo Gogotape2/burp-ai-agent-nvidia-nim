@@ -164,17 +164,30 @@ class BackendRegistry(
                 ?: return HealthCheckResult.Unavailable("Backend not found: $backendId")
         return try {
             val result = backend.healthCheck(settings)
-            if (result is HealthCheckResult.Unknown) {
-                if (backend.isAvailable(settings)) {
-                    HealthCheckResult.Healthy
-                } else {
-                    HealthCheckResult.Unavailable("Backend is not available with current configuration.")
-                }
-            } else {
-                result
-            }
+            if (result is HealthCheckResult.Unknown) unknownHealth(backend, settings) else result
         } catch (e: Exception) {
+            // An AiAccessRefusedException from the egress gate lands here as Unavailable(refusal).
             HealthCheckResult.Unavailable(e.message ?: "Health check failed")
+        }
+    }
+
+    /**
+     * Maps a backend's `Unknown` health (it sent no request, e.g. Anthropic) to a result. Phase 31 /
+     * GATE-01 (Pitfall 4): the egress gate is asked first, so a backend the gate refuses never reads
+     * "Connection OK."; with no transport ever set, the check cannot be trusted and reports Unavailable.
+     */
+    private fun unknownHealth(
+        backend: AiBackend,
+        settings: AgentSettings,
+    ): HealthCheckResult {
+        val transport =
+            httpTransport
+                ?: return HealthCheckResult.Unavailable("MontoyaHttpTransport unavailable; health checks require Burp's HTTP stack.")
+        transport.forBackend(backend.id).requireEgress()
+        return if (backend.isAvailable(settings)) {
+            HealthCheckResult.Healthy
+        } else {
+            HealthCheckResult.Unavailable("Backend is not available with current configuration.")
         }
     }
 

@@ -132,6 +132,29 @@ class AgentSupervisor(
         return aiAccessRefusal(running.backendId) != null
     }
 
+    /**
+     * Phase 31 / GATE-01: the [AiAccessPolicy] applied to the backend the supervisor would REALLY run
+     * for [savedBackendId] (Phase 29 D-08: an unregistered saved id runs on burp-ai, and that
+     * substitution is logged once). A background caller can therefore check before any backend is
+     * running, which [isBlockedByAiAccessPolicy] cannot do (RESEARCH Pitfall 5).
+     */
+    fun refusalForSavedBackend(savedBackendId: String): String? = aiAccessRefusal(resolveBackendId(savedBackendId))
+
+    /**
+     * Phase 31 / D-16: the shared refusal for tools that send AI requests (the MCP AI tools). The
+     * injected [AiAccessPolicy] is asked first, for the running backend or else the saved one; then the
+     * requirement that Burp's "Use AI" is on, whatever the backend, applies on top of the policy
+     * ([AI_TOOLS_REQUIRE_BURP_AI]). That requirement is not a flavor branch: in the store build the
+     * policy already refuses whenever "Use AI" is off, so the policy's text always wins there.
+     */
+    fun aiToolRefusal(): String? {
+        val running = stateRef.get() as? AgentState.Running
+        val backendId =
+            running?.backendId
+                ?: resolveBackendId(settingsRef.get()?.preferredBackendId ?: BackendRegistry.DEFAULT_BACKEND_ID)
+        return aiAccessRefusal(backendId) ?: AI_TOOLS_REQUIRE_BURP_AI.takeUnless { isAiEnabled() }
+    }
+
     fun currentSessionId(): String? = (stateRef.get() as? AgentState.Running)?.sessionId
 
     fun lastStartError(): String? = lastErrorRef.get()
@@ -930,6 +953,14 @@ class AgentSupervisor(
     }
 
     companion object {
+        /**
+         * Phase 31 / D-16: the refusal of an AI tool while Burp's "Use AI" is off and the policy allows
+         * the backend. The 1.0.1 text, kept byte-identical for users who already know it.
+         */
+        const val AI_TOOLS_REQUIRE_BURP_AI =
+            "AI features unavailable: check that your Burp edition supports AI " +
+                "and the 'Use AI' toggle is enabled. Non-AI backends remain usable via the chat panel."
+
         /** The Ollama model when the user left the field blank and no plug-in suggests one. */
         private const val DEFAULT_OLLAMA_MODEL = "llama3.1"
 
