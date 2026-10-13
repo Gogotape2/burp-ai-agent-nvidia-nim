@@ -269,6 +269,9 @@ internal fun SettingsPanel.privacySection(): JPanel =
         patternsFeedback = patternsFeedbackLabel,
     ).build()
 
+/** Phase 31 / D-12 (RED stub): replaced by the policy check in the GREEN commit. */
+internal fun SettingsPanel.connectionTestRefusal(backendId: String): String? = null
+
 internal fun SettingsPanel.testBackendConnection(backendId: String) {
     val settingsSnapshot = currentSettings()
     Thread {
