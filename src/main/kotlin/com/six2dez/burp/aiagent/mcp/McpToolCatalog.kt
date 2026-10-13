@@ -74,6 +74,13 @@ object McpToolCatalog {
 
     fun unsafeToolIds(): Set<String> = all().filter { it.unsafeOnly }.map { it.id }.toSet()
 
+    /**
+     * Phase 31 / D-13 — true when the loaded providers supply at least one `unsafeOnly` tool. The MCP
+     * Unsafe switch, its note and every "Unsafe on" warning follow this, never the flavor: the store
+     * build ships no unsafe tool, so its switch is inert and no indicator may claim Unsafe is on.
+     */
+    fun hasUnsafeTools(): Boolean = available().any { it.unsafeOnly }
+
     fun mergeWithDefaults(overrides: Map<String, Boolean>): Map<String, Boolean> {
         val merged = defaults().toMutableMap()
         overrides.forEach { (k, v) -> merged[k] = v }

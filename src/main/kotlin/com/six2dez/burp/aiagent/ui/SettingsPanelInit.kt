@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.ui
 
 import com.six2dez.burp.aiagent.config.McpSettings
+import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.spi.SettingsContributionContext
 import com.six2dez.burp.aiagent.spi.SettingsSlot
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
@@ -211,6 +212,7 @@ internal fun SettingsPanel.initUiWiring() {
     mcpStdio.font = DesignTokens.Typography.body
     mcpUnsafe.font = DesignTokens.Typography.body
     mcpUnsafe.toolTipText = "Allows tools that modify Burp state, write files, or send active requests."
+    applyUnsafeToolAvailability()
     // 07-03 D-03: mirror the styling of mcpUnsafe so the new toggle blends into the section.
     mcpScopeOnly.font = DesignTokens.Typography.body
     mcpScopeOnly.toolTipText =
@@ -538,6 +540,20 @@ internal fun SettingsPanel.initUiWiring() {
         }
     statusRefreshTimer?.start()
     updateProfileWarnings()
+}
+
+/**
+ * Phase 31 / D-13: when the loaded catalog has no unsafe tool (the store build), the Unsafe switch stays
+ * visible but disabled, with [NO_UNSAFE_TOOLS_NOTE] beside it and as its tooltip. Its selection is never
+ * touched: a value carried over from a full install stays as loaded and Save writes it back unchanged.
+ * Decided from catalog data, never the flavor; with unsafe tools present nothing changes.
+ */
+private fun SettingsPanel.applyUnsafeToolAvailability() {
+    if (!McpToolCatalog.hasUnsafeTools()) {
+        mcpUnsafe.isEnabled = false
+        mcpUnsafe.toolTipText = NO_UNSAFE_TOOLS_NOTE
+        mcpUnsafeNote.isVisible = true
+    }
 }
 
 /**
