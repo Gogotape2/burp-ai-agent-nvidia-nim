@@ -99,6 +99,8 @@ object App {
                 )
             }
         supervisor = AgentSupervisor(api, backendRegistry, auditLogger, aiAccessPolicy)
+        // Phase 31 / D-15: one Output line per load with the edition and the isEnabled() result or throw.
+        api.logging().logToOutput(burpAiLoadDiagnostics(api))
         mirrorAppliedSettingsInto(settingsRepo, supervisor)
         supervisor.pluginSettings = settingsRepo.pluginSettings()
         aiRequestLogger = AiRequestLogger()
@@ -451,6 +453,44 @@ internal fun mirrorAppliedSettingsInto(
 }
 
 /**
- * Phase 31 / D-15 — the load-time Burp AI diagnostics line (RED stub; implemented in the next commit).
+ * Phase 31 / D-15 — the one Output line App writes at load stating Burp's edition and what
+ * `api.ai().isEnabled()` returned, or that it threw and with which exception class. It is the
+ * measurement Phase 35's edition requirements come from, read in Community and Professional by the
+ * D-15 manual UAT.
+ *
+ * Reading `isEnabled()` is local and sends no request. Unlike `AgentSupervisor.isAiEnabled`, which
+ * swallows a throw and answers `false`, this reports the throw, because whether the call throws is part
+ * of what D-15 measures. Only the exception's simple class name and message are included: no settings,
+ * keys or traffic.
+ *
+ * `TooGenericExceptionCaught` is suppressed on purpose (ADR-17): any Montoya failure must become text in
+ * this line, never abort extension load.
  */
-internal fun burpAiLoadDiagnostics(api: MontoyaApi): String = ""
+@Suppress("TooGenericExceptionCaught")
+internal fun burpAiLoadDiagnostics(api: MontoyaApi): String {
+    val edition = burpEditionName(api)
+    val aiState =
+        try {
+            "= ${api.ai().isEnabled()}"
+        } catch (e: Exception) {
+            "threw ${e.javaClass.simpleName}: ${e.message}"
+        }
+    return "[Diagnostics] Burp $edition at load: api.ai().isEnabled() $aiState"
+}
+
+/**
+ * Burp's edition name for [burpAiLoadDiagnostics], or `unknown edition` when the lookup throws. The catch
+ * is deliberately broad and swallowing (ADR-17): the line must still report isEnabled() when the edition
+ * cannot be read.
+ */
+@Suppress("TooGenericExceptionCaught", "SwallowedException")
+private fun burpEditionName(api: MontoyaApi): String =
+    try {
+        api
+            .burpSuite()
+            .version()
+            .edition()
+            .name
+    } catch (_: Exception) {
+        "unknown edition"
+    }
