@@ -2,6 +2,7 @@ package com.six2dez.burp.aiagent.ui
 
 import com.six2dez.burp.aiagent.backends.AiBackend
 import com.six2dez.burp.aiagent.backends.HealthCheckResult
+import com.six2dez.burp.aiagent.backends.http.AiAccessRefusedException
 import com.six2dez.burp.aiagent.backends.nvidia.NvidiaNimBackendFactory
 import com.six2dez.burp.aiagent.backends.perplexity.PerplexityBackendFactory
 import com.six2dez.burp.aiagent.config.AgentSettings
@@ -103,9 +104,23 @@ internal object BackendPill {
 
     fun idleText(unpromptedAllowed: Boolean): String = if (unpromptedAllowed) UNCHECKED_LEGACY else NOT_CHECKED
 
-    fun isRefusal(error: Throwable?): Boolean = false
+    /**
+     * Whether a chat turn ended because the injected policy refused it ([AiAccessRefusedException]):
+     * the pill then reads [AI_DISABLED] instead of reporting the backend as unreachable (D-01).
+     */
+    fun isRefusal(error: Throwable?): Boolean = error is AiAccessRefusedException
 
-    fun healthOfTurn(error: Throwable?): HealthCheckResult = HealthCheckResult.Healthy
+    /**
+     * The pill state a finished chat turn proves, with no extra request (D-09): no error means the
+     * backend answered, any other error means it did not, carrying that error's message. Callers
+     * check [isRefusal] first; a refusal is not a backend outage.
+     */
+    fun healthOfTurn(error: Throwable?): HealthCheckResult =
+        if (error == null) {
+            HealthCheckResult.Healthy
+        } else {
+            HealthCheckResult.Unavailable(error.message?.takeIf { it.isNotBlank() } ?: "Request failed")
+        }
 }
 
 /**

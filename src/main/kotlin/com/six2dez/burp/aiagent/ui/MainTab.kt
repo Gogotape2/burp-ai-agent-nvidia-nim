@@ -132,6 +132,10 @@ class MainTab(
     // EDT-confined: the first timer tick is the startup check (remote providers included). The timer
     // exists only when the injected policy allows unprompted checks (D-09/D-11).
     private var startupHealthCheckDone = false
+
+    // EDT-confined: true while the pill shows BackendPill.AI_DISABLED (set by renderAiDisabled,
+    // cleared by renderBackendHealth and by the idle repaint in updateBackendBadge).
+    private var pillShowsAiDisabled = false
     private var sessionPersistTimer: Timer? = null
     private var lastProjectId: String? = null
 
@@ -568,7 +572,14 @@ class MainTab(
     private fun requestHealthCheck(trigger: HealthCheckTrigger) {
         val settings = settingsRepo.load()
         // The supervisor checks the resolved backend (burp-ai for an unregistered saved id), so does the policy.
-        val backend = backends.get(backends.resolve(settings.preferredBackendId))
+        val resolvedId = backends.resolve(settings.preferredBackendId)
+        val backend = backends.get(resolvedId)
+        // D-01 / D-10: a refused backend is reported from a local policy read; no check is submitted.
+        val refusal = supervisor.aiAccessRefusal(resolvedId)
+        if (refusal != null) {
+            renderAiDisabled(refusal)
+            return
+        }
         if (!BackendHealthPolicy.shouldRun(trigger, settings, backend, supervisor.allowsUnpromptedHealthChecks())) return
         healthGate.submit(coalesce = BackendHealthPolicy.coalesces(trigger)) {
             val health =
@@ -600,10 +611,23 @@ class MainTab(
         healthTimer?.start()
     }
 
+    /**
+     * EDT only. Phase 31 / D-01, D-10 — paints "AI disabled in Burp" with [refusal] (the injected
+     * policy's own text) as the tooltip. It comes from a local policy read and sends nothing. Plan
+     * 31-13 also calls it from the chat-turn handler when a turn was refused.
+     */
+    private fun renderAiDisabled(refusal: String) {
+        backendStatusLabel.text = BackendPill.AI_DISABLED
+        backendStatusLabel.background = UiTheme.Colors.statusTerminal
+        backendStatusLabel.toolTipText = refusal
+        pillShowsAiDisabled = true
+    }
+
     private fun renderBackendHealth(
         health: HealthCheckResult,
         checkedAt: LocalTime,
     ) {
+        pillShowsAiDisabled = false
         when (health) {
             is HealthCheckResult.Healthy -> {
                 backendStatusLabel.text = "AI: OK"
@@ -838,8 +862,27 @@ class MainTab(
         safetyIndicator.setSummary(level, tooltip)
     }
 
+    /**
+     * EDT only, called every second by [mcpStatusTimer]. Re-reads the injected policy for the selected
+     * (resolved) backend and repaints the pill only between "AI disabled in Burp" and the idle text,
+     * so turning Burp's "Use AI" on or off shows up without a click.
+     *
+     * Research OQ4, planner's call: a local re-read on an existing timer is acceptable only because it
+     * sends no request (the policy reads Burp's setting, the settings come from the applied snapshot).
+     * It must never ask for a health check, directly or through the single-flight gate; the structural
+     * test `thePillRefusalIsLocalAndTheBadgeRefreshSendsNothing` pins that.
+     */
     private fun updateBackendBadge() {
-        // Updated by separate timer to avoid blocking EDT
+        val selected = backends.resolve(settingsRepo.load().preferredBackendId)
+        val refusal = supervisor.aiAccessRefusal(selected)
+        if (refusal != null) {
+            if (!pillShowsAiDisabled) renderAiDisabled(refusal)
+        } else if (pillShowsAiDisabled) {
+            backendStatusLabel.text = BackendPill.idleText(supervisor.allowsUnpromptedHealthChecks())
+            backendStatusLabel.background = UiTheme.Colors.outlineVariant
+            backendStatusLabel.toolTipText = "Click to re-check"
+            pillShowsAiDisabled = false
+        }
     }
 
     private fun updateActiveScanStats() {
@@ -956,7 +999,7 @@ class MainTab(
 
     internal fun ensureOllamaReadyIfNeeded(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean {
         if (settings.preferredBackendId != "ollama") return true
-        if (supervisor.isOllamaHealthy(settings)) return true
+        if (readinessProbe(settings).isReachable) return true
         val result =
             JOptionPane.showConfirmDialog(
                 root,
@@ -976,7 +1019,7 @@ class MainTab(
 
     internal fun ensureLmStudioReadyIfNeeded(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean {
         if (settings.preferredBackendId != "lmstudio") return true
-        if (supervisor.isLmStudioHealthy(settings)) return true
+        if (readinessProbe(settings).isReachable) return true
 
         if (settings.lmStudioAutoStart) {
             val ok = supervisor.startLmStudioService(settings)
@@ -996,6 +1039,23 @@ class MainTab(
         val ok = supervisor.startLmStudioService(settings)
         if (!ok) showError("Failed to start LM Studio. Check the command in settings.")
         return ok
+    }
+
+    /**
+     * Research OQ2 — the pre-send readiness probe for Ollama and LM Studio, kept as it was: one
+     * loopback health request after the user pressed Send, through the GATE-01 choke point. Its
+     * result is painted on the status pill, so the probe is also the first-send refresh for these two
+     * backends and costs no extra request. The caller knows the selected backend is the probed one.
+     */
+    private fun readinessProbe(settings: com.six2dez.burp.aiagent.config.AgentSettings): HealthCheckResult {
+        val health = supervisor.backendHealth(settings)
+        val checkedAt = LocalTime.now()
+        if (SwingUtilities.isEventDispatchThread()) {
+            renderBackendHealth(health, checkedAt)
+        } else {
+            SwingUtilities.invokeLater { renderBackendHealth(health, checkedAt) }
+        }
+        return health
     }
 
     private fun ensureBackendReady(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean =

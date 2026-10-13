@@ -261,8 +261,6 @@ class AgentSupervisor(
         }
     }
 
-    fun isOllamaHealthy(settings: AgentSettings): Boolean = registry.healthCheck("ollama", settings).isReachable
-
     fun startOllamaService(settings: AgentSettings): Boolean {
         val cmd = settings.ollamaServeCmd
         if (cmd.isBlank()) {
@@ -271,8 +269,6 @@ class AgentSupervisor(
         }
         return startService("ollama-serve", cmd)
     }
-
-    fun isLmStudioHealthy(settings: AgentSettings): Boolean = registry.healthCheck("lmstudio", settings).isReachable
 
     fun startLmStudioService(settings: AgentSettings): Boolean {
         val cmd = settings.lmStudioServerCmd
