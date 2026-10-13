@@ -36,7 +36,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   (the GitHub full build) and `Custom-AI-Agent-bapp-<version>.jar` (the BApp Store build,
   `./gradlew bappJar`), each with a `.sha256` in `sha256sum` format, and the release notes open with
   a short "Which JAR?" section. CI and the release now build both JARs and fail if the BApp Store JAR
-  contains a full-only class or a CLI backend. One `bom.json` covers both.
+  contains a full-only class or a CLI backend. One `bom.json` covers both: it lists the full build's
+  runtime dependencies, which include every dependency of the BApp Store build at the version the
+  BApp Store JAR packages, plus libraries only the full build ships. CI and the release fail if the
+  two builds resolve a shared dependency to different versions.
 
 ### Removed
 

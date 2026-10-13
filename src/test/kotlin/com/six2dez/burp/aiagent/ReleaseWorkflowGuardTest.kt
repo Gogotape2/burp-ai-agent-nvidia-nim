@@ -16,6 +16,9 @@ import java.io.File
  * - D-03: checksums are computed inside the staging directory after the rename, in `sha256sum` format.
  * - D-04: the notes open with a fixed "Which JAR?" block the workflow writes, carrying README's
  *   "Load only one build." warning verbatim and making no isolation, identity or origin claim.
+ * - SBOM (CR-01): bom.json is generated after the gate whose storeJarContentTest checks that its source
+ *   classpath resolves every BApp Store dependency at the store JAR's version, and the block says what it
+ *   covers.
  *
  * Why a text guard: the release workflow only runs on a tag push, and there is no local runner for it.
  * A reordered step, a dropped glob or a `continue-on-error` would leave every local gate green until the
@@ -33,7 +36,7 @@ class ReleaseWorkflowGuardTest {
         val messages = orderViolations(RELEASE_WORKFLOW, releaseLines())
         assertTrue(
             messages.isEmpty(),
-            "$RELEASE_WORKFLOW no longer gates and stages in order (lint, suites, inspection, staging, " +
+            "$RELEASE_WORKFLOW no longer gates and stages in order (lint, suites, inspection, SBOM, staging, " +
                 "checksums, publish; D-02):\n" + messages.joinToString("\n"),
         )
     }
@@ -320,6 +323,7 @@ class ReleaseWorkflowGuardTest {
             "      - run: ./gradlew ktlintCheck detekt --no-daemon",
             "      - run: ./gradlew test fullTest nightlyRegressionTest nightlyRegressionFullTest edtGuardWithoutAssertionsTest",
             "      - run: ./gradlew bappJar fullJar storeJarContentTest --no-daemon",
+            "      - run: ./gradlew cyclonedxBom --no-daemon --no-configuration-cache",
             "      - run: |",
         ) +
             (if (checksumBeforeStaging) listOf(checksum, staging) else listOf(staging, checksum)) +
@@ -353,6 +357,9 @@ class ReleaseWorkflowGuardTest {
                 "./gradlew bappJar",
                 "sha256sum -c",
                 "bom.json",
+                // CR-01: the bom.json line states the version-level superset claim the build checks (T-30-17).
+                "at the version the BApp Store JAR packages",
+                "only the full build ships",
             )
 
         /** Byte identity with the BApp Store, store isolation, or checksum authenticity (T-30-11). */
@@ -376,7 +383,7 @@ class ReleaseWorkflowGuardTest {
             )
     }
 
-    /** The guarded step order: lint, suites, inspection gate, staging, checksums, verification, publish. */
+    /** The guarded step order: lint, suites, inspection gate, SBOM, staging, checksums, verification, publish. */
     private val order =
         listOf(
             Marker("runs ktlintCheck and detekt (the PR lint job)") { gradleRuns("ktlintCheck", "detekt")(it) },
@@ -391,6 +398,9 @@ class ReleaseWorkflowGuardTest {
             },
             Marker("builds both JARs and runs storeJarContentTest (D-02)") {
                 gradleRuns("bappJar", "fullJar", "storeJarContentTest")(it)
+            },
+            Marker("generates bom.json with cyclonedxBom, after the gate whose storeJarContentTest checks the SBOM alignment (CR-01)") {
+                gradleRuns("cyclonedxBom")(it)
             },
             Marker("stages the versioned store asset `$BAPP_ASSET_LINE` (D-01)") { it.contains(BAPP_ASSET_LINE) },
             Marker("writes each checksum with `sha256sum \"\$f\"` (D-03)") { it.contains("sha256sum \"\$f\"") },
