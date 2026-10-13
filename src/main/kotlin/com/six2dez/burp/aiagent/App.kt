@@ -449,3 +449,8 @@ internal fun mirrorAppliedSettingsInto(
 ) {
     settingsRepo.addChangeListener { supervisor.applySettings(it) }
 }
+
+/**
+ * Phase 31 / D-15 — the load-time Burp AI diagnostics line (RED stub; implemented in the next commit).
+ */
+internal fun burpAiLoadDiagnostics(api: MontoyaApi): String = ""
