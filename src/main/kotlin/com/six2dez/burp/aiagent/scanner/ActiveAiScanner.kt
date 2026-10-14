@@ -176,7 +176,7 @@ class ActiveAiScanner(
     /**
      * Phase 31 / D-02 — whether the injected AI access policy allows the backend this scanner's AI
      * calls would really use (the saved id, resolved the way the supervisor resolves it). Asked in
-     * [queueTarget] before anything is queued, so a refused target is dropped and never retried.
+     * [tryQueueTarget] before anything is queued, so a refused target is dropped and never retried.
      *
      * RESEARCH Pitfall 5: [AgentSupervisor.refusalForSavedBackend] answers with no backend running;
      * the running-backend check is false while the supervisor is idle and let refused work through.
@@ -213,28 +213,39 @@ class ActiveAiScanner(
         }
     }
 
-    // TDD RED stub (32-02 Task 2): replaced by the moved queueTarget body in the GREEN commit.
-    fun tryQueueTarget(target: ActiveScanTarget): Boolean = target.id.isEmpty()
-
     /**
-     * Queue a target for active scanning
-     * Called by PassiveAiScanner when it detects a potential vulnerability
+     * Queue a target for active scanning, the same as [tryQueueTarget], for callers that ignore the
+     * outcome.
      */
     fun queueTarget(target: ActiveScanTarget) {
-        if (!enabled.get() || !aiGateOpen(getSettings())) return
-        if (target.vulnHint.vulnClass in ScanPolicy.PASSIVE_ONLY_VULN_CLASSES) return
-        if (!ScanPolicy.isAllowedForMode(scanMode, target.vulnHint.vulnClass)) return
+        tryQueueTarget(target)
+    }
+
+    /**
+     * Queue a target for active scanning and say whether it really reached the queue.
+     *
+     * Returns true only when the target was added to the queue. Returns false when the scanner is
+     * off, the AI gate refuses (Phase 31 D-02), the class is passive-only or outside the scan mode,
+     * the URL is out of scope, the target repeats inside the 1-hour window, or the queue is full.
+     * Used by the full build's opt-in auto-queue to count and remove only real queues (31-REVIEW
+     * IN-06).
+     */
+    @Suppress("ReturnCount") // body moved from queueTarget (baseline-keyed on its signature); ADR-17 forbids a new entry
+    fun tryQueueTarget(target: ActiveScanTarget): Boolean {
+        if (!enabled.get() || !aiGateOpen(getSettings())) return false
+        if (target.vulnHint.vulnClass in ScanPolicy.PASSIVE_ONLY_VULN_CLASSES) return false
+        if (!ScanPolicy.isAllowedForMode(scanMode, target.vulnHint.vulnClass)) return false
 
         // Check scope
         if (scopeOnly && !api.scope().isInScope(target.originalRequest.request().url())) {
-            return
+            return false
         }
 
         // Dedup - don't scan same target twice within 1 hour (atomic putIfAbsent)
         val now = System.currentTimeMillis()
         val existing = processedTargets.putIfAbsent(target.id, now)
         if (existing != null && (now - existing) < Defaults.DEDUP_WINDOW_MS) {
-            return
+            return false
         }
         if (existing != null) {
             // Expired entry — update timestamp
@@ -249,8 +260,9 @@ class ActiveAiScanner(
                 target
             }
 
-        if (!offerIfQueueNotFull(boostedTarget)) return
+        if (!offerIfQueueNotFull(boostedTarget)) return false
         api.logging().logToOutput("[ActiveAiScanner] Queued: ${boostedTarget.vulnHint.vulnClass} in ${boostedTarget.injectionPoint.name}")
+        return true
     }
 
     /**
@@ -367,7 +379,7 @@ class ActiveAiScanner(
      * [scopeOnly] is set, and that fit the queue, and returns them in [SuggestedQueueOutcome.Queued]
      * with the count left out.
      *
-     * Like [manualScan], this ignores the 1-hour `processedTargets` window of [queueTarget]: the user
+     * Like [manualScan], this ignores the 1-hour `processedTargets` window of [tryQueueTarget]: the user
      * asked explicitly, so a target the auto-queue took a moment ago is queued again (research A4).
      * The confirmation dialog is the caller's job. The AI calls of the queued scans still go through
      * the Phase 31 gate at the transport.
