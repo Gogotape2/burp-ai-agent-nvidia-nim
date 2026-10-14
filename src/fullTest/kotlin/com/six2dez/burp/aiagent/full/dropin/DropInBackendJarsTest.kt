@@ -1,9 +1,12 @@
 package com.six2dez.burp.aiagent.full.dropin
 
+import burp.api.montoya.MontoyaApi
+import burp.api.montoya.logging.Logging
 import com.six2dez.burp.aiagent.backends.AgentConnection
 import com.six2dez.burp.aiagent.backends.AiBackend
 import com.six2dez.burp.aiagent.backends.AiBackendFactory
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
+import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.spi.ExternalBackendSource
 import com.six2dez.burp.aiagent.spi.Plugins
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -14,6 +17,11 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.io.TempDir
+import org.mockito.kotlin.argumentCaptor
+import org.mockito.kotlin.atLeastOnce
+import org.mockito.kotlin.mock
+import org.mockito.kotlin.verify
+import org.mockito.kotlin.whenever
 import java.io.File
 import java.util.jar.JarEntry
 import java.util.jar.JarOutputStream
@@ -85,6 +93,63 @@ class DropInBackendJarsTest {
         assertTrue(dir.isDirectory, "load() creates the drop-in directory on first use")
     }
 
+    /**
+     * Phase 31 gap closure WR-06: a drop-in built against classes the extension no longer ships fails
+     * with a LinkageError when its factory links. It is logged and skipped like any broken JAR.
+     */
+    @Test
+    fun aJarWhoseFactoryFailsToFindAClassIsLoggedAndSkippedWithNoLoaderLeftOpen() {
+        writeJar(File(tempDir, "stale.jar"), DropInLinkageFailureFactory::class.java.name)
+        val source = DropInBackendJars(tempDir)
+
+        assertEquals(emptyList<String>(), source.loadIds(), "a JAR that fails to link registers nothing")
+
+        assertNull(source.openClassLoader, "the failed loader is closed, not remembered")
+        val error = errorLines.single()
+        assertTrue(error.startsWith("Failed loading external backend JARs: "), "logged: $errorLines")
+        assertTrue(error.contains(DropInLinkageFailureFactory.MISSING_CLASS), "logged: $errorLines")
+        assertTrue(logLines.none { it.startsWith("Loaded external backend JARs") }, "logged: $logLines")
+    }
+
+    @Test
+    fun aJarWhoseFactoryFailsToFindAMethodIsLoggedAndSkippedWithNoLoaderLeftOpen() {
+        writeJar(File(tempDir, "stale.jar"), DropInMissingMethodFactory::class.java.name)
+        val source = DropInBackendJars(tempDir)
+
+        assertEquals(emptyList<String>(), source.loadIds(), "a JAR that fails to link registers nothing")
+
+        assertNull(source.openClassLoader, "the failed loader is closed, not remembered")
+        val error = errorLines.single()
+        assertTrue(error.startsWith("Failed loading external backend JARs: "), "logged: $errorLines")
+        assertTrue(error.contains(DropInMissingMethodFactory.MISSING_METHOD), "logged: $errorLines")
+        assertTrue(logLines.none { it.startsWith("Loaded external backend JARs") }, "logged: $logLines")
+    }
+
+    @Test
+    fun aRegistryOverAJarThatFailsToLinkStillLoadsEveryBuiltInBackend() {
+        writeJar(File(tempDir, "stale.jar"), DropInLinkageFailureFactory::class.java.name)
+        val api = mock<MontoyaApi>()
+        val logging = mock<Logging>()
+        whenever(api.logging()).thenReturn(logging)
+
+        // The internal constructor: BackendRegistry(api) would load the real home drop-in directory.
+        val registry = BackendRegistry(api, listOf(DropInBackendJars(tempDir)))
+
+        val ids = registry.listAllBackendIds()
+        assertTrue(ids.containsAll(BUILT_IN_IDS), "every built-in backend is registered: $ids")
+        assertFalse(DropInProbeBackend.ID in ids, "no drop-in backend is registered: $ids")
+        val errors = argumentCaptor<String>()
+        verify(logging, atLeastOnce()).logToError(errors.capture())
+        assertEquals(
+            1,
+            errors.allValues.count { it.startsWith("Failed loading external backend JARs: ") },
+            "one drop-in failure line: ${errors.allValues}",
+        )
+
+        registry.reload()
+        registry.shutdown()
+    }
+
     @Test
     fun aBrokenJarIsLoggedAndSkippedWithNoLoaderLeftOpen() {
         writeJar(File(tempDir, "broken.jar"), "com.example.MissingFactory")
@@ -120,6 +185,8 @@ class DropInBackendJarsTest {
 
     private companion object {
         const val MARKER = "dropin-probe-marker.txt"
+        val BUILT_IN_IDS =
+            setOf("burp-ai", "anthropic", "lmstudio", "nvidia-nim", "ollama", "openai-compatible", "perplexity")
     }
 }
 
@@ -136,5 +203,26 @@ class DropInProbeBackend : AiBackend {
 
     companion object {
         const val ID = "dropin-probe"
+    }
+}
+
+/**
+ * Stands in for a drop-in compiled against a class the extension removed (Phase 31 gap closure WR-06):
+ * creating its backend fails to link. The missing-class name is neutral on purpose.
+ */
+class DropInLinkageFailureFactory : AiBackendFactory {
+    override fun create(): AiBackend = throw NoClassDefFoundError(MISSING_CLASS)
+
+    companion object {
+        const val MISSING_CLASS = "com/example/RemovedHttpClient"
+    }
+}
+
+/** Stands in for a drop-in calling a helper method the extension removed (Phase 31 gap closure WR-06). */
+class DropInMissingMethodFactory : AiBackendFactory {
+    override fun create(): AiBackend = throw NoSuchMethodError(MISSING_METHOD)
+
+    companion object {
+        const val MISSING_METHOD = "com.example.RemovedHelper.buildClient()"
     }
 }
