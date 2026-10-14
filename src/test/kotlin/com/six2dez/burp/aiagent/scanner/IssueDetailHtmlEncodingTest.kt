@@ -1,10 +1,16 @@
 package com.six2dez.burp.aiagent.scanner
 
 import burp.api.montoya.MontoyaApi
+import burp.api.montoya.core.BurpSuiteEdition
 import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPoint
 import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPointType
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.AgentSettingsRepository
+import com.six2dez.burp.aiagent.mcp.McpRequestLimiter
+import com.six2dez.burp.aiagent.mcp.McpToolContext
+import com.six2dez.burp.aiagent.mcp.tools.CreateAuditIssue
+import com.six2dez.burp.aiagent.mcp.tools.executeIssueCreate
 import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptCategory
 import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptConfidence
 import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptDefinition
@@ -20,6 +26,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Answers
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
+import java.io.File
 
 /**
  * Phase 32 SC4 / SCAN-02 / D-10 / D-11: every issue detail the extension builds renders a payload,
@@ -284,6 +291,148 @@ class IssueDetailHtmlEncodingTest {
         assertCarriesEscapedMarkup(detail, ACTIVE_SCANNER)
     }
 
+    // =============================================================================================
+    // issue_create (native MCP tool: IssueCreateSupport.executeIssueCreate)
+    // =============================================================================================
+
+    /**
+     * D-12: an agent can echo prompt-injected target text into issue_create. Every text field Burp
+     * renders as HTML (detail, remediation, background, remediation background) arrives escaped,
+     * after IssueText.sanitize has stripped the Markdown.
+     */
+    @Test
+    fun issueCreateEscapesEveryTextFieldAnAgentSends() {
+        PassiveScanCheckRig().use { rig ->
+            val result =
+                executeIssueCreate(
+                    CreateAuditIssue(
+                        name = "Reflected XSS",
+                        detail = MARKUP + "\n**bold** line",
+                        baseUrl = "https://enc-mcp.example/a",
+                        severity = "HIGH",
+                        confidence = "FIRM",
+                        remediation = MARKUP,
+                        background = MARKUP,
+                        remediationBackground = MARKUP,
+                    ),
+                    rig.api,
+                    mcpContext(rig.api),
+                )
+
+            assertTrue(result.startsWith("Issue created: "), "$ISSUE_CREATE: unexpected result '$result'")
+            val filed = rig.built.single()
+            mapOf(
+                "detail" to filed.detail,
+                "remediation" to filed.remediation,
+                "background" to filed.background,
+                "remediationBackground" to filed.remediationBackground,
+            ).forEach { (field, value) ->
+                val text = requireNotNull(value) { "$ISSUE_CREATE: $field reached Burp as null" }
+                assertHtmlSafe(text, "$ISSUE_CREATE $field")
+                assertCarriesEscapedMarkup(text, "$ISSUE_CREATE $field")
+            }
+            val segments = segmentsOf(filed.detail)
+            assertEquals(
+                2,
+                segments.size,
+                "$ISSUE_CREATE: the detail's two lines are joined by one '$LINE_BREAK'. Segments: $segments",
+            )
+            assertEquals("bold line", segments.last(), "$ISSUE_CREATE: the Markdown is stripped before escaping")
+        }
+    }
+
+    /** With no optional text, remediation, background and remediation background stay empty. */
+    @Test
+    fun issueCreateLeavesAbsentOptionalTextEmpty() {
+        PassiveScanCheckRig().use { rig ->
+            val result =
+                executeIssueCreate(
+                    CreateAuditIssue(
+                        name = "Plain finding",
+                        detail = "plain detail",
+                        baseUrl = "https://enc-mcp-empty.example/a",
+                        severity = "LOW",
+                        confidence = "TENTATIVE",
+                    ),
+                    rig.api,
+                    mcpContext(rig.api),
+                )
+
+            assertTrue(result.startsWith("Issue created: "), "$ISSUE_CREATE: unexpected result '$result'")
+            val filed = rig.built.single()
+            assertEquals("plain detail", filed.detail)
+            assertEquals("", filed.remediation)
+            assertEquals("", filed.background)
+            assertEquals("", filed.remediationBackground)
+        }
+    }
+
+    // =============================================================================================
+    // Producer census (D-11 / D-12)
+    // =============================================================================================
+
+    /**
+     * Every production file that builds an AuditIssue is a known producer, and every producer calls
+     * the shared formatter. A new producer file, or a producer that drops the call, fails here.
+     * The behavioral cases above catch a producer that keeps the call but bypasses it.
+     */
+    @Test
+    fun everyIssueProducerIsKnownAndCallsTheSharedFormatter() {
+        val files = SourceRoots.kotlinFiles()
+        assertTrue(
+            files.size >= MIN_EXPECTED_MAIN_FILES,
+            "the source walk reached ${files.size} .kt files under ${SourceRoots.PRODUCTION}, below the floor " +
+                "of $MIN_EXPECTED_MAIN_FILES. A walk that reaches nothing reports a clean tree; fix the walk first.",
+        )
+
+        val producers =
+            files
+                .filter { file -> codeLines(file).any { AUDIT_ISSUE_CALL.containsMatchIn(it) } }
+                .associateBy { SourceRoots.packageRelativePath(it) }
+
+        assertEquals(
+            KNOWN_PRODUCERS,
+            producers.keys,
+            "the set of production files with a non-comment auditIssue( call changed. Unexpected: " +
+                "${producers.keys - KNOWN_PRODUCERS}; missing: ${KNOWN_PRODUCERS - producers.keys}. A new " +
+                "producer must route its detail through IssueUtils.formatIssueDetailHtml and add a markup " +
+                "case of its own to this class before it joins KNOWN_PRODUCERS.",
+        )
+        val nonEscaping =
+            producers.filterValues { file -> codeLines(file).none { it.contains(FORMATTER_CALL) } }.keys
+        assertEquals(
+            emptySet<String>(),
+            nonEscaping,
+            "these producers never call $FORMATTER_CALL. Route the issue detail through " +
+                "IssueUtils.formatIssueDetailHtml and add a markup case for the producer to this class.",
+        )
+    }
+
+    private fun mcpContext(api: MontoyaApi): McpToolContext =
+        McpToolContext(
+            api = api,
+            privacyMode = PrivacyMode.STRICT,
+            determinismMode = false,
+            hostSalt = "test-salt",
+            toolToggles = emptyMap(),
+            unsafeEnabled = false,
+            unsafeTools = emptySet(),
+            enabledUnsafeTools = emptySet(),
+            limiter = McpRequestLimiter(MCP_LIMIT),
+            edition = BurpSuiteEdition.PROFESSIONAL,
+            maxBodyBytes = MCP_MAX_BODY_BYTES,
+        )
+
+    /**
+     * The file's lines read as UTF-8 text, without comment lines: a line whose trimmed text starts
+     * with one of [COMMENT_PREFIXES] (a KDoc star, a line comment or a block-comment opener).
+     */
+    private fun codeLines(file: File): List<String> =
+        file.readText(Charsets.UTF_8).lines().filterNot { line ->
+            val trimmed = line.trimStart()
+            COMMENT_PREFIXES.any { trimmed.startsWith(it) }
+        }
+
     private fun bountyPromptDefinition(
         id: String,
         title: String,
@@ -350,6 +499,26 @@ class IssueDetailHtmlEncodingTest {
         const val AI_PASSIVE_FINDING = "PassiveAiScannerFinding.handleFinding"
         const val ACTIVE_SCANNER = "ActiveAiScanner (buildActiveIssueDetailLines + formatIssueDetailHtml)"
         const val AI_FINDING_CONFIDENCE = 90
+        const val ISSUE_CREATE = "IssueCreateSupport.executeIssueCreate"
+        const val MCP_LIMIT = 4
+        const val MCP_MAX_BODY_BYTES = 8192
+
+        /** Non-vacuity floor for the census walk over the production roots. */
+        const val MIN_EXPECTED_MAIN_FILES = 150
+
+        /** Package-relative paths of every production file that builds an AuditIssue (D-12). */
+        val KNOWN_PRODUCERS =
+            setOf(
+                "scanner/AiScanCheck.kt",
+                "scanner/ActiveAiScanner.kt",
+                "scanner/PassiveAiScannerFinding.kt",
+                "scanner/AiPassiveScanCheck.kt",
+                "ui/UiActions.kt",
+                "mcp/tools/IssueCreateSupport.kt",
+            )
+        val AUDIT_ISSUE_CALL = Regex("""\bauditIssue\(""")
+        const val FORMATTER_CALL = "IssueUtils.formatIssueDetailHtml("
+        val COMMENT_PREFIXES = listOf("*", "//", "/*")
         const val BOUNTY_FINDING_CONFIDENCE = 70
 
         /** Script tag, attribute break-out with an event handler, and a bare ampersand. */
