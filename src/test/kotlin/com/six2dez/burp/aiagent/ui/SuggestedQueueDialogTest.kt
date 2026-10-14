@@ -6,6 +6,7 @@ import burp.api.montoya.http.message.params.HttpParameterType
 import burp.api.montoya.http.message.params.ParsedHttpParameter
 import burp.api.montoya.http.message.requests.HttpRequest
 import burp.api.montoya.logging.Logging
+import com.six2dez.burp.aiagent.SourceRoots
 import com.six2dez.burp.aiagent.TestSettings
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.scanner.ActiveAiScanner
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Answers
+import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import javax.swing.JOptionPane
@@ -154,6 +156,132 @@ class SuggestedQueueDialogTest {
         assertEquals(2, ManualScanDialogs.hostCount(listOf("https://A.example/1", "https://a.example/2", "https://b.example/")))
         assertEquals(2, ManualScanDialogs.hostCount(listOf("https://a.example/1", "not a url")))
         assertEquals(3, ManualScanDialogs.hostCount(listOf("https://a.example/1", "not a url", "also not a url")))
+    }
+
+    // --- Task 2: refusals, cancellations and partial queues leave the list alone --------------------
+
+    @Test
+    fun aRefusalIsShownVerbatimFirstAndNothingElseIsAsked() {
+        whenever(supervisor.refusalForSavedBackend(any())).thenReturn(REFUSAL)
+        val scanner = newScanner()
+        val list = listOf(URL_A1, URL_A2, URL_B).suggestedIn(SuggestedTargetList())
+        val prompts = FakePrompts(enable = true, confirm = true)
+
+        val outcome = SuggestedQueueAction(list, scanner, prompts).queue(list.snapshot())
+
+        assertEquals(SuggestedQueueOutcome.Refused(REFUSAL), outcome)
+        assertEquals(
+            listOf(Call.Show(ScanDialog(REFUSAL, "AI Active Scan", JOptionPane.WARNING_MESSAGE))),
+            prompts.calls,
+            "the scanner is never offered to be switched on and nothing is confirmed",
+        )
+        assertEquals(3, list.count())
+        assertTrue(scanner.getQueueItems(10).isEmpty())
+    }
+
+    @Test
+    fun decliningToEnableTheScannerQueuesNothing() {
+        val scanner = newScanner()
+        val list = listOf(URL_A1, URL_A2, URL_B).suggestedIn(SuggestedTargetList())
+        val prompts = FakePrompts(enable = false, confirm = true)
+
+        val outcome = SuggestedQueueAction(list, scanner, prompts).queue(list.snapshot())
+
+        assertNull(outcome)
+        assertEquals(listOf<Call>(Call.Ensure), prompts.calls)
+        assertEquals(3, list.count())
+        assertTrue(scanner.getQueueItems(10).isEmpty())
+    }
+
+    @Test
+    fun answeringNoToTheConfirmationQueuesNothing() {
+        val scanner = newScanner()
+        val list = listOf(URL_A1, URL_A2, URL_B).suggestedIn(SuggestedTargetList())
+        val prompts = FakePrompts(enable = true, confirm = false)
+
+        val outcome = SuggestedQueueAction(list, scanner, prompts).queue(list.snapshot())
+
+        assertNull(outcome)
+        assertEquals(
+            listOf(Call.Ensure, Call.Confirm(ManualScanDialogs.confirmActiveScanMessage(3, 2, 0))),
+            prompts.calls,
+        )
+        assertEquals(3, list.count())
+        assertTrue(scanner.getQueueItems(10).isEmpty())
+    }
+
+    @Test
+    fun anEmptySelectionAsksNothing() {
+        val scanner = newScanner()
+        val prompts = FakePrompts(enable = true, confirm = true)
+
+        val outcome = SuggestedQueueAction(SuggestedTargetList(), scanner, prompts).queue(emptyList())
+
+        assertNull(outcome)
+        assertEquals(listOf(Call.Show(ManualScanDialogs.NO_SUGGESTED_SELECTION)), prompts.calls)
+    }
+
+    @Test
+    fun anOutOfScopeTargetStaysInTheListAndIsReportedAsNotQueued() {
+        whenever(api.scope().isInScope(any())).thenReturn(true)
+        whenever(api.scope().isInScope(URL_B)).thenReturn(false)
+        val scanner = newScanner { scopeOnly = true }
+        val list = listOf(URL_A1, URL_A2, URL_B).suggestedIn(SuggestedTargetList())
+        val entries = list.snapshot()
+        val prompts = FakePrompts(enable = true, confirm = true)
+
+        val outcome = SuggestedQueueAction(list, scanner, prompts).queue(entries)
+
+        assertEquals(SuggestedQueueOutcome.Queued(entries.take(2).map { it.target }, 1), outcome)
+        assertEquals(listOf(entries[2].key), list.snapshot().map { it.key }, "only the out-of-scope entry stays")
+        val shown = prompts.calls.last() as Call.Show
+        assertEquals(ManualScanDialogs.suggested(outcome!!, scanner.maxQueueSize), shown.dialog)
+        assertTrue(shown.dialog.message.contains("\n1 suggested target(s) were not queued"), shown.dialog.message)
+    }
+
+    @Test
+    fun overflowTargetsStayInTheList() {
+        val scanner = newScanner { maxQueueSize = 1 }
+        val list = listOf(URL_A1, URL_A2, URL_B).suggestedIn(SuggestedTargetList())
+        val entries = list.snapshot()
+
+        val outcome = SuggestedQueueAction(list, scanner, FakePrompts(enable = true, confirm = true)).queue(entries)
+
+        assertEquals(SuggestedQueueOutcome.Queued(listOf(entries[0].target), 2), outcome)
+        assertEquals(entries.drop(1).map { it.key }, list.snapshot().map { it.key })
+        assertEquals(1, scanner.getQueueItems(10).size)
+    }
+
+    // --- Task 2: the context menu shares the prompts and the confirmation ---------------------------
+
+    @Test
+    fun contextMenuActiveScanUsesTheSharedPromptsAndConfirmation() {
+        val source = SourceRoots.packageFile("ui/UiActions.kt").readText(Charsets.UTF_8)
+
+        assertTrue(
+            source.contains("= ActiveScanPrompts.ensureActiveScannerEnabled(tab.root, activeAiScanner)"),
+            "UiActions' ensureActiveScannerEnabled must delegate to the shared helper",
+        )
+        assertTrue(source.contains("ActiveScanPrompts.confirmActiveScan("), "the AI Active Scan confirmation uses the shared prompt")
+        assertTrue(
+            source.contains("ManualScanDialogs.confirmActiveScanMessage("),
+            "the AI Active Scan confirmation uses the shared message builder",
+        )
+        assertTrue(source.contains("ManualScanDialogs.hostCount("), "the AI Active Scan confirmation shows the host count")
+    }
+
+    @Test
+    fun theConfirmationTitleLivesOnlyInManualScanDialogs() {
+        val holders =
+            SourceRoots
+                .root(SourceRoots.MAIN)
+                .walkTopDown()
+                .filter { it.isFile && it.extension == "kt" }
+                .filter { it.readText(Charsets.UTF_8).contains(ManualScanDialogs.CONFIRM_ACTIVE_SCAN_TITLE) }
+                .map { it.name }
+                .toList()
+
+        assertEquals(listOf("ManualScanDialogs.kt"), holders)
     }
 
     // --- Helpers -----------------------------------------------------------------------------------
