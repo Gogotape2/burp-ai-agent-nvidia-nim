@@ -62,6 +62,12 @@ class DropInBackendJars internal constructor(
      *
      * TooGenericExceptionCaught is suppressed because a drop-in JAR is third-party code and its factory
      * may throw anything; a broken JAR is logged and skipped, it must not abort the registry reload.
+     *
+     * Phase 31 gap closure (WR-06): a drop-in built against classes or methods the extension no longer
+     * ships (the OkHttp client and the HttpBackendSupport helpers removed in phase 31, NET-01) fails
+     * with a LinkageError such as NoClassDefFoundError or NoSuchMethodError when its factory links. It
+     * is logged and skipped like any broken JAR and its loader is closed. Only LinkageError is caught
+     * among the Errors, so a VirtualMachineError (OutOfMemoryError) still propagates.
      */
     @Suppress("TooGenericExceptionCaught")
     internal fun loadExternalBackendJars(
@@ -83,6 +89,9 @@ class DropInBackendJars internal constructor(
             closeAfterFailure(cl, e, logError)
         } catch (e: ServiceConfigurationError) {
             // A services entry naming a missing or unloadable class is an Error, not an Exception.
+            closeAfterFailure(cl, e, logError)
+        } catch (e: LinkageError) {
+            // A factory compiled against a class or method the extension removed fails to link (WR-06).
             closeAfterFailure(cl, e, logError)
         }
     }

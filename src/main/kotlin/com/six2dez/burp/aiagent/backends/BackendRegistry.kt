@@ -23,8 +23,9 @@ import java.util.concurrent.ConcurrentHashMap
 // the drop-in loader's two functions to src/full and added guardedSource, so detekt counts 14 (was 15)
 // against its threshold of 11. Suppressed locally because ADR-17 forbids new baseline entries.
 @Suppress("TooManyFunctions")
-class BackendRegistry(
+class BackendRegistry internal constructor(
     private val api: MontoyaApi,
+    private val externalSources: List<ExternalBackendSource>,
 ) {
     private val backends = ConcurrentHashMap<String, AiBackend>()
     private val availabilityCache = ConcurrentHashMap<Pair<String, Int>, Boolean>()
@@ -44,15 +45,15 @@ class BackendRegistry(
     @Volatile
     private var pluginSettings: PluginSettingsStore? = null
 
-    // Phase 31 / D-14 (WR-05, ADR-18 OQ8): sources of backends loaded from outside the extension JAR.
-    // Only the full build registers one, the drop-in loader (src/full); the store classpath has no
-    // provider, so the store build never creates, lists or loads a drop-in directory. Declared above
-    // `init` for the same declaration-order reason as the HTTP transport.
-    private val externalSources: List<ExternalBackendSource> = Plugins.load(ExternalBackendSource::class.java)
-
     init {
         reload()
     }
+
+    // Phase 31 / D-14 (WR-05, ADR-18 OQ8): sources of backends loaded from outside the extension JAR.
+    // Only the full build registers one, the drop-in loader (src/full); the store classpath has no
+    // provider, so the store build never creates, lists or loads a drop-in directory. The internal
+    // constructor exists so tests can pass their own sources (Phase 31 gap closure WR-06).
+    constructor(api: MontoyaApi) : this(api, Plugins.load(ExternalBackendSource::class.java))
 
     /** Remembers [transport] and injects it into every current and future [HttpTransportAware] backend. */
     @Synchronized
