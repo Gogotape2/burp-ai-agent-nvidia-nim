@@ -5,7 +5,13 @@ import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPoint
 import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPointType
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.AgentSettingsRepository
+import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptCategory
+import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptConfidence
+import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptDefinition
+import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptFinding
+import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptOutputType
 import com.six2dez.burp.aiagent.redact.PrivacyMode
+import com.six2dez.burp.aiagent.ui.UiActions
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -27,8 +33,9 @@ import org.mockito.kotlin.whenever
  * NAMED RESIDUALS, and no artifact may cite this class as closing either of them. The PRIV-05 probes
  * for route 2 live in `AiScanCheckDetailCookieCarrierTest`.
  *
- * Producers covered here: `AiScanCheck.buildDetail` (AI Active via Burp Scanner). Plan 32-04 adds the
- * remaining producers and the producer census to this class, reusing [assertHtmlSafe] and [MARKUP].
+ * Producers covered here: `AiScanCheck.buildDetail` (AI Active via Burp Scanner) and
+ * `UiActions.buildIssueDetailHtml` (BountyPrompt). Plan 32-04 adds the remaining producers and the
+ * producer census to this class, reusing [assertHtmlSafe] and [MARKUP].
  */
 class IssueDetailHtmlEncodingTest {
     // =============================================================================================
@@ -144,6 +151,56 @@ class IssueDetailHtmlEncodingTest {
         )
     }
 
+    // =============================================================================================
+    // UiActions.buildIssueDetailHtml (BountyPrompt)
+    // =============================================================================================
+
+    /** Markup in the AI-generated finding detail and in the prompt title renders as literal text. */
+    @Test
+    fun bountyPromptDetailRendersMarkupAsLiteralText() {
+        val detail = UiActions.buildIssueDetailHtml(bountyPromptDefinition("p1", MARKUP), bountyPromptFinding(MARKUP))
+
+        assertHtmlSafe(detail, BOUNTY_PROMPT)
+        assertCarriesEscapedMarkup(detail, BOUNTY_PROMPT)
+    }
+
+    /** Delegating to the shared formatter leaves the BountyPrompt detail format byte-identical. */
+    @Test
+    fun bountyPromptDetailFormatIsUnchanged() {
+        val detail = UiActions.buildIssueDetailHtml(bountyPromptDefinition("p1", "T"), bountyPromptFinding("x & <y>"))
+        val expectedStart =
+            "x &amp; &lt;y&gt;<br><br>AI Analysis Metadata<br>&nbsp;&nbsp;Source: BountyPrompt" +
+                "<br>&nbsp;&nbsp;Prompt ID: p1<br>&nbsp;&nbsp;Prompt Title: T"
+
+        assertTrue(
+            detail.startsWith(expectedStart),
+            "$BOUNTY_PROMPT: the detail must start with '$expectedStart'. Detail was: $detail",
+        )
+        assertTrue(
+            detail.contains("<br>&nbsp;&nbsp;Parsed Confidence: 70%<br>"),
+            "$BOUNTY_PROMPT: the parsed confidence segment must render as before. Detail was: $detail",
+        )
+    }
+
+    private fun bountyPromptDefinition(
+        id: String,
+        title: String,
+    ): BountyPromptDefinition =
+        BountyPromptDefinition(
+            id = id,
+            title = title,
+            category = BountyPromptCategory.DETECTION,
+            outputType = BountyPromptOutputType.ISSUE,
+            systemPrompt = "system",
+            userPrompt = "user",
+            severity = "Medium",
+            confidence = BountyPromptConfidence.FIRM,
+            tagsUsed = emptySet(),
+        )
+
+    private fun bountyPromptFinding(detail: String): BountyPromptFinding =
+        BountyPromptFinding(title = "finding", detail = detail, severity = "Medium", confidence = BOUNTY_FINDING_CONFIDENCE)
+
     // ---------------------------------------------------------------------------------------------
     // AiScanCheck harness (same shape as AiScanCheckDetailCookieCarrierTest)
     // ---------------------------------------------------------------------------------------------
@@ -187,6 +244,8 @@ class IssueDetailHtmlEncodingTest {
 
     private companion object {
         const val AI_SCAN_CHECK = "AiScanCheck.buildDetail"
+        const val BOUNTY_PROMPT = "UiActions.buildIssueDetailHtml"
+        const val BOUNTY_FINDING_CONFIDENCE = 70
 
         /** Script tag, attribute break-out with an event handler, and a bare ampersand. */
         const val MARKUP = "<script>alert(1)</script> \"><img src=x onerror=alert(1)> a&b"
