@@ -293,7 +293,7 @@ internal fun SettingsPanel.showActiveAiFindingsDialog() {
 }
 
 internal fun SettingsPanel.showActiveScanQueueDialog() {
-    ActiveScanQueuePanel.showDialog(dialogParentComponent(), activeAiScanner)
+    ActiveScanQueuePanel.showDialog(dialogParentComponent(), activeAiScanner, passiveAiScanner.suggestedTargets)
 }
 
 internal fun SettingsPanel.showScannerTriageDialog() {
