@@ -42,9 +42,22 @@ import java.io.File
  * NAMED RESIDUALS, and no artifact may cite this class as closing either of them. The PRIV-05 probes
  * for route 2 live in `AiScanCheckDetailCookieCarrierTest`.
  *
- * Producers covered here: `AiScanCheck.buildDetail` (AI Active via Burp Scanner) and
- * `UiActions.buildIssueDetailHtml` (BountyPrompt). Plan 32-04 adds the remaining producers and the
- * producer census to this class, reusing [assertHtmlSafe] and [MARKUP].
+ * Producers covered here (D-12: every producer, no exception), each with its own markup case:
+ *  - `scanner/AiScanCheck.kt`: `AiScanCheck.buildDetail` (AI Active via Burp Scanner), `aiScanCheckDetail*`.
+ *  - `ui/UiActions.kt`: `UiActions.buildIssueDetailHtml` (BountyPrompt), `bountyPromptDetail*`.
+ *  - `scanner/AiPassiveScanCheck.kt`: local passive findings, a markup Content-Length driven through
+ *    the real scan check, `aiPassiveScanCheckLocalFinding*`.
+ *  - `scanner/PassiveAiScannerFinding.kt`: AI passive findings via `handleParsedAiIssues`,
+ *    `aiPassiveFindingDetail*`.
+ *  - `scanner/ActiveAiScanner.kt`: the producer's exact composition,
+ *    `formatIssueDetailHtml(buildActiveIssueDetailLines(...))`, `activeScannerDetail*`.
+ *  - `mcp/tools/IssueCreateSupport.kt`: the native MCP `issue_create` tool, all four text fields,
+ *    `issueCreate*`.
+ *
+ * The producer census ([everyIssueProducerIsKnownAndCallsTheSharedFormatter]) pins that set of files
+ * and requires `IssueUtils.formatIssueDetailHtml(` in each. A new producer joins the census only
+ * with a markup case of its own in this class. The census is an escaping census too: it is not the
+ * D-28-06 / WR-01 cookie single-producer gate and must not be cited as closing it.
  */
 class IssueDetailHtmlEncodingTest {
     // =============================================================================================

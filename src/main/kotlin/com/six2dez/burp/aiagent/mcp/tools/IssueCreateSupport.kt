@@ -70,21 +70,25 @@ internal fun executeIssueCreate(
     if (hasEquivalentIssue(api, issueNameWithPrefix, input.baseUrl)) {
         return "Issue already exists: $issueNameWithPrefix"
     }
-    val sanitizedDetail = IssueText.sanitize(input.detail)
-    val sanitizedRemediation = IssueText.sanitize(input.remediation ?: "")
-    val sanitizedBackground = IssueText.sanitize(input.background ?: "")
-    val sanitizedRemediationBackground = IssueText.sanitize(input.remediationBackground ?: "")
+    // Phase 32 D-12: Burp renders all four text fields as HTML, and an agent can echo
+    // prompt-injected target text into them. Each field is escaped after the Markdown strip, so
+    // markup (including HTML an agent sends on purpose) shows as literal text. "" stays "".
+    val escapedDetail = IssueUtils.formatIssueDetailHtml(IssueText.sanitize(input.detail).lines())
+    val escapedRemediation = IssueUtils.formatIssueDetailHtml(IssueText.sanitize(input.remediation ?: "").lines())
+    val escapedBackground = IssueUtils.formatIssueDetailHtml(IssueText.sanitize(input.background ?: "").lines())
+    val escapedRemediationBackground =
+        IssueUtils.formatIssueDetailHtml(IssueText.sanitize(input.remediationBackground ?: "").lines())
 
     val issue =
         burp.api.montoya.scanner.audit.issues.AuditIssue.auditIssue(
             issueNameWithPrefix,
-            sanitizedDetail,
-            sanitizedRemediation,
+            escapedDetail,
+            escapedRemediation,
             input.baseUrl,
             severityEnum,
             confidenceEnum,
-            sanitizedBackground,
-            sanitizedRemediationBackground,
+            escapedBackground,
+            escapedRemediationBackground,
             typicalSeverityEnum,
             requestResponseList,
         )
