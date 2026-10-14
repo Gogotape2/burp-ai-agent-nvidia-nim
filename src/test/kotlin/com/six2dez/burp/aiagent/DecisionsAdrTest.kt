@@ -115,6 +115,11 @@ class DecisionsAdrTest {
             "ADR-18 must name the `ExternalBackendSource` SPI the drop-in loader moved behind in phase 31. " +
                 "Without it the ADR can drift back to claiming the loader is active in the store build.",
         )
+        assertTrue(
+            section.contains("GATE-03"),
+            "ADR-18 must record that leaving the CLI backends out of the store build was the maintainer's " +
+                "decision (GATE-03, option ii), not a PortSwigger finding.",
+        )
     }
 
     @Test
