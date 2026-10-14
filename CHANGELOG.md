@@ -6,6 +6,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **Suggested targets, queued by hand** - in both builds, passive findings that point to a
+  vulnerability the AI Active Scanner can test are listed in a "Suggested targets" section of the
+  AI Active Scanner Queue dialog ("View queue" on the AI Active Scanner tab), with Suggested At,
+  Vulnerability, Injection Point, URL and Confidence, and counted as "Suggested: N" in the AI Active
+  Scanner status line ("Suggested: N (cap reached)" once the cap below is hit). "Queue N suggested
+  targets" and "Queue selected" ask to enable the AI Active Scanner if it is off and then show the
+  same "Confirm AI Active Scan" dialog as the context menu; nothing is sent to a target before you
+  confirm. With Burp's "Use AI" off in the BApp Store build, the reason is shown and nothing is
+  queued. The list is kept in memory for the session only, holds at most 500 entries (the oldest
+  are dropped first), is never saved and is emptied when the extension unloads. In the BApp Store
+  build these suggestions used to be dropped. Local (non-AI) findings add no suggestions today
+  because every class they detect is passive-only.
+
 ### Changed
 
 - **Two builds from one repository** - the extension now ships as two JARs built from separate
@@ -81,12 +96,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **Bundled agent profiles** name only the built-in tools and point the model at the session's tool
   catalog. Profiles an earlier version installed in `~/.burp-ai-agent/AGENTS` are kept as they are,
   so an existing install keeps its old copies until you delete them.
+- **The AI Active Scan confirmation shows how many hosts** - the context-menu dialog now reads
+  "This will send active test payloads to N target(s) on H host(s)."
+- **The full build's auto-queue reports only what it queued** - with "Auto-queue passive findings
+  for active testing" on, "[AutoQueue] Queued N suggested target(s) to the Active Scanner" counts
+  only the targets the AI Active Scanner accepted, and those leave the suggested list. Targets it
+  could not queue, for example while Burp's "Use AI" is off, stay in the list and nothing is logged.
 
 ### Removed
 
 - Dead code with no caller: the legacy MCP tool registrar and its helpers, the unwired `Alerting`
   webhook client, the interactive PTY CLI connection, and the auto-restart health monitor with its
   "auto-restart" setting.
+
+### Fixed
+
+- **The AI Active Scanner Queue dialog closes when the extension unloads**, and its refresh timer
+  stops.
+
+### Security
+
+- **Issue details are HTML-encoded** - every issue the extension creates (AI Active issues found
+  through Burp Scanner, AI passive and local passive findings, AI Active Scanner confirmations,
+  BountyPrompt issues and issues created through the MCP `issue_create` tool) shows payloads, values
+  taken from the target and AI text as literal text in Burp's issue view and reports. `issue_create`
+  now escapes what an agent sends, so HTML in its detail, remediation or background shows as text.
+  Privacy redaction of cookie values still runs first.
 
 ## [1.0.1] - 2026-10-09
 
