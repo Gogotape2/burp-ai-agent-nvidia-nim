@@ -47,20 +47,37 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 - **The BApp Store build checks Burp's "Use AI" on every request** - one check in Burp's networking
   layer refuses any AI request, Burp AI included, while "Use AI" is off. The refusal is shown in the
   chat, on the status pill ("AI disabled in Burp"), in the scanner panel ("Paused: Use AI is off")
-  and as an MCP tool error.
+  and as an MCP tool error. Starting "AI Passive Scan" from the context menu while "Use AI" is off
+  shows the reason in a dialog. While the scanner panel shows "Paused: Use AI is off", the passive
+  check still files and records its local (non-AI) findings; only the AI analysis is skipped.
 - **Health checks on demand in the BApp Store build** - no startup check and no timer. The pill
   reads "Not checked · click to test" until Save, a backend change, a click on the pill, Test
   connection or the first chat message checks it. The full build keeps its startup check and local
   polling.
+- **The status pill also follows chat replies, in both builds** - each chat reply on the selected
+  backend repaints the pill from its own result, with no extra request. A reply shows "AI: OK", a
+  refusal shows "AI disabled in Burp", and any other error shows "AI: Offline" with the error in the
+  tooltip. That includes cancelling a message and an error a reachable provider returns, for example
+  an unknown model name. The next check or reply repaints it.
 - **MCP `ai_analyze` and `ai_passive_scan`** return an MCP tool error with the reason while "Use AI"
   is off, in both builds, and stay in the tool list.
 - **Unsafe mode** is shown disabled with "No unsafe tools in this build" when the build has no
   unsafe tools.
 - **Drop-in backend JARs** in `~/.burp-ai-agent/backends` load in the full build only. The BApp
-  Store build never creates, lists or loads that directory.
+  Store build never creates, lists or loads that directory. In the full build, a drop-in JAR built
+  against the OkHttp classes or the HTTP helpers that earlier versions bundled no longer loads: the
+  failure is written to Burp's error output and no drop-in backend from that directory is registered
+  on that load (one class loader serves the whole directory). The extension and its built-in
+  backends still load.
 - **OkHttp removed** - every AI request goes through Burp's networking in both builds, and neither
   JAR ships OkHttp.
-- **Ollama** asks for the model's context window on the first message instead of at backend start.
+- **Ollama** sends nothing at backend start. When the context window setting is left at its default
+  (8192), the extension asks Ollama (`/api/show`) for the model's window before it sends a message,
+  through the same "Use AI" check as the chat request (refused in the BApp Store build while "Use AI"
+  is off). Until an answer gives a window, it asks again before every message and every retry of one,
+  for example when the server has no `/api/show` or its answer holds no window. Once an answer gives
+  a window, that connection reuses it. A context window you set yourself is used as is and never
+  asked for.
 - **Bundled agent profiles** name only the built-in tools and point the model at the session's tool
   catalog. Profiles an earlier version installed in `~/.burp-ai-agent/AGENTS` are kept as they are,
   so an existing install keeps its old copies until you delete them.
