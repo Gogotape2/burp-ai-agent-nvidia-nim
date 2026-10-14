@@ -431,46 +431,33 @@ class AiScanCheck(
         val settings = getSettings()
         val policy = RedactionPolicy.fromMode(settings.privacyMode)
         val backendId = settings.preferredBackendId
-        val metadataSection =
-            buildString {
-                appendLine("---")
-                appendLine()
-                appendLine("### AI Analysis Metadata")
-                appendLine()
-                appendLine("**Backend:** $backendId (via Burp Scanner)")
-                appendLine("**Scan Type:** Active (Burp Scanner Integration)")
-                appendLine("**Detection:** ${payload.detectionMethod}")
-                val timestamp =
-                    java.time.Instant
-                        .now()
-                        .toString()
-                        .replace('T', ' ')
-                        .substringBefore('.')
-                appendLine("**Scan Date:** $timestamp UTC")
-                appendLine()
-                appendLine("---")
-            }
-
-        return """
-**AI-Confirmed Vulnerability via Burp Scanner**
-
-**Insertion Point:** ${insertionPoint.name()} (${insertionPoint.type()})
-**Original Value:** ${sanitizeCookiePointText(insertionPoint, policy, insertionPoint.baseValue(), ScannerIssueSupport.ORIGINAL_VALUE_MAX_CHARS)}
-
-**Payload Used:**
-```
-${sanitizeCookiePointText(insertionPoint, policy, payload.value, ScannerIssueSupport.PAYLOAD_VALUE_MAX_CHARS)}
-```
-
-**Detection Method:** ${payload.detectionMethod}
-**Evidence:** $evidence
-
-**Risk Level:** ${payload.risk}
-
-$metadataSection
-
-_(Confirmed via active exploitation testing integrated with Burp Scanner)_
-        """.trim()
+        val timestamp =
+            java.time.Instant
+                .now()
+                .toString()
+                .replace('T', ' ')
+                .substringBefore('.')
+        // Both controlled values pass the cookie gate RAW; escaping happens once, on the whole list.
+        val lines =
+            listOf(
+                "AI-confirmed vulnerability via Burp Scanner",
+                "",
+                "Insertion Point: ${insertionPoint.name()} (${insertionPoint.type()})",
+                "Original Value: ${sanitizeCookiePointText(insertionPoint, policy, insertionPoint.baseValue(), ScannerIssueSupport.ORIGINAL_VALUE_MAX_CHARS)}",
+                "Payload Used: ${sanitizeCookiePointText(insertionPoint, policy, payload.value, ScannerIssueSupport.PAYLOAD_VALUE_MAX_CHARS)}",
+                "Detection Method: ${payload.detectionMethod}",
+                "Evidence: $evidence",
+                "Risk Level: ${payload.risk}",
+                "",
+                "AI Analysis Metadata",
+                "  Backend: $backendId (via Burp Scanner)",
+                "  Scan Type: Active (Burp Scanner Integration)",
+                "  Detection: ${payload.detectionMethod}",
+                "  Scan Date: $timestamp UTC",
+                "",
+                "Confirmed via active exploitation testing integrated with Burp Scanner",
+            )
+        return IssueUtils.formatIssueDetailHtml(lines)
     }
 
     private fun mapConfidence(payload: Payload): AuditIssueConfidence =

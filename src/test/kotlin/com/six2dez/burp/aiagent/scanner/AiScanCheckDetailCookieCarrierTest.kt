@@ -103,7 +103,7 @@ class AiScanCheckDetailCookieCarrierTest {
     }
 
     // =============================================================================================
-    // ROUTE 2'S `**Payload Used:**` LINE - WHAT A GREEN RUN BELOW DOES AND DOES NOT MEAN.
+    // ROUTE 2'S `Payload Used:` LINE - WHAT A GREEN RUN BELOW DOES AND DOES NOT MEAN.
     //
     // Read this before the first assertion. `ISSUE_DETAIL_CARRIER_DISPOSITION` and `26-SECURITY.md`
     // row 315 both name THIS CLASS as the committed probe for detail line (4). Until plan 28-07 that
@@ -112,9 +112,9 @@ class AiScanCheckDetailCookieCarrierTest {
     // leak, and no artifact may cite them as one.
     //
     // THE ASYMMETRY, in `AiScanCheck.buildDetail`'s own terms rather than a paraphrase of them. The
-    // `**Original Value:**` line IS a measured carrier: `baseValue()` on a `PARAM_COOKIE` insertion
+    // `Original Value:` line IS a measured carrier: `baseValue()` on a `PARAM_COOKIE` insertion
     // point is the operator's raw cookie value, taken by Burp from proxied traffic. The
-    // `**Payload Used:**` line is NOT a carrier at HEAD: this class sources payloads from
+    // `Payload Used:` line is NOT a carrier at HEAD: this class sources payloads from
     // `payloadGenerator.getQuickPayloads(...)`, which returns entries from a STATIC table and
     // interpolates no value (`PayloadGenerator.kt:633-639`) - unlike `ActiveAiScanner`'s
     // context-aware route, which is what made route 1's payload line a real leak. It is controlled
@@ -135,7 +135,7 @@ class AiScanCheckDetailCookieCarrierTest {
         assertEquals(
             ScannerIssueSupport.INJECTION_VALUE_STRIPPED_MARKER,
             rendered,
-            "STRICT: a PARAM_COOKIE point's fenced **Payload Used:** value must be the shared " +
+            "STRICT: a PARAM_COOKIE point's 'Payload Used:' value must be the shared " +
                 "marker '${ScannerIssueSupport.INJECTION_VALUE_STRIPPED_MARKER}'. It was " +
                 "'$rendered'. The marker is REFERENCED from ScannerIssueSupport and never retyped " +
                 "here - D-28-05's one-vocabulary rule makes a second marker literal in this file " +
@@ -151,7 +151,7 @@ class AiScanCheckDetailCookieCarrierTest {
         assertEquals(
             ScannerIssueSupport.INJECTION_VALUE_STRIPPED_MARKER,
             rendered,
-            "BALANCED: a PARAM_COOKIE point's fenced **Payload Used:** value must be the shared " +
+            "BALANCED: a PARAM_COOKIE point's 'Payload Used:' value must be the shared " +
                 "marker '${ScannerIssueSupport.INJECTION_VALUE_STRIPPED_MARKER}'. It was " +
                 "'$rendered'. RedactionPolicy.fromMode sets stripCookies = true for BALANCED as " +
                 "well as STRICT, so a gate that only fires under STRICT is keyed on the MODE rather " +
@@ -170,8 +170,8 @@ class AiScanCheckDetailCookieCarrierTest {
         assertEquals(
             PAYLOAD.value,
             rendered,
-            "OFF: RedactionPolicy.fromMode(OFF) sets stripCookies = false, so the fenced " +
-                "**Payload Used:** value must be the fixture payload '${PAYLOAD.value}' VERBATIM. " +
+            "OFF: RedactionPolicy.fromMode(OFF) sets stripCookies = false, so the " +
+                "'Payload Used:' value must be the fixture payload '${PAYLOAD.value}' VERBATIM. " +
                 "It was '$rendered'. If it is not, the STRICT and BALANCED assertions above are " +
                 "vacuous - they would pass on a line that never carried a value in any mode.",
         )
@@ -189,8 +189,8 @@ class AiScanCheckDetailCookieCarrierTest {
         assertEquals(
             PAYLOAD.value,
             rendered,
-            "STRICT: a PARAM_URL point carrying the IDENTICAL payload must keep its fenced " +
-                "**Payload Used:** value verbatim as '${PAYLOAD.value}'. It was '$rendered'. The " +
+            "STRICT: a PARAM_URL point carrying the IDENTICAL payload must keep its " +
+                "'Payload Used:' value verbatim as '${PAYLOAD.value}'. It was '$rendered'. The " +
                 "gate is keyed on AuditInsertionPointType.PARAM_COOKIE; stripping here would mean " +
                 "the payload-line gate is not type-keyed at all, and the two stripping assertions " +
                 "above would prove nothing about the TYPE.",
@@ -444,7 +444,8 @@ class AiScanCheckDetailCookieCarrierTest {
     ): String = AiScanCheck(mock<MontoyaApi>(defaultAnswer = Answers.RETURNS_DEEP_STUBS)) { settingsFor(mode) }.buildDetail(point, PAYLOAD, EVIDENCE)
 
     /**
-     * The single value line route 2 renders inside the fence that follows [PAYLOAD_USED_PREFIX].
+     * The value route 2 renders in the single `<br>`-joined, HTML-escaped segment that starts with
+     * [PAYLOAD_USED_PREFIX] (Phase 32 D-10 moved route 2 to route 1's escaped `<br>` shape).
      *
      * Shaped after route 1's `originalValueRenderedFor`, INCLUDING its single-producer assertion -
      * and therefore including the limitation D-28-06 named for it, stated here so a copy of the
@@ -452,47 +453,32 @@ class AiScanCheckDetailCookieCarrierTest {
      * producer itself returned, and is structurally unable to see a second producer in another file.
      * It is NOT the repository-wide detail-producer gate `WR-01` describes, that gate remains a
      * NAMED RESIDUAL, and no artifact may cite this assertion as one.
+     *
+     * The fixture values ([PAYLOAD], [DETAIL_SENTINEL], the shared marker) contain no `&`, `<` or
+     * `>`, so the escaping leaves them byte-identical and the text after the prefix IS the value.
      */
     private fun payloadLineRenderedFor(
         point: AuditInsertionPoint,
         mode: PrivacyMode,
     ): String {
-        val lines = detailFor(point, mode).lines()
-        val prefixIndices = lines.indices.filter { lines[it].contains(PAYLOAD_USED_PREFIX) }
+        val segments = detailFor(point, mode).split(LINE_BREAK)
+        val prefixIndices = segments.indices.filter { segments[it].startsWith(PAYLOAD_USED_PREFIX) }
 
         assertEquals(
             1,
             prefixIndices.size,
-            "SINGLE PRODUCER: exactly one detail line may carry the '$PAYLOAD_USED_PREFIX' prefix. " +
+            "SINGLE PRODUCER: exactly one detail segment may carry the '$PAYLOAD_USED_PREFIX' prefix. " +
                 "Found ${prefixIndices.size} at indices $prefixIndices. A second producer is how a " +
-                "control like this gets bypassed without anyone editing it. Detail was: $lines",
+                "control like this gets bypassed without anyone editing it. Detail was: $segments",
         )
 
-        val prefixIndex = prefixIndices[0]
-        val valueIndex = prefixIndex + PAYLOAD_VALUE_LINE_OFFSET
-
-        assertTrue(
-            valueIndex < lines.size,
-            "the fenced value line must exist $PAYLOAD_VALUE_LINE_OFFSET lines after the " +
-                "'$PAYLOAD_USED_PREFIX' prefix (prefix, opening fence, then value). The detail " +
-                "ended first, at ${lines.size} lines. Detail was: $lines",
-        )
-        assertEquals(
-            PAYLOAD_FENCE,
-            lines[prefixIndex + 1],
-            "the line immediately after '$PAYLOAD_USED_PREFIX' must be the opening fence. It was " +
-                "'${lines[prefixIndex + 1]}'. If buildDetail's rendered shape changed, this helper " +
-                "is reading the WRONG line and every assertion built on it silently measures " +
-                "something else - which is why the shape is asserted rather than assumed.",
-        )
-
-        return lines[valueIndex]
+        return segments[prefixIndices[0]].removePrefix(PAYLOAD_USED_PREFIX)
     }
 
     private companion object {
         /**
          * The value carried by the insertion point and written into the detail blob by
-         * `**Original Value:**`.
+         * `Original Value:`.
          *
          * Low-entropy hyphenated words: no digits, no `=`, no metacharacters, so only the new type
          * gate can plausibly remove it. Deliberately does NOT contain the token `cookie`, so no
@@ -518,24 +504,18 @@ class AiScanCheckDetailCookieCarrierTest {
         /** The positive control's header line as WRITTEN, before any rule fires. */
         const val POSITIVE_CONTROL_HEADER_BEFORE = "Cookie: $POSITIVE_CONTROL_COOKIE_NAME=$POSITIVE_CONTROL_COOKIE_VALUE"
 
-        /** The rendered prefix of the detail line this plan's control owns, as route 2 spells it. */
-        const val ORIGINAL_VALUE_PREFIX = "**Original Value:** "
+        /** The rendered prefix of the detail segment this plan's control owns, as route 2 spells it. */
+        const val ORIGINAL_VALUE_PREFIX = "Original Value: "
 
         /**
-         * The rendered prefix of route 2's SECOND controlled detail line, as `buildDetail` spells
-         * it. Route 2 renders this line differently from route 1: the prefix sits on its OWN line,
-         * followed by a fence line, the sanitized value alone on the next line, then a closing fence.
+         * The rendered prefix of route 2's SECOND controlled detail segment, as `buildDetail` spells
+         * it. Since Phase 32 D-10 the prefix and the sanitized, escaped value share ONE
+         * `<br>`-separated segment, the same shape route 1 renders.
          */
-        const val PAYLOAD_USED_PREFIX = "**Payload Used:**"
+        const val PAYLOAD_USED_PREFIX = "Payload Used: "
 
-        /**
-         * The fence line opening and closing the payload block. A backtick is not an escape
-         * character in a Kotlin string literal, so it is written directly.
-         */
-        const val PAYLOAD_FENCE = "```"
-
-        /** Prefix line, opening fence line, then the value line. */
-        const val PAYLOAD_VALUE_LINE_OFFSET = 2
+        /** The separator `IssueUtils.formatIssueDetailHtml` joins the detail's lines with. */
+        const val LINE_BREAK = "<br>"
 
         /**
          * The last line `AiScanCheck.buildDetail` writes, used as the non-vacuity tail marker. No
