@@ -70,6 +70,45 @@ class ScannerStatusTextTest {
         assertEquals("Active: OFF | Confirmed: 1", activeAiStatusText(active(enabled = false, paused = true)))
     }
 
+    // --- Phase 32 / D-02, D-07: the local suggested-targets counter -------------------------------
+
+    @Test
+    fun anOnActiveScannerEndsWithTheSuggestedCounter() {
+        assertEquals(
+            "Active: ON | Queue: 0 | Scans: 4 | Confirmed: 1 | Suggested: 3",
+            activeAiStatusText(active(enabled = true, paused = false), suggested = 3),
+        )
+        assertEquals(
+            "Active: ON | Paused: Use AI is off | Queue: 0 | Scans: 4 | Confirmed: 1 | Suggested: 2",
+            activeAiStatusText(active(enabled = true, paused = true), suggested = 2),
+        )
+    }
+
+    @Test
+    fun anOffActiveScannerStillShowsTheSuggestedCounter() {
+        assertEquals(
+            "Active: OFF | Confirmed: 1 | Suggested: 3",
+            activeAiStatusText(active(enabled = false, paused = false), suggested = 3),
+        )
+    }
+
+    @Test
+    fun theCounterSaysWhenTheCapWasReached() {
+        val text = activeAiStatusText(active(enabled = true, paused = false), suggested = 500, suggestedCapReached = true)
+
+        assertTrue(text.endsWith(" | Suggested: 500 (cap reached)"), text)
+    }
+
+    @Test
+    fun zeroSuggestionsLeaveEveryStatusLineUnchanged() {
+        assertEquals("Active: ON | Queue: 0 | Scans: 4 | Confirmed: 1", activeAiStatusText(active(enabled = true, paused = false), suggested = 0))
+        assertEquals("Active: OFF | Confirmed: 1", activeAiStatusText(active(enabled = false, paused = false), suggested = 0))
+        assertEquals(
+            "Active: ON | Paused: Use AI is off | Queue: 0 | Scans: 4 | Confirmed: 1",
+            activeAiStatusText(active(enabled = true, paused = true), suggested = 0, suggestedCapReached = true),
+        )
+    }
+
     private fun active(
         enabled: Boolean,
         paused: Boolean,
