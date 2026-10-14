@@ -13,6 +13,8 @@ import com.six2dez.burp.aiagent.mcp.tools.McpToolExecutor
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.scanner.ActiveAiScanner
 import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
+import com.six2dez.burp.aiagent.scanner.SuggestedTarget
+import com.six2dez.burp.aiagent.scanner.SuggestedTargetList
 import com.six2dez.burp.aiagent.spi.AiAccessPolicy
 import com.six2dez.burp.aiagent.spi.BackendModelHint
 import com.six2dez.burp.aiagent.spi.ExtensionPlugin
@@ -55,6 +57,9 @@ import java.io.File
  * Phase 31 / D-14 (GATE-03, WR-05, ADR-18 OQ8) adds the drop-in loader proofs: no ExternalBackendSource
  * provider, a registry that holds no file or class loader and creates no directory across reloads, and
  * a source guard that no core file names the drop-in directory or opens a URL class loader.
+ *
+ * Phase 32 SC1 extends the passive-path guards: no active-scanner field on the passive scanner, the
+ * suggested-target list or its entries, and no active-scanner name or queue call in any passive-path file.
  */
 class StoreFlavorSeamsTest {
     @Test
@@ -198,16 +203,43 @@ class StoreFlavorSeamsTest {
     /**
      * Plan 29-16 / D-02, T-29-33: the passive scanner offers suggested targets only to an optional
      * SuggestedTargetSink, so it must hold no reference through which it could queue target traffic.
+     * Phase 32 SC1 extends the guard to the core list and its entries, which hold the same targets.
      */
     @Test
-    fun passiveScannerDeclaresNoActiveScannerField() {
+    fun suggestionPathDeclaresNoActiveScannerField() {
         val activeTyped =
-            generateSequence<Class<*>>(PassiveAiScanner::class.java) { it.superclass }
-                .flatMap { it.declaredFields.asSequence() }
+            listOf(PassiveAiScanner::class.java, SuggestedTargetList::class.java, SuggestedTarget::class.java)
+                .flatMap { start -> generateSequence<Class<*>>(start) { it.superclass }.toList() }
+                .flatMap { it.declaredFields.asList() }
                 .filter { ActiveAiScanner::class.java.isAssignableFrom(it.type) }
                 .map { "${it.declaringClass.simpleName}.${it.name}" }
-                .toList()
-        assertEquals(emptyList<String>(), activeTyped, "PassiveAiScanner fields typed ActiveAiScanner")
+        assertEquals(emptyList<String>(), activeTyped, "suggestion-path fields typed as the active scanner")
+    }
+
+    /**
+     * Phase 32 SC1 (T-32-01): no passive-path file names the active scanner class or any of its queue
+     * calls, comments included, so the passive check has no code path that queues target traffic.
+     */
+    @Test
+    fun passivePathNamesNoActiveQueueCall() {
+        val passivePath =
+            SourceRoots.kotlinFiles().filter { file ->
+                val path = SourceRoots.packageRelativePath(file)
+                (path.startsWith("scanner/PassiveAiScanner") && path.endsWith(".kt")) ||
+                    path == "scanner/AiPassiveScanCheck.kt" ||
+                    path == "scanner/SuggestedTargetList.kt"
+            }
+        val names = passivePath.map { SourceRoots.packageRelativePath(it) }
+        assertTrue(passivePath.size >= MIN_PASSIVE_PATH_FILES, "walked only ${passivePath.size} passive-path files: $names")
+        assertTrue("scanner/SuggestedTargetList.kt" in names, "the walk missed SuggestedTargetList.kt: $names")
+        val hits =
+            passivePath.flatMap { file ->
+                val path = SourceRoots.packageRelativePath(file)
+                file.readLines(Charsets.UTF_8).flatMapIndexed { index, line ->
+                    ACTIVE_QUEUE_TOKENS.filter { it in line }.map { "$path:${index + 1}: $it" }
+                }
+            }
+        assertEquals(emptyList<String>(), hits, "passive-path files must not name the active scanner or its queue calls")
     }
 
     @Test
@@ -262,6 +294,12 @@ class StoreFlavorSeamsTest {
     }
 
     private companion object {
+        /** scanner/PassiveAiScanner*.kt (8 today), AiPassiveScanCheck.kt and SuggestedTargetList.kt. */
+        const val MIN_PASSIVE_PATH_FILES = 10
+
+        /** The active scanner's class name and its queue calls (Phase 32 SC1). */
+        val ACTIVE_QUEUE_TOKENS = listOf("ActiveAiScanner", "queueTarget(", "tryQueueTarget(", "queueSuggested(")
+
         val NATIVE_IDS =
             setOf(
                 "status",
