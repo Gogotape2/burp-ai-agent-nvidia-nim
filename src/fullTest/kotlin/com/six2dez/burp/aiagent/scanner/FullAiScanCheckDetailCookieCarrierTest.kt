@@ -346,7 +346,7 @@ class FullAiScanCheckDetailCookieCarrierTest {
     private companion object {
         /**
          * The value carried by the insertion point and written into the detail blob by
-         * `**Original Value:**`.
+         * `Original Value:`.
          *
          * Low-entropy hyphenated words: no digits, no `=`, no metacharacters, so only the new type
          * gate can plausibly remove it. Deliberately does NOT contain the token `cookie`, so no
@@ -372,8 +372,12 @@ class FullAiScanCheckDetailCookieCarrierTest {
         /** The positive control's header line as WRITTEN, before any rule fires. */
         const val POSITIVE_CONTROL_HEADER_BEFORE = "Cookie: $POSITIVE_CONTROL_COOKIE_NAME=$POSITIVE_CONTROL_COOKIE_VALUE"
 
-        /** The rendered prefix of the detail line this plan's control owns, as route 2 spells it. */
-        const val ORIGINAL_VALUE_PREFIX = "**Original Value:** "
+        /**
+         * The rendered prefix of the detail segment this plan's control owns, as route 2 spells it.
+         * Since Phase 32 D-10 the detail is an HTML-escaped, `<br>`-joined line list; the fixture
+         * values contain no `&`, `<` or `>`, so the escaping leaves them byte-identical.
+         */
+        const val ORIGINAL_VALUE_PREFIX = "Original Value: "
 
         /**
          * The last line `AiScanCheck.buildDetail` writes, used as the non-vacuity tail marker. No
