@@ -247,7 +247,10 @@ class BackendRegistry internal constructor(
     }
 
     // TooGenericExceptionCaught: an external source is plug-in code and may throw anything; one broken
-    // source must not abort a reload or an unload, and the built-in backends stay registered.
+    // source must not abort a reload or an unload, and the built-in backends stay registered. Plug-in
+    // code may also fail to link (a stale drop-in compiled against classes or methods the extension
+    // removed, Phase 31 gap closure WR-06), so LinkageError is caught too. Only LinkageError is added
+    // among the Errors: a VirtualMachineError (OutOfMemoryError) still propagates.
     @Suppress("TooGenericExceptionCaught")
     private fun guardedSource(
         source: ExternalBackendSource,
@@ -256,6 +259,8 @@ class BackendRegistry internal constructor(
         try {
             action()
         } catch (e: Exception) {
+            api.logging().logToError("External backend source ${source.javaClass.name} failed: ${e.message}")
+        } catch (e: LinkageError) {
             api.logging().logToError("External backend source ${source.javaClass.name} failed: ${e.message}")
         }
     }

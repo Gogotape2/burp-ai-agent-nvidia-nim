@@ -6,7 +6,6 @@ import com.six2dez.burp.aiagent.spi.ExternalBackendSource
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.atLeast
@@ -99,7 +98,7 @@ class BackendRegistryExternalSourceTest {
             logError: (String) -> Unit,
         ): List<AiBackend> = throw failure
 
-        override fun close() {}
+        override fun close() = Unit
     }
 
     private class CloseThrowingSource(
@@ -121,7 +120,7 @@ class BackendRegistryExternalSourceTest {
             logError: (String) -> Unit,
         ): List<AiBackend> = listOf(StubBackend())
 
-        override fun close() {}
+        override fun close() = Unit
     }
 
     private class StubBackend : AiBackend {
