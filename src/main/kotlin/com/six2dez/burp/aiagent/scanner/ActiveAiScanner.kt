@@ -213,6 +213,9 @@ class ActiveAiScanner(
         }
     }
 
+    // TDD RED stub (32-02 Task 2): replaced by the moved queueTarget body in the GREEN commit.
+    fun tryQueueTarget(target: ActiveScanTarget): Boolean = target.id.isEmpty()
+
     /**
      * Queue a target for active scanning
      * Called by PassiveAiScanner when it detects a potential vulnerability
