@@ -272,12 +272,19 @@ class PassiveAiScanner(
      * refusals write nothing (the scanner panel shows the live paused state instead). The transport
      * choke point (plan 31-01) still refuses any provider request that slips past this pre-check.
      */
-    private fun aiGateOpen(settings: AgentSettings): Boolean {
-        val refusal = supervisor.refusalForSavedBackend(settings.preferredBackendId) ?: return true
+    private fun aiGateOpen(settings: AgentSettings): Boolean = aiGateRefusal(settings) == null
+
+    /**
+     * Phase 31 gap closure WR-04: the refusal behind [aiGateOpen], or null when the policy allows the
+     * saved backend. Writes the once-per-load "Paused" Output line on the first refusal, exactly as
+     * [aiGateOpen] always did, and hands the refusal text back so a manual scan can show it.
+     */
+    private fun aiGateRefusal(settings: AgentSettings): String? {
+        val refusal = supervisor.refusalForSavedBackend(settings.preferredBackendId) ?: return null
         if (aiGateRefusalLogged.compareAndSet(false, true)) {
             api.logging().logToOutput("[PassiveAiScanner] Paused: $refusal")
         }
-        return false
+        return refusal
     }
 
     /**
@@ -390,25 +397,46 @@ class PassiveAiScanner(
     fun getManualScanProgress(): Triple<Boolean, Int, Int> = Triple(manualScanInProgress.get(), manualScanCompleted.get(), manualScanTotal.get())
 
     /**
-     * Manually scan a list of requests (from context menu).
+     * Manually scan a list of requests (MCP `ai_passive_scan` and other count-only callers).
      * Does not require the passive scanner to be enabled.
-     * Returns the number of requests queued for analysis.
+     * Returns the number of requests queued for analysis, 0 when nothing was queued (a refusal included).
+     * Callers that show the outcome to a user call [startManualScan] instead (Phase 31 gap closure WR-04).
      */
     fun manualScan(
         requests: List<HttpRequestResponse>,
         onProgress: (Int, Int) -> Unit = { _, _ -> },
-    ): Int {
-        if (requests.isEmpty()) return 0
+    ): Int =
+        when (val start = startManualScan(requests, onProgress)) {
+            is ManualPassiveScanStart.Queued -> start.count
+            is ManualPassiveScanStart.Refused -> 0
+        }
+
+    /**
+     * Manually scan a list of requests (from the context menu) and say what happened.
+     * Does not require the passive scanner to be enabled.
+     *
+     * Phase 31 gap closure WR-04 / D-01, D-02: a scan the AI access policy refuses returns
+     * [ManualPassiveScanStart.Refused] with the policy's refusal text, queues nothing and is not
+     * retried later, so the context menu can show the refusal where the user acted. Otherwise returns
+     * [ManualPassiveScanStart.Queued] with the number of requests queued.
+     */
+    @Suppress("ReturnCount") // body moved from manualScan (baseline-keyed on its signature); ADR-17 forbids a new entry
+    fun startManualScan(
+        requests: List<HttpRequestResponse>,
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+    ): ManualPassiveScanStart {
+        if (requests.isEmpty()) return ManualPassiveScanStart.Queued(0)
         // CAP-04 / WR-01: manual passive scan is scanner work that enqueues AI analysis, so it must
         // respect the hard-cap pause just like enqueueForScanCheck (line ~356). When paused, queue
-        // nothing and return 0 (callers already handle a 0 count) so the advertised spend ceiling is
-        // a real ceiling. Does NOT clear the KB or flip the user's enabled toggle. Chat stays usable.
+        // nothing and return a 0 count (callers already handle a 0 count) so the advertised spend
+        // ceiling is a real ceiling. Does NOT clear the KB or flip the user's enabled toggle. Chat
+        // stays usable.
         if (budgetPaused.get()) {
             api.logging().logToOutput("[PassiveAiScanner] Manual scan skipped — token hard cap reached")
-            return 0
+            return ManualPassiveScanStart.Queued(0)
         }
         // Phase 31 / D-02: a refused manual scan queues nothing and is not retried later.
-        if (!aiGateOpen(getSettings())) return 0
+        aiGateRefusal(getSettings())?.let { refusal -> return ManualPassiveScanStart.Refused(refusal) }
 
         val total = requests.size
         manualScanTotal.set(total)
@@ -446,7 +474,7 @@ class PassiveAiScanner(
             }
         }
 
-        return total
+        return ManualPassiveScanStart.Queued(total)
     }
 
     // doAnalysis, analyzeManually, analyzeInBackground, flushBatch,

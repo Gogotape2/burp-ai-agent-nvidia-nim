@@ -157,13 +157,9 @@ object UiActions {
         // AI Vulnerability Scan option (Passive)
         val aiScan = JMenuItem("AI Passive Scan ($targetLabel)")
         aiScan.addActionListener {
-            val count = passiveAiScanner.manualScan(targets.value)
-            JOptionPane.showMessageDialog(
-                tab.root,
-                "Queued $count request(s) for AI passive analysis.\n\nFindings will appear in Target → Issues with [AI Passive] prefix.",
-                "AI Passive Scan Started",
-                JOptionPane.INFORMATION_MESSAGE,
-            )
+            // Phase 31 gap closure WR-04 / D-01: a refused scan shows the policy's refusal text.
+            val dialog = ManualScanDialogs.passive(passiveAiScanner.startManualScan(targets.value))
+            JOptionPane.showMessageDialog(tab.root, dialog.message, dialog.title, dialog.messageType)
         }
 
         // AI Active Scan option
