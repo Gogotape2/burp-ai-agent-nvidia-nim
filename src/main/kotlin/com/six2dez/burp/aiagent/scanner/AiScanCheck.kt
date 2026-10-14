@@ -115,8 +115,9 @@ class AiScanCheck(
      * is gone by serialization time — and the redactor's three cookie rules each key on framing a
      * detail line does not carry: `cookieHeaderRegex`/`setCookieHeaderRegex` need a logical-line
      * `Cookie:`-style header name, `redactCookieSections` needs a `=== COOKIES ===` span, and
-     * `cookieTypedParamRegex` needs a trailing ` (COOKIE)` marker. [buildDetail] emits a bare
-     * `**Original Value:** <value>` markdown line, which carries none of the three. An issue built
+     * `cookieTypedParamRegex` needs a trailing ` (COOKIE)` marker. [buildDetail] emits an
+     * `Original Value: <value>` entry inside an HTML-escaped, `<br>`-joined blob (Phase 32 D-10),
+     * which still carries none of the three. An issue built
      * while `privacyMode` was `OFF` therefore still emits that cookie value on a later STRICT read
      * UNLESS one of the generic, non-cookie rules happens to match the value's own shape. That
      * conditional is the honest form of this residual, and the width of the condition is unmeasured
@@ -401,9 +402,9 @@ class AiScanCheck(
      * identically under STRICT, BALANCED and OFF.
      *
      * THE TWO CONTROLLED LINES ARE NOT SYMMETRIC, and recording that is the point of this
-     * paragraph. The `**Original Value:**` line IS a measured carrier: `baseValue()` on a
+     * paragraph. The `Original Value:` line IS a measured carrier: `baseValue()` on a
      * `PARAM_COOKIE` insertion point is the operator's raw cookie value, taken by Burp from proxied
-     * traffic. The `**Payload Used:**` line is NOT a carrier at HEAD: this class sources payloads
+     * traffic. The `Payload Used:` line is NOT a carrier at HEAD: this class sources payloads
      * from `payloadGenerator.getQuickPayloads(...)`, which returns entries from a STATIC table and
      * interpolates no value (`PayloadGenerator.kt:633-639`) — unlike `ActiveAiScanner`'s
      * context-aware route, which is what made route 1's payload line a real leak. It is controlled
@@ -422,6 +423,14 @@ class AiScanCheck(
      * deliberately UNTOUCHED by this control: the operator keeps the raw attack request
      * byte-for-byte in the same issue's Burp evidence pane, which Burp renders directly and never
      * passes through `Redaction.apply`. That is the same accepted trade route 1 records.
+     *
+     * Phase 32 SCAN-02 / D-10 — ONE ESCAPING PATH. Both controlled values pass the cookie gate RAW,
+     * then the whole line list goes through `IssueUtils.formatIssueDetailHtml`, the formatter route 1
+     * already uses (escape `&`, `<`, `>`, join with `<br>`), so a payload, a target-derived value or
+     * the evidence renders as literal text in Burp's issue view. Escaping never runs before the gate
+     * decides. It also removes no character the generic token rules match except `&`, `<` and `>`,
+     * which those token shapes do not contain (32-RESEARCH Pitfall 5), so the read-time pass sees the
+     * same values it saw in the old Markdown shape.
      */
     internal fun buildDetail(
         insertionPoint: AuditInsertionPoint,
@@ -532,7 +541,7 @@ class AiScanCheck(
          *
          * THE DECISION: NAME THE RESIDUAL, DO NOT WIDEN THE PREDICATE. Four reasons, written down so
          * the choice is not silently re-taken by inference:
-         *  1. Widening would strip `**Original Value:**` on EVERY header-typed, user-provided,
+         *  1. Widening would strip `Original Value:` on EVERY header-typed, user-provided,
          *     extension-provided and unknown insertion point — removing the operator's own value from
          *     every non-cookie header finding. That is a product behaviour change nobody asked for.
          *  2. It contradicts D-28-01's deliberate pass-through discipline for non-cookie types, which

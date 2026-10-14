@@ -898,7 +898,7 @@ $resolvedUserPrompt
         }
     }
 
-    private fun buildIssueDetailHtml(
+    internal fun buildIssueDetailHtml(
         definition: BountyPromptDefinition,
         finding: com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptFinding,
     ): String {
@@ -920,18 +920,7 @@ $resolvedUserPrompt
                 .substringBefore('.')
         lines.add("  Analysis Date: $timestamp UTC")
 
-        return lines.joinToString("<br>") { line ->
-            val escaped =
-                line
-                    .replace("&", "&amp;")
-                    .replace("<", "&lt;")
-                    .replace(">", "&gt;")
-            if (escaped.startsWith("  ")) {
-                "&nbsp;&nbsp;" + escaped.drop(2)
-            } else {
-                escaped
-            }
-        }
+        return IssueUtils.formatIssueDetailHtml(lines)
     }
 
     private fun mapSeverity(raw: String): AuditIssueSeverity =

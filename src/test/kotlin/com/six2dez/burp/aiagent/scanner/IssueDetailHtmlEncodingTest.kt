@@ -198,8 +198,7 @@ class IssueDetailHtmlEncodingTest {
             tagsUsed = emptySet(),
         )
 
-    private fun bountyPromptFinding(detail: String): BountyPromptFinding =
-        BountyPromptFinding(title = "finding", detail = detail, severity = "Medium", confidence = BOUNTY_FINDING_CONFIDENCE)
+    private fun bountyPromptFinding(detail: String): BountyPromptFinding = BountyPromptFinding(title = "finding", detail = detail, severity = "Medium", confidence = BOUNTY_FINDING_CONFIDENCE)
 
     // ---------------------------------------------------------------------------------------------
     // AiScanCheck harness (same shape as AiScanCheckDetailCookieCarrierTest)
