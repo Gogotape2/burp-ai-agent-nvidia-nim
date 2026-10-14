@@ -395,3 +395,24 @@ data class ActiveScannerStatus(
     /** Phase 31 / D-02: the scanner is on but the AI access policy refuses its saved backend. */
     val aiGatePaused: Boolean = false,
 )
+
+/**
+ * Phase 32 / D-04, D-08: what a hand-queued batch of suggested targets led to, so the caller that
+ * shows it to the user can tell a refusal apart from a batch the scanner queued in full or in part.
+ */
+sealed interface SuggestedQueueOutcome {
+    /** The AI access policy refused the saved backend; [reason] is the policy's refusal text, verbatim. Nothing was queued. */
+    data class Refused(
+        val reason: String,
+    ) : SuggestedQueueOutcome
+
+    /**
+     * [queued] holds exactly the targets that reached the active queue (the caller removes those, and
+     * only those, from the suggested list). [skipped] counts the rest: out of scope, passive-only,
+     * outside the scan mode, or the queue full.
+     */
+    data class Queued(
+        val queued: List<ActiveScanTarget>,
+        val skipped: Int,
+    ) : SuggestedQueueOutcome
+}

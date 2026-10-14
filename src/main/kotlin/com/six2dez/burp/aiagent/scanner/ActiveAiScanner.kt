@@ -347,6 +347,51 @@ class ActiveAiScanner(
         return queued
     }
 
+    /**
+     * Phase 32 / D-04 — the AI access policy's refusal text for the saved backend, or null when the
+     * policy allows it. The UI asks this before it switches the scanner on for a hand-queued batch of
+     * suggested targets (research A3), so a refused action never turns the scanner on. Writes no
+     * Output line: the caller shows the reason in its dialog.
+     */
+    fun suggestedQueueRefusal(): String? = supervisor.refusalForSavedBackend(getSettings().preferredBackendId)
+
+    /**
+     * Phase 32 / D-04, D-08 — queue suggested targets because the user asked for it.
+     *
+     * Returns [SuggestedQueueOutcome.Refused] with the policy's text before any target is read when
+     * the AI access policy refuses the saved backend. Otherwise keeps, in order, the targets whose
+     * class is not passive-only, is allowed for [scanMode], whose URL passes the scope check when
+     * [scopeOnly] is set, and that fit the queue, and returns them in [SuggestedQueueOutcome.Queued]
+     * with the count left out.
+     *
+     * Like [manualScan], this ignores the 1-hour `processedTargets` window of [queueTarget]: the user
+     * asked explicitly, so a target the auto-queue took a moment ago is queued again (research A4).
+     * The confirmation dialog is the caller's job. The AI calls of the queued scans still go through
+     * the Phase 31 gate at the transport.
+     */
+    fun queueSuggested(targets: List<ActiveScanTarget>): SuggestedQueueOutcome {
+        val refusal = suggestedQueueRefusal()
+        if (refusal != null) return SuggestedQueueOutcome.Refused(refusal)
+
+        val queued =
+            targets.filter { target ->
+                val vulnClass = target.vulnHint.vulnClass
+                vulnClass !in ScanPolicy.PASSIVE_ONLY_VULN_CLASSES &&
+                    ScanPolicy.isAllowedForMode(scanMode, vulnClass) &&
+                    (!scopeOnly || api.scope().isInScope(target.originalRequest.request().url())) &&
+                    offerIfQueueNotFull(target.copy(queuedAtEpochMs = System.currentTimeMillis()))
+            }
+
+        if (queued.isNotEmpty()) {
+            api.logging().logToOutput("[ActiveAiScanner] Suggested targets: ${queued.size} queued by the user")
+            if (!scanning.get() && enabled.get()) {
+                startProcessing()
+            }
+        }
+
+        return SuggestedQueueOutcome.Queued(queued, targets.size - queued.size)
+    }
+
     private fun offerIfQueueNotFull(target: ActiveScanTarget): Boolean {
         if (scanQueue.size >= maxQueueSize.coerceAtLeast(1)) {
             api.logging().logToError("[ActiveAiScanner] Queue limit reached ($maxQueueSize). Dropping target: ${target.id}")
