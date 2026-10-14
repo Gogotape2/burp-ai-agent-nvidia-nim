@@ -15,6 +15,7 @@ import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.components.DependencyBanner
 import com.six2dez.burp.aiagent.ui.components.SubtleNotice
 import com.six2dez.burp.aiagent.ui.components.ToggleSwitch
+import com.six2dez.burp.aiagent.ui.panels.ActiveScanQueuePanel
 import java.awt.BorderLayout
 import java.awt.Cursor
 import java.awt.Dimension
@@ -1083,6 +1084,8 @@ class MainTab(
         // so it cannot itself block the EDT on an in-flight bounded MCP stop.
         settingsPersistQueue.dispose()
         settingsPanel.shutdown()
+        // Phase 32 / D-13: no queue dialog or queue refresh timer outlives the extension.
+        ActiveScanQueuePanel.disposeOpenDialogs()
         mcpStatusTimer.stop()
         healthTimer?.stop()
         healthTimer = null

@@ -14,6 +14,7 @@ import java.awt.FlowLayout
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.CopyOnWriteArraySet
 import javax.swing.BorderFactory
 import javax.swing.JButton
 import javax.swing.JComponent
@@ -37,6 +38,40 @@ private const val SPLIT_RESIZE_WEIGHT = 0.5
 
 object ActiveScanQueuePanel {
     /**
+     * Phase 32 / D-13 — a window the extension unload must close. Phase 33 owns unload in general; this
+     * covers the queue dialog, whose 2-second refresh timer would otherwise outlive the extension.
+     */
+    internal interface UnloadClosable {
+        /** Stops the window's timers and disposes it. Called on the EDT. */
+        fun closeForUnload()
+    }
+
+    private val openDialogs = CopyOnWriteArraySet<UnloadClosable>()
+
+    internal fun track(dialog: UnloadClosable) {
+        openDialogs.add(dialog)
+    }
+
+    internal fun untrack(dialog: UnloadClosable) {
+        openDialogs.remove(dialog)
+    }
+
+    internal fun openDialogCount(): Int = openDialogs.size
+
+    /**
+     * Phase 32 / D-13 — closes every open queue dialog and stops its refresh timer, then forgets them.
+     * Unload may run off the EDT: the closes then run through [SwingUtilities.invokeLater], never
+     * [SwingUtilities.invokeAndWait], so the unload thread is never blocked on the EDT.
+     */
+    fun disposeOpenDialogs() {
+        val dialogs = openDialogs.toList()
+        openDialogs.clear()
+        if (dialogs.isEmpty()) return
+        val closeAll = { dialogs.forEach { it.closeForUnload() } }
+        if (SwingUtilities.isEventDispatchThread()) closeAll() else SwingUtilities.invokeLater(closeAll)
+    }
+
+    /**
      * Opens the "AI Active Scanner Queue" dialog: the queued targets on top and, below them, the
      * targets passive findings [suggested] (Phase 32 / D-01), which the user queues through the
      * confirmed flow.
@@ -47,6 +82,7 @@ object ActiveScanQueuePanel {
         suggested: SuggestedTargetList,
     ) {
         val dialog = QueueDialog(parent, scanner, suggested)
+        track(dialog)
         dialog.isVisible = true
     }
 
@@ -58,7 +94,8 @@ object ActiveScanQueuePanel {
             SwingUtilities.getWindowAncestor(parent),
             "AI Active Scanner Queue",
             Dialog.ModalityType.MODELESS,
-        ) {
+        ),
+        UnloadClosable {
         private val formatter: DateTimeFormatter =
             DateTimeFormatter
                 .ofPattern("yyyy-MM-dd HH:mm:ss")
@@ -113,6 +150,7 @@ object ActiveScanQueuePanel {
                 object : java.awt.event.WindowAdapter() {
                     override fun windowClosed(e: java.awt.event.WindowEvent?) {
                         refreshTimer.stop()
+                        untrack(this@QueueDialog)
                     }
                 },
             )
@@ -122,6 +160,11 @@ object ActiveScanQueuePanel {
             refreshTimer.start()
             pack()
             setLocationRelativeTo(parent)
+        }
+
+        override fun closeForUnload() {
+            refreshTimer.stop()
+            dispose()
         }
 
         private fun configureTable() {

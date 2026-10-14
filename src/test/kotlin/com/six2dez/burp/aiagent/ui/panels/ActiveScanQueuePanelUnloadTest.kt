@@ -88,7 +88,9 @@ class ActiveScanQueuePanelUnloadTest {
     fun theQueueDialogClosesItselfAndItsTimerForUnload() {
         val panel = SourceRoots.packageFile("ui/panels/ActiveScanQueuePanel.kt").readText(Charsets.UTF_8)
 
-        val declaration = panel.substring(panel.indexOf("private class QueueDialog("), panel.indexOf("Dialog.ModalityType.MODELESS"))
+        // From the class header to the brace that opens its body, so the supertype list is included.
+        val header = panel.indexOf("private class QueueDialog(")
+        val declaration = panel.substring(header, panel.indexOf('{', panel.indexOf("Dialog.ModalityType.MODELESS", header)))
         assertTrue(declaration.contains("UnloadClosable"), "QueueDialog implements UnloadClosable")
 
         val close = bodyOf(panel, "override fun closeForUnload()")

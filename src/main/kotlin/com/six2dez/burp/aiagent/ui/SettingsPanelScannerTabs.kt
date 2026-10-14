@@ -10,6 +10,7 @@ import com.six2dez.burp.aiagent.ui.design.DesignTokens
 import com.six2dez.burp.aiagent.ui.panels.ActiveScanConfigPanel
 import com.six2dez.burp.aiagent.ui.panels.ActiveScanQueuePanel
 import com.six2dez.burp.aiagent.ui.panels.PassiveScanConfigPanel
+import com.six2dez.burp.aiagent.ui.panels.suggestedCounterText
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -206,8 +207,17 @@ internal fun SettingsPanel.updateActiveRiskDescription() {
  * The active scanner status line, pure so it can be tested without Swing. While the scanner is ON and
  * [ActiveScannerStatus.aiGatePaused] is set, [AI_GATE_PAUSED_TEXT] follows the ON marker; the rest of
  * the line is unchanged.
+ *
+ * Phase 32 / D-02, D-07: when [suggested] > 0, both the ON and the OFF forms end with " | " plus
+ * [suggestedCounterText] ("Suggested: N", plus " (cap reached)" once [suggestedCapReached]), the same
+ * wording as the queue dialog's Suggested section. The count is a local read of the in-memory list;
+ * nothing is sent. With [suggested] == 0 the line is exactly the pre-phase text.
  */
-internal fun activeAiStatusText(status: ActiveScannerStatus): String =
+internal fun activeAiStatusText(
+    status: ActiveScannerStatus,
+    suggested: Int = 0,
+    suggestedCapReached: Boolean = false,
+): String =
     buildString {
         if (status.enabled) {
             append("Active: ON")
@@ -229,10 +239,19 @@ internal fun activeAiStatusText(status: ActiveScannerStatus): String =
                 append(" | Confirmed: ${status.vulnsConfirmed}")
             }
         }
+        if (suggested > 0) {
+            append(" | ")
+            append(suggestedCounterText(suggested, suggestedCapReached))
+        }
     }
 
 internal fun SettingsPanel.refreshActiveAiStatus() {
-    activeAiStatusLabel.text = activeAiStatusText(activeAiScanner.getStatus())
+    activeAiStatusLabel.text =
+        activeAiStatusText(
+            activeAiScanner.getStatus(),
+            passiveAiScanner.suggestedTargets.count(),
+            passiveAiScanner.suggestedTargets.capReached(),
+        )
 }
 
 internal fun SettingsPanel.applyActiveAiSettings() {
