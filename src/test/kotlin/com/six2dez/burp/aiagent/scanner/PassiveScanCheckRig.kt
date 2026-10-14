@@ -42,6 +42,8 @@ internal data class FiledIssue(
     val confidence: AuditIssueConfidence,
     val typicalSeverity: AuditIssueSeverity?,
     val requestResponses: List<HttpRequestResponse>,
+    val background: String?,
+    val remediationBackground: String?,
 )
 
 /**
@@ -127,6 +129,20 @@ internal class PassiveScanCheckRig(
         return pair(request, response(OK, "x".repeat(PAGE_BODY_CHARS)))
     }
 
+    /**
+     * GET with two Content-Length headers, "5" and [secondContentLength], an empty body and a 200
+     * response. Its single local finding is "HTTP Request Smuggling Indicators" (Medium, 90), and the
+     * finding's detail carries [secondContentLength] verbatim (trimmed) on its second line.
+     */
+    fun duplicateContentLengthGet(
+        host: String,
+        secondContentLength: String,
+    ): HttpRequestResponse {
+        val headers = listOf(header("Content-Length", "5"), header("Content-Length", secondContentLength))
+        val request = request("GET", host, "/index", headers) { on { bodyToString() } doReturn "" }
+        return pair(request, response(OK, "x".repeat(PAGE_BODY_CHARS)))
+    }
+
     /** Waits until every task submitted to the scanner's single-thread executor so far has run (FIFO). */
     fun drain() {
         scanner.executor.submit {}.get(WAIT_SECONDS, TimeUnit.SECONDS)
@@ -198,6 +214,8 @@ private fun recordingFactory(built: MutableList<FiledIssue>): MontoyaObjectFacto
                 confidence = invocation.getArgument(5),
                 typicalSeverity = invocation.getArgument(8),
                 requestResponses = invocation.getArgument(9),
+                background = invocation.getArgument(6),
+                remediationBackground = invocation.getArgument(7),
             )
         built += filed
         mock<AuditIssue> {

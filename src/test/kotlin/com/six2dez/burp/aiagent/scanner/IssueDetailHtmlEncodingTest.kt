@@ -11,7 +11,9 @@ import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptDefinition
 import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptFinding
 import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptOutputType
 import com.six2dez.burp.aiagent.redact.PrivacyMode
+import com.six2dez.burp.aiagent.redact.RedactionPolicy
 import com.six2dez.burp.aiagent.ui.UiActions
+import com.six2dez.burp.aiagent.util.IssueUtils
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -182,6 +184,106 @@ class IssueDetailHtmlEncodingTest {
         )
     }
 
+    // =============================================================================================
+    // AiPassiveScanCheck (local passive findings filed through Burp Scanner)
+    // =============================================================================================
+
+    /**
+     * Research Pitfall 6: a target-supplied Content-Length value reaches the local finding's detail.
+     * Burp receives it escaped and `<br>`-joined; the findings buffer keeps the raw detail.
+     */
+    @Test
+    fun aiPassiveScanCheckLocalFindingRendersATargetValueAsLiteralText() {
+        PassiveScanCheckRig().use { rig ->
+            rig.scanner.setEnabled(true)
+            val rr = rig.duplicateContentLengthGet("enc-local.example", MARKUP_CL)
+
+            val result = rig.check.doCheck(rr)
+            rig.drain()
+
+            assertEquals(
+                listOf("[AI Passive] REQUEST_SMUGGLING"),
+                result.auditIssues().map { it.name() },
+                "$AI_PASSIVE_SCAN_CHECK: the duplicate Content-Length request files one smuggling issue",
+            )
+            val detail = rig.built.single().detail
+            assertHtmlSafe(detail, AI_PASSIVE_SCAN_CHECK)
+            assertEquals(
+                1,
+                detail.split(LINE_BREAK).size - 1,
+                "$AI_PASSIVE_SCAN_CHECK: the two detail lines are joined by exactly one '$LINE_BREAK'. Detail was: $detail",
+            )
+            assertTrue(
+                detail.contains(MARKUP_CL_ESCAPED),
+                "$AI_PASSIVE_SCAN_CHECK: the detail must carry '$MARKUP_CL_ESCAPED'. Detail was: $detail",
+            )
+
+            val rawDetail =
+                rig.scanner
+                    .localChecks(rr.request(), rr.response())
+                    .single()
+                    .detail
+            val buffered =
+                rig.scanner
+                    .getLastFindings(1)
+                    .single()
+                    .detail
+            assertEquals(rawDetail, buffered, "$AI_PASSIVE_SCAN_CHECK: the findings buffer keeps the raw LocalFinding.detail")
+            assertTrue(
+                buffered.contains("<script>"),
+                "$AI_PASSIVE_SCAN_CHECK: the buffered detail is the raw text, not the escaped one. Buffered: $buffered",
+            )
+        }
+    }
+
+    // =============================================================================================
+    // PassiveAiScannerFinding (AI passive findings: handleParsedAiIssues -> handleFinding)
+    // =============================================================================================
+
+    @Test
+    fun aiPassiveFindingDetailRendersMarkupAsLiteralText() {
+        PassiveScanCheckRig().use { rig ->
+            rig.scanner.handleParsedAiIssues(
+                listOf(
+                    AiIssueItem(
+                        title = "SQL Injection",
+                        severity = "High",
+                        detail = MARKUP + "\nsecond line " + MARKUP,
+                        confidence = AI_FINDING_CONFIDENCE,
+                    ),
+                ),
+                rig.csrfPost("enc-ai.example"),
+                "LOW",
+            )
+
+            val detail = rig.built.single().detail
+            assertHtmlSafe(detail, AI_PASSIVE_FINDING)
+            assertCarriesEscapedMarkup(detail, AI_PASSIVE_FINDING)
+        }
+    }
+
+    // =============================================================================================
+    // ActiveAiScanner (the producer's exact composition)
+    // =============================================================================================
+
+    @Test
+    fun activeScannerDetailRendersMarkupAsLiteralText() {
+        val detail =
+            IssueUtils.formatIssueDetailHtml(
+                ScannerIssueSupport.buildActiveIssueDetailLines(
+                    InjectionPoint(InjectionType.URL_PARAM, "q$MARKUP", MARKUP),
+                    "SQLI",
+                    Payload(MARKUP, VulnClass.SQLI, DetectionMethod.ERROR_BASED, PayloadRisk.SAFE, MARKUP),
+                    MARKUP,
+                    "AI Analysis Metadata\r\n  Backend: test",
+                    RedactionPolicy.fromMode(PrivacyMode.OFF),
+                ),
+            )
+
+        assertHtmlSafe(detail, ACTIVE_SCANNER)
+        assertCarriesEscapedMarkup(detail, ACTIVE_SCANNER)
+    }
+
     private fun bountyPromptDefinition(
         id: String,
         title: String,
@@ -244,10 +346,18 @@ class IssueDetailHtmlEncodingTest {
     private companion object {
         const val AI_SCAN_CHECK = "AiScanCheck.buildDetail"
         const val BOUNTY_PROMPT = "UiActions.buildIssueDetailHtml"
+        const val AI_PASSIVE_SCAN_CHECK = "AiPassiveScanCheck.doCheck"
+        const val AI_PASSIVE_FINDING = "PassiveAiScannerFinding.handleFinding"
+        const val ACTIVE_SCANNER = "ActiveAiScanner (buildActiveIssueDetailLines + formatIssueDetailHtml)"
+        const val AI_FINDING_CONFIDENCE = 90
         const val BOUNTY_FINDING_CONFIDENCE = 70
 
         /** Script tag, attribute break-out with an event handler, and a bare ampersand. */
         const val MARKUP = "<script>alert(1)</script> \"><img src=x onerror=alert(1)> a&b"
+
+        /** A header-safe single-line markup value for the duplicate Content-Length request. */
+        const val MARKUP_CL = "<script>alert(1)</script>&<img src=x onerror=alert(1)>"
+        const val MARKUP_CL_ESCAPED = "&lt;script&gt;alert(1)&lt;/script&gt;&amp;&lt;img src=x onerror=alert(1)&gt;"
 
         const val BACKEND_ID = "test-backend"
         const val PLAIN_PAYLOAD = "plain-payload"
