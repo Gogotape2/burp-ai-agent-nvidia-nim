@@ -289,14 +289,24 @@ class PassiveAiScanner(
 
     /**
      * The AI half's gates for Burp Scanner check work: the scanner is on, the token budget is not
-     * paused and the AI access policy allows the saved backend ([aiGateOpen]). Shared by
-     * [enqueueForScanCheck] and [recordScanCheckFindings].
+     * paused and the AI access policy allows the saved backend ([aiGateOpen]). Serves
+     * [enqueueForScanCheck] only; the local-finding bookkeeping uses [acceptsLocalFindingWork].
      */
     private fun acceptsScanCheckWork(): Boolean =
         enabled.get() &&
             // CAP-04: no-op when paused (does NOT clear KB or flip enabled)
             !budgetPaused.get() &&
             aiGateOpen(getSettings())
+
+    /**
+     * Phase 31 gap closure WR-02: the gates for the bookkeeping of the local findings the Burp Scanner
+     * check files: the scanner is on and the token budget is not paused. The local heuristics send no
+     * AI request, so the bookkeeping of what Burp files from them does not depend on the AI access policy.
+     */
+    private fun acceptsLocalFindingWork(): Boolean =
+        enabled.get() &&
+            // CAP-04: unchanged; issues filed under a budget pause still skip their bookkeeping
+            !budgetPaused.get()
 
     /**
      * Enqueues a request/response for asynchronous AI deep-analysis.
@@ -313,8 +323,10 @@ class PassiveAiScanner(
      * Records the side effects of the local findings AiPassiveScanCheck.doCheck() has just filed in its
      * AuditResult (quick 261009-1ao): counter, Output line, knowledge-base signal, auto-queue,
      * `passive_ai_issue` audit record and findings buffer, once per new issue, consolidated on repeats.
-     * Same gates as the AI half ([acceptsScanCheckWork]): nothing is recorded while the scanner is off,
-     * the token budget is paused or the AI access policy refuses the saved backend.
+     * Gated by [acceptsLocalFindingWork]: recorded whenever the scanner is on and the token budget is
+     * not paused, whatever the AI access policy says (Phase 31 gap closure WR-02, D-02, D-07); nothing
+     * is recorded while the scanner is off or the budget is paused. The AI half
+     * ([enqueueForScanCheck]) keeps the AI gate, so a refused policy still sends nothing.
      *
      * Runs synchronously, before doCheck returns: the consolidation check reads the site map, and on the
      * executor it would race Burp adding the check's own, same-named issue and usually see it, dropping
@@ -324,7 +336,7 @@ class PassiveAiScanner(
         requestResponse: HttpRequestResponse,
         filed: List<LocalFinding>,
     ) {
-        if (filed.isEmpty() || !acceptsScanCheckWork()) return
+        if (filed.isEmpty() || !acceptsLocalFindingWork()) return
         val settings = getSettings()
         filed.forEach { finding -> recordFiledLocalFinding(requestResponse, finding, settings) }
     }

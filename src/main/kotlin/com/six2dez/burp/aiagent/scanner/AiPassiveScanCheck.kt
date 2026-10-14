@@ -43,9 +43,12 @@ class AiPassiveScanCheck(
      *  3. Convert each LocalFinding to an AuditIssue named passiveScanner.issueNameForPassive(title),
      *     the name the AI passive scanner gives it, so each local finding is filed once.
      *  4. Record the findings' side effects (audit record, counter, knowledge-base signal, findings
-     *     buffer, auto-queue) via passiveScanner.recordScanCheckFindings() before returning.
+     *     buffer, auto-queue) via passiveScanner.recordScanCheckFindings() before returning. Recorded
+     *     whatever the AI gate says, as long as the scanner is on and the token budget is not paused
+     *     (Phase 31 gap closure WR-02): the local heuristics send no AI request.
      *  5. Enqueue async AI deep-analysis via passiveScanner.enqueueForScanCheck(); it does not file
-     *     the local findings again but still uses them to decide whether to skip the AI call.
+     *     the local findings again but still uses them to decide whether to skip the AI call. The
+     *     enqueued analysis is skipped while the AI access policy refuses the saved backend (D-02).
      *
      * MUST NOT call supervisor.send() or any blocking AI operation.
      */
