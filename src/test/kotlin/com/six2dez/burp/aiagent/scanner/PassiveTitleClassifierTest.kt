@@ -1,6 +1,6 @@
 package com.six2dez.burp.aiagent.scanner
 
-import burp.api.montoya.http.message.HttpRequestResponse
+import burp.api.montoya.http.Http
 import com.six2dez.burp.aiagent.TestSettings
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.spi.SuggestedTargetSink
@@ -11,6 +11,7 @@ import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.verifyNoInteractions
+import org.mockito.kotlin.whenever
 import java.util.Collections
 
 /**
@@ -20,9 +21,10 @@ import java.util.Collections
  * targets the passive scanner offers to its [SuggestedTargetSink], so both are checked through the
  * real code paths.
  *
- * Phase 29 / D-02: the passive scanner holds no active-scanner reference. It builds suggested targets
- * only when a sink is installed (the full build's opt-in auto-queue plug-in) and offers them once; the
- * sink, not the core, decides whether anything is queued.
+ * Phase 29 / D-02, Phase 32 / D-06..D-09: the passive scanner holds no active-scanner reference. The
+ * suggested targets of a finding always reach the core list ([PassiveAiScanner.suggestedTargets]),
+ * with or without a plug-in. When a sink is installed (the full build's opt-in auto-queue plug-in) it
+ * is offered the same targets once; the sink, not the core, decides whether anything is queued.
  */
 class PassiveTitleClassifierTest {
     @Test
@@ -131,15 +133,18 @@ class PassiveTitleClassifierTest {
     }
 
     @Test
-    fun withNoSinkNothingIsBuiltOrOffered() {
+    fun withNoPluginSinkTargetsReachOnlyTheCoreList() {
         PassiveScanCheckRig(offerSettings(ScanMode.FULL)).use { rig ->
-            val request = mock<HttpRequestResponse>()
+            val http = mock<Http>()
+            whenever(rig.api.http()).thenReturn(http)
 
-            rig.scanner.offerSuggestedTargets(request, "SQL Injection", "High", "evidence", 90, rig.settings)
+            rig.scanner.offerSuggestedTargets(rig.csrfPost("offer-no-sink.example"), "SQL Injection", "High", "evidence", 90, rig.settings)
 
-            // extractInjectionPoints reads the request: an untouched request means no target was built.
-            verifyNoInteractions(request)
-            assertNull(rig.scanner.suggestedTargetSink, "the store classpath installs no sink")
+            val suggested = rig.scanner.suggestedTargets.snapshot()
+            assertTrue(suggested.isNotEmpty(), "the request's injection points reach the core list")
+            assertEquals(setOf(VulnClass.SQLI), suggested.map { it.target.vulnHint.vulnClass }.toSet())
+            verifyNoInteractions(http)
+            assertNull(rig.scanner.suggestedTargetSink, "the store classpath installs no plug-in sink")
         }
     }
 
@@ -165,6 +170,7 @@ class PassiveTitleClassifierTest {
                 rig.scanner.offerSuggestedTargets(rig.csrfPost(host), title, "High", "evidence", 90, rig.settings)
             }
             assertEquals(emptyList<Offer>(), sink.offers)
+            assertEquals(0, rig.scanner.suggestedTargets.count(), "the core list holds no entry for a disallowed title")
 
             rig.scanner.offerSuggestedTargets(rig.csrfPost("offer-bb-sqli.example"), "SQL Injection", "High", "evidence", 90, rig.settings)
             assertEquals(setOf(VulnClass.SQLI), sink.offers.single().classes())

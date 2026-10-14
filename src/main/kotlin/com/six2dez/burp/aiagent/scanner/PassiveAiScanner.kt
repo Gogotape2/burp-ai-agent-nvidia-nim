@@ -71,9 +71,17 @@ class PassiveAiScanner(
     internal val findings = ArrayDeque<PassiveAiFinding>(Defaults.FINDINGS_BUFFER_SIZE)
 
     /**
-     * Phase 29 / D-02: where the suggested targets of a new finding go. Null in the store build, which
-     * installs no sink, so no target is built and the passive scan never queues target traffic. The
-     * full build's opt-in auto-queue plug-in sets it on install and clears it on unload.
+     * Phase 32 / D-01..D-09: every suggested target of a new finding lands here, in both builds. The
+     * user sees the list and queues entries by hand after a confirmation; collecting them sends
+     * nothing. It is a `val`, so a plug-in cannot replace or remove it. Session-only: cleared in
+     * [shutdown].
+     */
+    val suggestedTargets = SuggestedTargetList()
+
+    /**
+     * Phase 29 / D-02: the plug-in slot for suggested targets, and only that. Null in the store build,
+     * which installs no plug-in. The full build's opt-in auto-queue plug-in sets it on install and
+     * clears it on unload. It is offered the same targets after [suggestedTargets] has them.
      */
     @Volatile
     var suggestedTargetSink: SuggestedTargetSink? = null
@@ -385,6 +393,7 @@ class PassiveAiScanner(
         } catch (_: Exception) {
         }
         batchQueue.clear()
+        suggestedTargets.clear()
         executor.shutdown()
         try {
             if (!executor.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)) {
