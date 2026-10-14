@@ -178,17 +178,17 @@ object UiActions {
                 return@addActionListener
             }
             val preQueue = scanner.getStatus().queueSize
+            // Phase 32 / D-04: the same confirmation, with host counts, as the suggested-targets queue.
             val confirmed =
-                JOptionPane.showConfirmDialog(
+                ActiveScanPrompts.confirmActiveScan(
                     tab.root,
-                    "This will send active test payloads to ${validTargets.size} target(s).\n" +
-                        "Current queue: $preQueue\n\n" +
-                        "Do you want to continue?",
-                    "Confirm AI Active Scan",
-                    JOptionPane.YES_NO_OPTION,
-                    JOptionPane.WARNING_MESSAGE,
+                    ManualScanDialogs.confirmActiveScanMessage(
+                        validTargets.size,
+                        ManualScanDialogs.hostCount(validTargets.map { it.request().url() }),
+                        preQueue,
+                    ),
                 )
-            if (confirmed != JOptionPane.YES_OPTION) return@addActionListener
+            if (!confirmed) return@addActionListener
             // Queue all vuln classes for manual scan
             val count = scanner.manualScan(validTargets, VulnClass.values().toList())
             val postQueue = scanner.getStatus().queueSize
@@ -1023,30 +1023,11 @@ $resolvedUserPrompt
 
     private fun contextOptionsFromSettings(settings: AgentSettings): ContextOptions = buildContextOptionsFromSettings(settings)
 
+    // Phase 32 / D-04: the body moved to ActiveScanPrompts, shared with the suggested-targets queue.
     private fun ensureActiveScannerEnabled(
         tab: MainTab,
         activeAiScanner: ActiveAiScanner?,
-    ): Boolean {
-        if (activeAiScanner == null) {
-            JOptionPane.showMessageDialog(tab.root, "Active Scanner not available.", "Custom AI Agent", JOptionPane.WARNING_MESSAGE)
-            return false
-        }
-        if (!activeAiScanner.isEnabled()) {
-            val enable =
-                JOptionPane.showConfirmDialog(
-                    tab.root,
-                    "Active Scanner is disabled. Enable it now?",
-                    "Custom AI Agent",
-                    JOptionPane.YES_NO_OPTION,
-                )
-            if (enable == JOptionPane.YES_OPTION) {
-                activeAiScanner.setEnabled(true)
-            } else {
-                return false
-            }
-        }
-        return true
-    }
+    ): Boolean = ActiveScanPrompts.ensureActiveScannerEnabled(tab.root, activeAiScanner)
 
     private fun buildTargetedTestsMenu(
         tab: MainTab,
