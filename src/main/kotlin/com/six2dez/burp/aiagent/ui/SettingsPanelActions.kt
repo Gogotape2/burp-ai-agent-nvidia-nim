@@ -20,7 +20,6 @@ import javax.swing.JLabel
 import javax.swing.JOptionPane
 import javax.swing.JPanel
 import javax.swing.JTextField
-import javax.swing.SwingUtilities
 import javax.swing.border.LineBorder
 
 internal fun SettingsPanel.refreshProfileOptions() {
@@ -294,9 +293,16 @@ internal fun SettingsPanel.testBackendConnection(backendId: String) {
         return
     }
     val settingsSnapshot = currentSettings()
-    Thread {
-        val result = backends.healthCheck(backendId, settingsSnapshot)
-        SwingUtilities.invokeLater {
+    // Phase 33 / D-11, LIFE-03, EDT-01: the check runs on the named daemon worker (a bare Thread here
+    // inherited the EDT's non-daemon flag and could hold extension unload open); the result comes back
+    // through OffEdtDispatch's single invokeLater.
+    OffEdtDispatch.run(
+        threadName = "burp-ai-agent-test-connection",
+        label = "test connection $backendId",
+        logError = { api.logging().logToError(it) },
+        work = { backends.healthCheck(backendId, settingsSnapshot) },
+        onEdt = { outcome ->
+            val result = outcome.getOrElse { HealthCheckResult.Unavailable(it.message ?: "Health check failed") }
             val title = "Backend health: $backendId"
             when (result) {
                 is HealthCheckResult.Healthy ->
@@ -328,8 +334,8 @@ internal fun SettingsPanel.testBackendConnection(backendId: String) {
                         JOptionPane.INFORMATION_MESSAGE,
                     )
             }
-        }
-    }.start()
+        },
+    )
 }
 
 internal fun SettingsPanel.promptSection(): JPanel =

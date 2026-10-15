@@ -119,7 +119,7 @@ class TestConnectionRefusalTest {
                 }.whenever(registry).healthCheck(any(), any())
             }
         aiEnabled.set(false)
-        val before = Thread.getAllStackTraces().keys.filter { it.name == "burp-ai-agent-test-connection" }.toSet()
+        val before = testConnectionThreads()
 
         assertTimeoutPreemptively(Duration.ofSeconds(EDT_TIMEOUT_SECONDS)) {
             // Headless: the refusal dialog throws HeadlessException on the EDT, after the refusal decision.
@@ -127,7 +127,7 @@ class TestConnectionRefusalTest {
         }
 
         assertTrue(dispatched.none { it == TEST_CONNECTION_LABEL }, "a refusal dispatches no worker: $dispatched")
-        val after = Thread.getAllStackTraces().keys.filter { it.name == "burp-ai-agent-test-connection" }.toSet()
+        val after = testConnectionThreads()
         assertEquals(before, after, "a refusal starts no test-connection thread")
         assertTrue(checks.isEmpty(), "a refusal sends no health check: $checks")
     }
@@ -200,6 +200,13 @@ class TestConnectionRefusalTest {
         panels.add(panel)
         return panel to api
     }
+
+    private fun testConnectionThreads(): Set<Thread> =
+        Thread
+            .getAllStackTraces()
+            .keys
+            .filter { it.name == "burp-ai-agent-test-connection" }
+            .toSet()
 
     private fun errorLines(api: MontoyaApi): List<String> =
         Mockito
