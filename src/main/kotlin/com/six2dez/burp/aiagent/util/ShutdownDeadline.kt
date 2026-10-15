@@ -34,8 +34,11 @@ import kotlin.math.max
  * A step that waits on work which cannot be interrupted (a Montoya HTTP call in flight) should call
  * `shutdownNow()` and NOT wait here; leave that wait to the final sweep
  * ([ExtensionThreadPools.terminateAll]), so the uninterruptible call costs the budget once, not per step.
+ *
+ * Public rather than internal because the public `McpServerManager` interface takes it as a parameter,
+ * and Kotlin does not allow an `internal` member inside an interface.
  */
-internal class ShutdownDeadline(
+class ShutdownDeadline(
     budgetMs: Long,
     private val nanoTime: () -> Long = System::nanoTime,
 ) {
