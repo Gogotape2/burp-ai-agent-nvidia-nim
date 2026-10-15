@@ -122,6 +122,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   taken from the target and AI text as literal text in Burp's issue view and reports. `issue_create`
   now escapes what an agent sends, so HTML in its detail, remediation or background shows as text.
   Privacy redaction of cookie values still runs first.
+- **Issue text keeps underscores inside words** - issue details and remediation written by the AI,
+  by BountyPrompt or through the MCP `issue_create` tool now keep underscores inside words (for
+  example `access_token`, `session_id`). Markdown emphasis such as `_italic_` and `__bold__` is
+  still removed. Before, every underscore was dropped, which hid such parameter names from privacy
+  redaction when the issue was later sent to the AI or read over MCP. One visible side effect: an
+  AI passive finding whose title matches no known vulnerability class keeps the underscores in its
+  issue name too.
 
 ## [1.0.1] - 2026-10-09
 

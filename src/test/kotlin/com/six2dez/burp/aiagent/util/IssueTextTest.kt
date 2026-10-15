@@ -6,10 +6,18 @@ import com.six2dez.burp.aiagent.mcp.McpRequestLimiter
 import com.six2dez.burp.aiagent.mcp.McpToolContext
 import com.six2dez.burp.aiagent.mcp.tools.CreateAuditIssue
 import com.six2dez.burp.aiagent.mcp.tools.executeIssueCreate
+import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptCategory
+import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptConfidence
+import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptDefinition
+import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptFinding
+import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptOutputType
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.redact.Redaction
 import com.six2dez.burp.aiagent.redact.RedactionPolicy
+import com.six2dez.burp.aiagent.scanner.AiIssueItem
 import com.six2dez.burp.aiagent.scanner.PassiveScanCheckRig
+import com.six2dez.burp.aiagent.scanner.handleParsedAiIssues
+import com.six2dez.burp.aiagent.ui.UiActions
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -98,8 +106,105 @@ class IssueTextTest {
     }
 
     // ---------------------------------------------------------------------------------------------
+    // Every IssueText caller keeps intra-word underscores (Task 2)
+    // ---------------------------------------------------------------------------------------------
+
+    /** The AI passive finding path (handleParsedAiIssues -> handleFinding) keeps `session_id`. */
+    @Test
+    fun aiPassiveFindingDetailKeepsIntraWordUnderscore() {
+        PassiveScanCheckRig().use { rig ->
+            rig.scanner.handleParsedAiIssues(
+                listOf(
+                    AiIssueItem(
+                        title = "SQL Injection",
+                        severity = "High",
+                        detail = "The session_id parameter is reflected",
+                        confidence = AI_FINDING_CONFIDENCE,
+                    ),
+                ),
+                rig.csrfPost("issuetext-ai.example"),
+                "LOW",
+            )
+
+            val detail = rig.built.single().detail
+            assertTrue(detail.contains("session_id"), "the AI passive detail must keep session_id. Detail was: $detail")
+        }
+    }
+
+    /** The BountyPrompt issue detail keeps `api_key`. */
+    @Test
+    fun bountyPromptDetailKeepsIntraWordUnderscore() {
+        val detail =
+            UiActions.buildIssueDetailHtml(
+                bountyPromptDefinition(),
+                BountyPromptFinding(
+                    title = "finding",
+                    detail = "Leaks the api_key value",
+                    severity = "Medium",
+                    confidence = BOUNTY_FINDING_CONFIDENCE,
+                ),
+            )
+        assertTrue(detail.contains("api_key"), "the BountyPrompt detail must keep api_key. Detail was: $detail")
+    }
+
+    // ---------------------------------------------------------------------------------------------
+    // The rest of the Markdown strip is unchanged (pins)
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    fun fencedCodeKeepsItsContent() {
+        assertEquals("val a = 1", IssueText.sanitize("```kotlin\nval a = 1\n```"))
+    }
+
+    @Test
+    fun backticksAreRemoved() {
+        assertEquals("use code here", IssueText.sanitize("use `code` here"))
+    }
+
+    @Test
+    fun markdownLinkBecomesTextAndUrl() {
+        assertEquals("docs (https://x.example/a)", IssueText.sanitize("[docs](https://x.example/a)"))
+    }
+
+    @Test
+    fun headingAndBlockquoteMarkersAreRemoved() {
+        assertEquals("Title\nquoted", IssueText.sanitize("## Title\n> quoted"))
+    }
+
+    @Test
+    fun lineEndingsAreNormalizedToLf() {
+        assertEquals("a\nb\nc", IssueText.sanitize("a\r\nb\rc"))
+    }
+
+    @Test
+    fun blankInputIsReturnedUnchanged() {
+        assertEquals("   ", IssueText.sanitize("   "))
+    }
+
+    /** Leading and trailing underscores on an identifier are edge underscores and are removed, as before. */
+    @Test
+    fun edgeUnderscoresOnAnIdentifierAreRemoved() {
+        assertEquals("csrf", IssueText.sanitize("_csrf"))
+        assertEquals("init", IssueText.sanitize("__init__"))
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------------------------
+
+    /** Built the way IssueDetailHtmlEncodingTest.bountyPromptDefinition builds it. */
+    private fun bountyPromptDefinition(): BountyPromptDefinition =
+        BountyPromptDefinition(
+            id = "p1",
+            title = "T",
+            category = BountyPromptCategory.DETECTION,
+            outputType = BountyPromptOutputType.ISSUE,
+            systemPrompt = "system",
+            userPrompt = "user",
+            severity = "Medium",
+            confidence = BountyPromptConfidence.FIRM,
+            tagsUsed = emptySet(),
+        )
 
     /** The one place this class reaches a policy, so no test body names the policy factory. */
     private fun redactUnder(
@@ -128,5 +233,7 @@ class IssueTextTest {
         const val SALT = "issuetext-salt"
         const val MCP_LIMIT = 4
         const val MCP_MAX_BODY_BYTES = 8192
+        const val AI_FINDING_CONFIDENCE = 90
+        const val BOUNTY_FINDING_CONFIDENCE = 70
     }
 }
