@@ -271,6 +271,9 @@ internal fun PassiveAiScanner.doAnalysis(requestResponse: HttpRequestResponse) {
             return
         }
 
+        // Phase 33 / SC3: once unload began, no backend start and no provider request.
+        if (shuttingDown) return
+
         // Ensure backend is running for AI analysis
         if (!ensureBackendRunning(settings)) {
             api.logging().logToError("[PassiveAiScanner] No AI backend available - skipping analysis")
@@ -467,6 +470,9 @@ internal fun PassiveAiScanner.doAnalysis(requestResponse: HttpRequestResponse) {
             return
         }
 
+        // Phase 33 / SC3: checked again, because the backend check above can outlast the start of unload.
+        if (shuttingDown) return
+
         // Single-request mode: send directly to AI backend
         val responseBuffer = StringBuilder()
         val completionLatch = CountDownLatch(1)
@@ -605,6 +611,9 @@ internal fun PassiveAiScanner.doAnalysis(requestResponse: HttpRequestResponse) {
                 "responseChars" to responseBuffer.length.toString(),
             ),
         )
+    } catch (_: InterruptedException) {
+        // Phase 33 / SC3: unload interrupted the analysis (shutdownNow). Keep the flag; write nothing.
+        Thread.currentThread().interrupt()
     } catch (e: Exception) {
         api.logging().logToError("[PassiveAiScanner] Error: ${e.javaClass.simpleName}: ${e.message}")
     }
@@ -637,6 +646,8 @@ internal fun PassiveAiScanner.flushBatch(settings: AgentSettings) {
         fallbackToIndividualAnalysis(batch, settings)
         return
     }
+    // Phase 33 / SC3: checked again, because the backend check above can outlast the start of unload.
+    if (shuttingDown) return
 
     val responseBuffer = StringBuilder()
     val completionLatch = CountDownLatch(1)
@@ -718,6 +729,10 @@ internal fun PassiveAiScanner.fallbackToIndividualAnalysis(
         try {
             val prompt = buildAnalysisPrompt(item.metadata, item.minSeverity)
             sendSingleAnalysis(prompt, item.requestResponse, item.minSeverity, settings)
+        } catch (_: InterruptedException) {
+            // Phase 33 / SC3: unload interrupted this send. Keep the flag and send nothing more.
+            Thread.currentThread().interrupt()
+            return
         } catch (e: Exception) {
             api.logging().logToError("[PassiveAiScanner] Individual fallback failed for ${item.host}: ${e.message}")
             requestsAnalyzed.incrementAndGet()
@@ -731,9 +746,10 @@ internal fun PassiveAiScanner.sendSingleAnalysis(
     minSeverity: String,
     settings: AgentSettings,
 ) {
-    // Phase 33 / SC3: once unload began, a single analysis starts no provider request.
+    // Phase 33 / SC3: once unload began, a single analysis starts no provider request. Checked again
+    // after the backend check, which can outlast the start of unload.
     if (shuttingDown) return
-    if (!ensureBackendRunning(settings)) return
+    if (!ensureBackendRunning(settings) || shuttingDown) return
 
     val promptHash = sha256Hex(prompt)
     val responseBuffer = StringBuilder()

@@ -71,8 +71,10 @@ class PassiveAiScanner(
 
     /**
      * Phase 33 / SC3: set once unload began. From then on no analysis may start a provider request:
-     * [flushBatch] and [sendSingleAnalysis] return before sending when it is set. Never reset, since
-     * the scanner is not reused after [shutdown].
+     * [flushBatch] and [sendSingleAnalysis] return first when it is set, and every send site (those two
+     * and [doAnalysis]'s single-request send) checks it again right before sending, because the backend
+     * check before a send can outlast the start of unload. Never reset: the scanner is not reused after
+     * [shutdown].
      */
     @Volatile
     internal var shuttingDown = false
@@ -399,7 +401,20 @@ class PassiveAiScanner(
 
     /**
      * Phase 33 / SC3, LIFE-02: unloading sends nothing to the AI backend and waits on no AI request.
-     * Pending work is dropped and counted in one Output line; the executor wait uses [deadline].
+     *
+     * - No flush. A partly filled batch used to be flushed here, synchronously: an AI request carrying
+     *   observed traffic, made on Burp's unload path, that the unload then waited on. It is now dropped.
+     * - `shutdownNow`, not `shutdown`. A plain `shutdown` lets the queued analyses run, and each would
+     *   send observed traffic to the provider during unload. `shutdownNow` discards them and interrupts
+     *   the running one; [shuttingDown] (set first) stops an analysis already past its entry gates
+     *   before its send, and an interrupted analysis ends without an Error line.
+     * - What was dropped (batch items plus queued analyses) is counted in ONE Output line,
+     *   `[PassiveAiScanner] Unload: dropped N pending passive analysis item(s); nothing was sent to the
+     *   AI backend.`, and nothing is written when nothing was dropped.
+     * - The executor wait uses only what is left of the shared unload [deadline] (D-05); a worker that
+     *   does not stop in time costs one Error line naming "Passive scanner" (D-09).
+     *
+     * [suggestedTargets] is cleared last, after the executor stopped (Phase 32 D-06 / WR-01).
      */
     fun shutdown(deadline: ShutdownDeadline) {
         enabled.set(false)
