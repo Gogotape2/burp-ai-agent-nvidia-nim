@@ -10,6 +10,9 @@ import org.junit.jupiter.api.Test
 /**
  * Phase 31 / D-02 — the scanner panel says "Paused: Use AI is off" while a scanner is ON and the AI
  * access policy refuses its backend, and otherwise renders exactly the pre-phase status line.
+ *
+ * Phase 33 / D-04 — while an OFF request is still stopping the active scanner, its line starts with
+ * "Active: Stopping…" instead of claiming ON or OFF.
  */
 class ScannerStatusTextTest {
     @Test
@@ -107,6 +110,34 @@ class ScannerStatusTextTest {
             "Active: ON | Paused: Use AI is off | Queue: 0 | Scans: 4 | Confirmed: 1",
             activeAiStatusText(active(enabled = true, paused = true), suggested = 0, suggestedCapReached = true),
         )
+    }
+
+    // --- Phase 33 / D-04: "Stopping…" while an OFF request is still stopping the scanner ----------
+
+    @Test
+    fun aStoppingScannerSaysStoppingWhetherOrNotItIsEnabled() {
+        val off = activeAiStatusText(active(enabled = false, paused = false).copy(stopping = true))
+        val on = activeAiStatusText(active(enabled = true, paused = true).copy(stopping = true, scanning = true))
+
+        assertTrue(off.startsWith("Active: Stopping…"), off)
+        assertTrue(on.startsWith("Active: Stopping…"), on)
+        assertEquals("Active: Stopping… | Confirmed: 1", off)
+        assertEquals("Active: Stopping… | Confirmed: 1", on)
+        assertFalse(off.contains("Active: OFF"), "the label must not say OFF while the stop still runs: $off")
+    }
+
+    @Test
+    fun aStoppingScannerStillShowsTheSuggestedCounter() {
+        val text = activeAiStatusText(active(enabled = false, paused = false).copy(stopping = true), suggested = 3)
+
+        assertTrue(text.startsWith("Active: Stopping…"), text)
+        assertTrue(text.endsWith(" | Suggested: 3"), text)
+        assertEquals("Active: Stopping… | Confirmed: 1 | Suggested: 3", text)
+    }
+
+    @Test
+    fun aStoppingScannerWithNoConfirmationsShowsOnlyTheStoppingMarker() {
+        assertEquals("Active: Stopping…", activeAiStatusText(active(enabled = false, paused = false).copy(stopping = true, vulnsConfirmed = 0)))
     }
 
     private fun active(

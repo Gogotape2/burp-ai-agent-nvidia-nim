@@ -18,6 +18,7 @@ import javax.swing.JOptionPane
 import javax.swing.JPanel
 import javax.swing.JScrollPane
 import javax.swing.JTextArea
+import javax.swing.SwingUtilities
 
 internal fun SettingsPanel.passiveAiScannerSection(): JPanel =
     PassiveScanConfigPanel(
@@ -212,6 +213,11 @@ internal fun SettingsPanel.updateActiveRiskDescription() {
  * [suggestedCounterText] ("Suggested: N", plus " (cap reached)" once [suggestedCapReached]), the same
  * wording as the queue dialog's Suggested section. The count is a local read of the in-memory list;
  * nothing is sent. With [suggested] == 0 the line is exactly the pre-phase text.
+ *
+ * Phase 33 / D-04: while an OFF request is still stopping the scanner ([ActiveScannerStatus.stopping]),
+ * the line starts with "Active: Stopping…" instead of ON or OFF, so the label never says OFF while
+ * workers may still run. It keeps the OFF form's confirmed count and the suggested suffix. Every other
+ * line is unchanged.
  */
 internal fun activeAiStatusText(
     status: ActiveScannerStatus,
@@ -219,7 +225,12 @@ internal fun activeAiStatusText(
     suggestedCapReached: Boolean = false,
 ): String =
     buildString {
-        if (status.enabled) {
+        if (status.stopping) {
+            append("Active: Stopping…")
+            if (status.vulnsConfirmed > 0) {
+                append(" | Confirmed: ${status.vulnsConfirmed}")
+            }
+        } else if (status.enabled) {
             append("Active: ON")
             if (status.aiGatePaused) {
                 append(" | $AI_GATE_PAUSED_TEXT")
@@ -254,7 +265,14 @@ internal fun SettingsPanel.refreshActiveAiStatus() {
         )
 }
 
-internal fun SettingsPanel.applyActiveAiSettings() {
+/**
+ * Phase 33 / D-01, D-03, EDT-01 — hot-applies the Settings tab's active scanner controls (everything
+ * except the on/off toggle). Plain setters only: the scanner is never started, stopped or restarted
+ * here, new values apply to the next target, `maxConcurrent` resizes the live worker pool, and the
+ * shared baselines, pending Collaborator confirmations and the Collaborator client are kept.
+ * Safe on the EDT.
+ */
+internal fun SettingsPanel.applyActiveAiTunables() {
     updateActiveRiskDescription()
     activeAiScanner.maxConcurrent = (activeAiMaxConcurrentSpinner.value as? Int) ?: 3
     activeAiScanner.maxPayloadsPerPoint = (activeAiMaxPayloadsSpinner.value as? Int) ?: 10
@@ -264,7 +282,24 @@ internal fun SettingsPanel.applyActiveAiSettings() {
     activeAiScanner.scopeOnly = activeAiScopeOnly.isSelected
     activeAiScanner.scanMode = ScanMode.fromString(activeAiScanModeCombo.selectedItem as? String)
     activeAiScanner.useCollaborator = activeAiUseCollaborator.isSelected
-    activeAiScanner.setEnabled(activeAiEnabled.isSelected)
+}
+
+/**
+ * Phase 33 / D-01, D-04, EDT-01 — the only Settings path that starts or stops the active scanner (the
+ * Settings toggle, and the header toggle through [setActiveAiEnabled]).
+ *
+ * Asks the scanner only when the toggle differs from its current intent, through the non-blocking
+ * `requestEnabled`: the start or stop runs on the scanner's lifecycle thread, so this returns at once
+ * on the EDT, and a second click during a stop is serialized behind it (the latest click wins). The
+ * status is refreshed at once, so "Active: Stopping…" shows while an OFF runs, and again on the EDT
+ * when the transition settles.
+ */
+internal fun SettingsPanel.applyActiveAiEnabled() {
+    if (activeAiEnabled.isSelected != activeAiScanner.isEnabled()) {
+        activeAiScanner.requestEnabled(activeAiEnabled.isSelected) {
+            SwingUtilities.invokeLater { refreshActiveAiStatus() }
+        }
+    }
     refreshActiveAiStatus()
 }
 

@@ -473,30 +473,32 @@ internal fun SettingsPanel.initUiWiring() {
         refreshPassiveAiStatus()
     }
 
-    // Active AI Scanner event listeners
+    // Active AI Scanner event listeners. Phase 33 / D-01, D-04: only the on/off toggle starts or stops
+    // the scanner (non-blocking, through requestEnabled); every other control hot-applies its value.
     activeAiEnabled.addActionListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
+        applyActiveAiEnabled()
         updatePrivacyWarnings()
         updateRiskWarnings()
         onActiveAiEnabledChanged?.invoke(activeAiEnabled.isSelected)
     }
     activeAiScopeOnly.addActionListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiMaxConcurrentSpinner.addChangeListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiMaxPayloadsSpinner.addChangeListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiTimeoutSpinner.addChangeListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiDelaySpinner.addChangeListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiRiskLevelCombo.addActionListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
         val level = activeAiRiskLevelCombo.selectedItem as? String
         if (level == "DANGEROUS") {
             JOptionPane.showMessageDialog(
@@ -508,13 +510,13 @@ internal fun SettingsPanel.initUiWiring() {
         }
     }
     activeAiScanModeCombo.addActionListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiUseCollaborator.addActionListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiAdaptivePayloads.addActionListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiViewFindings.addActionListener {
         showActiveAiFindingsDialog()

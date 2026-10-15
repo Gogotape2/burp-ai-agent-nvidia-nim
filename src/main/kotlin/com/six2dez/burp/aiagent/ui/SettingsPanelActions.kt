@@ -193,9 +193,14 @@ fun SettingsPanel.setPassiveAiEnabled(enabled: Boolean) {
     applyPassiveAiSettings()
 }
 
+/**
+ * The header toggle's path (MainTab). Phase 33 / D-04, EDT-01: like a click on the Settings toggle,
+ * it hands the start or stop to the scanner's lifecycle thread and returns at once on the EDT.
+ */
 fun SettingsPanel.setActiveAiEnabled(enabled: Boolean) {
     activeAiEnabled.isSelected = enabled
-    applyActiveAiSettings()
+    applyActiveAiTunables()
+    applyActiveAiEnabled()
     updatePrivacyWarnings()
 }
 
