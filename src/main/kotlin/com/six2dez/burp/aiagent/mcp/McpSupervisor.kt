@@ -102,6 +102,10 @@ class McpSupervisor(
      *
      * Does nothing once [shutdown] began: a settings save landing during unload must not restart the
      * server after unload closed it (Phase 33 RESEARCH Pitfall 5).
+     *
+     * The entry check alone is not enough for an apply that passed it before unload began and then blocked
+     * in the server manager (Phase 33 gap closure, WR-01): the stdio step re-checks the latch in
+     * [applyStdio], and the server manager latches its own starts (`KtorMcpServerManager.terminated`).
      */
     @Suppress("ReturnCount") // the third return is the unload-latch guard clause, checked before anything else
     fun applySettings(
@@ -134,11 +138,7 @@ class McpSupervisor(
                 previousDeterminism == determinismMode &&
                 previousPreprocess == preprocessSettings
         if (alreadyRunning && settingsUnchanged) {
-            if (settings.stdioEnabled) {
-                stdioBridge.start(settings, privacyMode, determinismMode, preprocessSettings)
-            } else {
-                stdioBridge.stop()
-            }
+            applyStdio(settings, privacyMode, determinismMode, preprocessSettings)
             return
         }
 
@@ -146,6 +146,22 @@ class McpSupervisor(
         takeoverAttempts.set(0)
         startInternal(settings, privacyMode, determinismMode, preprocessSettings)
 
+        applyStdio(settings, privacyMode, determinismMode, preprocessSettings)
+    }
+
+    /**
+     * Starts or stops the stdio bridge for [settings]. Re-checks the unload latch first (Phase 33 gap
+     * closure, WR-01): the entry check in [applySettings] ran before an in-flight apply blocked in the
+     * server manager, and unload may have stopped the bridge meanwhile. The bridge latches itself too
+     * ([McpStdioBridge.shutdown]), so even an apply that passes this check cannot start it after unload.
+     */
+    private fun applyStdio(
+        settings: McpSettings,
+        privacyMode: PrivacyMode,
+        determinismMode: Boolean,
+        preprocessSettings: ResponsePreprocessorSettings,
+    ) {
+        if (shuttingDown) return
         if (settings.stdioEnabled) {
             stdioBridge.start(settings, privacyMode, determinismMode, preprocessSettings)
         } else {
@@ -205,7 +221,8 @@ class McpSupervisor(
      * Latches [shuttingDown] first, so no settings save or delayed restart starts the server again;
      * `shutdownNow()` drops a restart still pending on the scheduler (the default scheduler would not run
      * it after `shutdown()` either, but an injected one might). Then the server manager and the stdio
-     * bridge stop with the same deadline, every provider's `onMcpServerStopped` hook runs (so the full
+     * bridge stop with the same deadline; the bridge through [McpStdioBridge.shutdown], which also latches
+     * it so no later start runs (WR-01). Every provider's `onMcpServerStopped` hook runs (so the full
      * build's scanner-task and Collaborator registries are cleared on unload, not only on a stop), and
      * the scheduler is awaited with what is left, writing one Error line if it does not stop.
      */
@@ -213,7 +230,7 @@ class McpSupervisor(
         shuttingDown = true
         scheduler.shutdownNow()
         serverManager.shutdown(deadline)
-        stdioBridge.stop(deadline)
+        stdioBridge.shutdown(deadline)
         notifyServerStopped()
         deadline.awaitOrForce(scheduler, "MCP supervisor") { line -> runCatching { api.logging().logToError(line) } }
         // A no-op for an injected scheduler the helper never tracked.
