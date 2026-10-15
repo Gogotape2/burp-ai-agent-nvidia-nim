@@ -21,6 +21,8 @@ import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptOutputType
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.ui.UiActions
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Answers
@@ -509,14 +511,71 @@ class IssueDetailHtmlEncodingTest {
     }
 
     /**
-     * The file's lines read as UTF-8 text, without comment lines: a line whose trimmed text starts
-     * with one of [COMMENT_PREFIXES] (a KDoc star, a line comment or a block-comment opener).
+     * WR-03: a file that already calls the formatter once must still fail when it gains a second,
+     * raw `auditIssue(`. Proven on synthetic source lines, so no production file is touched.
      */
-    private fun codeLines(file: File): List<String> =
-        file.readText(Charsets.UTF_8).lines().filterNot { line ->
+    @Test
+    fun theCensusCatchesASecondRawProducerInAFileThatAlreadyEscapes() {
+        val secondRaw =
+            listOf(
+                "val a = IssueUtils.formatIssueDetailHtml(x)",
+                "AuditIssue.auditIssue(n, a)",
+                "AuditIssue.auditIssue(n, raw)",
+            )
+        val caught = producerCensus(secondRaw)
+        assertNotNull(
+            caught.violation,
+            "two auditIssue( calls and one formatter call must be reported. Counted: $caught",
+        )
+        assertEquals(SECOND_RAW_PRODUCERS, caught.auditIssueCalls, "both auditIssue( calls count. Counted: $caught")
+        assertEquals(1, caught.formatterCalls, "the one formatter call counts. Counted: $caught")
+
+        val sameLine = producerCensus(listOf(secondRaw[0], "${secondRaw[1]}; ${secondRaw[2]}"))
+        assertEquals(SECOND_RAW_PRODUCERS, sameLine.auditIssueCalls, "two calls on ONE line count twice. Counted: $sameLine")
+        assertNotNull(sameLine.violation, "two calls on one line with one formatter call must be reported")
+
+        val fixed = producerCensus(secondRaw + "val b = IssueUtils.formatIssueDetailHtml(y)")
+        assertNull(fixed.violation, "a second formatter call settles the second producer. Counted: $fixed")
+
+        val commented = producerCensus(secondRaw + "val b = IssueUtils.formatIssueDetailHtml(y)" + COMMENTED_PRODUCERS)
+        assertEquals(fixed, commented, "comment lines must not change the counts or the verdict")
+        assertEquals(
+            ProducerCensus(0, 0, null),
+            producerCensus(COMMENTED_PRODUCERS),
+            "comment-only auditIssue( lines are not producers",
+        )
+    }
+
+    /**
+     * The escaping census for one file's source lines: the non-comment `auditIssue(` calls, the
+     * non-comment [FORMATTER_CALL] calls, and a violation description when the file breaks the rule.
+     */
+    private fun producerCensus(lines: List<String>): ProducerCensus {
+        val code = codeLines(lines)
+        val producers = code.count { AUDIT_ISSUE_CALL.containsMatchIn(it) }
+        val formatters = code.count { it.contains(FORMATTER_CALL) }
+        val violation = if (producers > 0 && formatters == 0) "never calls $FORMATTER_CALL" else null
+        return ProducerCensus(producers, formatters, violation)
+    }
+
+    private fun codeLines(file: File): List<String> = codeLines(file.readText(Charsets.UTF_8).lines())
+
+    /**
+     * The lines without comment lines: a line whose trimmed text starts with one of
+     * [COMMENT_PREFIXES] (a KDoc star, a line comment or a block-comment opener).
+     */
+    private fun codeLines(lines: List<String>): List<String> =
+        lines.filterNot { line ->
             val trimmed = line.trimStart()
             COMMENT_PREFIXES.any { trimmed.startsWith(it) }
         }
+
+    /** One file's escaping-census counts over its non-comment lines, and its violation, if any. */
+    private data class ProducerCensus(
+        val auditIssueCalls: Int,
+        val formatterCalls: Int,
+        val violation: String?,
+    )
 
     private fun bountyPromptDefinition(
         id: String,
@@ -608,6 +667,8 @@ class IssueDetailHtmlEncodingTest {
         val AUDIT_ISSUE_CALL = Regex("""\bauditIssue\(""")
         const val FORMATTER_CALL = "IssueUtils.formatIssueDetailHtml("
         val COMMENT_PREFIXES = listOf("*", "//", "/*")
+        const val SECOND_RAW_PRODUCERS = 2
+        val COMMENTED_PRODUCERS = listOf(" * AuditIssue.auditIssue(", "// auditIssue(")
         const val BOUNTY_FINDING_CONFIDENCE = 70
 
         /** Script tag, attribute break-out with an event handler, and a bare ampersand. */
