@@ -13,7 +13,6 @@ import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
 import io.modelcontextprotocol.kotlin.sdk.server.StdioServerTransport
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
@@ -66,7 +65,8 @@ class McpStdioBridge(
         server = mcpServer
         transport = stdioTransport
 
-        val newScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+        // Phase 33 / D-12: the extension-owned dispatcher that unload closes.
+        val newScope = CoroutineScope(McpCoroutines.dispatcher() + SupervisorJob())
         scope = newScope
         job =
             newScope.launch {

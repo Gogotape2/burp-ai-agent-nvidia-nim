@@ -16,6 +16,7 @@ import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
 import io.ktor.server.application.call
 import io.ktor.server.application.install
+import io.ktor.server.application.serverConfig
 import io.ktor.server.engine.EmbeddedServer
 import io.ktor.server.engine.applicationEnvironment
 import io.ktor.server.engine.connector
@@ -33,6 +34,7 @@ import io.modelcontextprotocol.kotlin.sdk.ServerCapabilities
 import io.modelcontextprotocol.kotlin.sdk.server.Server
 import io.modelcontextprotocol.kotlin.sdk.server.ServerOptions
 import io.modelcontextprotocol.kotlin.sdk.server.mcp
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.runBlocking
 import java.net.URI
 import java.util.concurrent.ExecutorService
@@ -154,8 +156,120 @@ class KtorMcpServerManager(
                     val settingsSnapshot = settings
 
                     val environment = applicationEnvironment { }
+                    val rootConfig =
+                        serverConfig(environment) {
+                            // Phase 33 / D-12: request coroutines (and the SSE mcp {} routes, which have no
+                            // dispatcher of their own) run on the extension-owned dispatcher that unload
+                            // closes, not on the shared one. Ktor's own start/stop plumbing cannot be
+                            // redirected; McpCoroutines documents how that is handled.
+                            parentCoroutineContext = McpCoroutines.dispatcher() + SupervisorJob()
+                            module {
+                                install(CORS) {
+                                    if (!settings.externalEnabled) {
+                                        allowHost("localhost:${settings.port}")
+                                        allowHost("127.0.0.1:${settings.port}")
+                                    } else {
+                                        if (externalCorsHosts.isEmpty()) {
+                                            anyHost()
+                                        } else {
+                                            externalCorsHosts.forEach { allowed ->
+                                                allowHost(allowed.hostAndPort, schemes = listOf(allowed.scheme))
+                                            }
+                                        }
+                                    }
+                                    allowMethod(HttpMethod.Get)
+                                    allowMethod(HttpMethod.Post)
+                                    allowHeader("Content-Type")
+                                    allowHeader("Accept")
+                                    allowHeader("Authorization")
+                                    allowHeader("Last-Event-ID")
+                                    allowCredentials = false
+                                    allowNonSimpleContentTypes = true
+                                    maxAgeInSeconds = 3600
+                                }
+
+                                // SEC-04 / F1: ORDER IS LOAD-BEARING — CORS FIRST, gate SECOND.
+                                // Both live in the Plugins phase, where relative order is install order. It
+                                // was measured that with the gate first a legitimate preflight gets 401 and
+                                // browser CORS breaks; with CORS first plus the gate's isCommitted guard a
+                                // legitimate preflight returns 200 with Access-Control-Allow-Origin, a
+                                // foreign-origin preflight still gets CORS's own 403, and every real request
+                                // is still gated. The gate's PHASE (not this line's position) is what makes it
+                                // run before routing, so moving it below routing{} would still be correct —
+                                // but moving it ABOVE install(CORS) would not.
+                                install(McpAccessControl) {
+                                    // Explicit `this.` because the enclosing start() parameter named
+                                    // `settings` shadows the config property of the same name.
+                                    this.settings = settingsSnapshot
+                                    onBlocked = { deny ->
+                                        reporter.report(deny, settingsSnapshot.externalEnabled, System.currentTimeMillis())
+                                    }
+                                }
+
+                                routing {
+                                    get("/__mcp/health") {
+                                        // D-02: the identity header is a local-mode-only signal. In external
+                                        // mode an unauthenticated scan must not be able to confirm that a
+                                        // Burp AI Agent sits behind this port; the route itself stays
+                                        // reachable for liveness (D-01), just not for identification.
+                                        if (!settingsSnapshot.externalEnabled) {
+                                            call.response.headers.append("X-Burp-AI-Agent", "mcp")
+                                        }
+                                        call.respondText("ok")
+                                    }
+                                    // SHUTDOWN_PATH, not a literal: the access-control gate now matches this
+                                    // same path to recognise the SEC-07 proof credential, and the two must not
+                                    // drift apart.
+                                    post(SHUTDOWN_PATH) {
+                                        // SEC-07: two accepted credential forms, and the order is not
+                                        // load-bearing. The bearer check is unchanged so an operator driving
+                                        // this endpoint by hand still works; the proof form is what the
+                                        // bind-conflict takeover client now presents, because the token must
+                                        // never reach a port holder whose identity cannot be established.
+                                        val authHeader = call.request.headers["Authorization"].orEmpty()
+                                        val proof = call.request.headers[McpTakeoverProof.HEADER].orEmpty()
+                                        if (!isAuthorized(authHeader, settings.token) &&
+                                            !McpTakeoverProof.accepts(settings.token, settings.host, settings.port, System.currentTimeMillis(), proof)
+                                        ) {
+                                            call.respond(HttpStatusCode.Unauthorized)
+                                            return@post
+                                        }
+                                        call.respondText("shutting down")
+                                        // D-08: the Netty thread never touches the server reference itself; the
+                                        // stop runs on the lifecycle thread and supersedes any pending start.
+                                        try {
+                                            lifecycle.submit {
+                                                generation.incrementAndGet()
+                                                try {
+                                                    serverRef.getAndSet(null)?.stop(1000, 5000)
+                                                } catch (e: Exception) {
+                                                    api.logging().logToError("MCP shutdown failed: ${e.message}")
+                                                }
+                                            }
+                                        } catch (_: RejectedExecutionException) {
+                                            // Unloading: the terminal shutdown closes the server.
+                                        }
+                                    }
+                                }
+
+                                // SEC-04 / F1: a Call-phase security interceptor USED TO SIT HERE. Do not
+                                // restore it. RoutingRoot.Plugin.install registers its own interceptor in the
+                                // very same Call phase at the moment of the first routing{} call,
+                                // same-phase interceptors run in registration order, and RoutingRoot's
+                                // interceptor never ends the pipeline — so every resolved route (including
+                                // the SDK's /sse and /message) was served BEFORE these checks ran. The checks
+                                // now live in McpAccessControlPlugin.kt, whose onCall attaches to the
+                                // Plugins phase and therefore cannot be outrun by routing.
+
+                                mcp {
+                                    mcpServer
+                                }
+
+                                mcpServer.registerTools(api, context)
+                            }
+                        }
                     val serverInstance =
-                        embeddedServer(Netty, environment, configure = {
+                        embeddedServer(Netty, rootConfig) {
                             if (settings.tlsEnabled) {
                                 val tlsMaterial =
                                     McpTls.resolve(settings)
@@ -175,109 +289,6 @@ class KtorMcpServerManager(
                                     port = settings.port
                                 }
                             }
-                        }) {
-                            install(CORS) {
-                                if (!settings.externalEnabled) {
-                                    allowHost("localhost:${settings.port}")
-                                    allowHost("127.0.0.1:${settings.port}")
-                                } else {
-                                    if (externalCorsHosts.isEmpty()) {
-                                        anyHost()
-                                    } else {
-                                        externalCorsHosts.forEach { allowed ->
-                                            allowHost(allowed.hostAndPort, schemes = listOf(allowed.scheme))
-                                        }
-                                    }
-                                }
-                                allowMethod(HttpMethod.Get)
-                                allowMethod(HttpMethod.Post)
-                                allowHeader("Content-Type")
-                                allowHeader("Accept")
-                                allowHeader("Authorization")
-                                allowHeader("Last-Event-ID")
-                                allowCredentials = false
-                                allowNonSimpleContentTypes = true
-                                maxAgeInSeconds = 3600
-                            }
-
-                            // SEC-04 / F1: ORDER IS LOAD-BEARING — CORS FIRST, gate SECOND.
-                            // Both live in the Plugins phase, where relative order is install order. It
-                            // was measured that with the gate first a legitimate preflight gets 401 and
-                            // browser CORS breaks; with CORS first plus the gate's isCommitted guard a
-                            // legitimate preflight returns 200 with Access-Control-Allow-Origin, a
-                            // foreign-origin preflight still gets CORS's own 403, and every real request
-                            // is still gated. The gate's PHASE (not this line's position) is what makes it
-                            // run before routing, so moving it below routing{} would still be correct —
-                            // but moving it ABOVE install(CORS) would not.
-                            install(McpAccessControl) {
-                                // Explicit `this.` because the enclosing start() parameter named
-                                // `settings` shadows the config property of the same name.
-                                this.settings = settingsSnapshot
-                                onBlocked = { deny ->
-                                    reporter.report(deny, settingsSnapshot.externalEnabled, System.currentTimeMillis())
-                                }
-                            }
-
-                            routing {
-                                get("/__mcp/health") {
-                                    // D-02: the identity header is a local-mode-only signal. In external
-                                    // mode an unauthenticated scan must not be able to confirm that a
-                                    // Burp AI Agent sits behind this port; the route itself stays
-                                    // reachable for liveness (D-01), just not for identification.
-                                    if (!settingsSnapshot.externalEnabled) {
-                                        call.response.headers.append("X-Burp-AI-Agent", "mcp")
-                                    }
-                                    call.respondText("ok")
-                                }
-                                // SHUTDOWN_PATH, not a literal: the access-control gate now matches this
-                                // same path to recognise the SEC-07 proof credential, and the two must not
-                                // drift apart.
-                                post(SHUTDOWN_PATH) {
-                                    // SEC-07: two accepted credential forms, and the order is not
-                                    // load-bearing. The bearer check is unchanged so an operator driving
-                                    // this endpoint by hand still works; the proof form is what the
-                                    // bind-conflict takeover client now presents, because the token must
-                                    // never reach a port holder whose identity cannot be established.
-                                    val authHeader = call.request.headers["Authorization"].orEmpty()
-                                    val proof = call.request.headers[McpTakeoverProof.HEADER].orEmpty()
-                                    if (!isAuthorized(authHeader, settings.token) &&
-                                        !McpTakeoverProof.accepts(settings.token, settings.host, settings.port, System.currentTimeMillis(), proof)
-                                    ) {
-                                        call.respond(HttpStatusCode.Unauthorized)
-                                        return@post
-                                    }
-                                    call.respondText("shutting down")
-                                    // D-08: the Netty thread never touches the server reference itself; the
-                                    // stop runs on the lifecycle thread and supersedes any pending start.
-                                    try {
-                                        lifecycle.submit {
-                                            generation.incrementAndGet()
-                                            try {
-                                                serverRef.getAndSet(null)?.stop(1000, 5000)
-                                            } catch (e: Exception) {
-                                                api.logging().logToError("MCP shutdown failed: ${e.message}")
-                                            }
-                                        }
-                                    } catch (_: RejectedExecutionException) {
-                                        // Unloading: the terminal shutdown closes the server.
-                                    }
-                                }
-                            }
-
-                            // SEC-04 / F1: a Call-phase security interceptor USED TO SIT HERE. Do not
-                            // restore it. RoutingRoot.Plugin.install registers its own interceptor in the
-                            // very same Call phase at the moment of the first routing{} call,
-                            // same-phase interceptors run in registration order, and RoutingRoot's
-                            // interceptor never ends the pipeline — so every resolved route (including
-                            // the SDK's /sse and /message) was served BEFORE these checks ran. The checks
-                            // now live in McpAccessControlPlugin.kt, whose onCall attaches to the
-                            // Plugins phase and therefore cannot be outrun by routing.
-
-                            mcp {
-                                mcpServer
-                            }
-
-                            mcpServer.registerTools(api, context)
                         }
 
                     val instance = serverInstance.apply { start(false) }
