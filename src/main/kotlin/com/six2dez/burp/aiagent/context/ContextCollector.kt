@@ -11,6 +11,7 @@ import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.redact.Redaction
 import com.six2dez.burp.aiagent.redact.RedactionPolicy
 import com.six2dez.burp.aiagent.redact.UrlRedaction
+import com.six2dez.burp.aiagent.util.IssueUtils
 import com.six2dez.burp.aiagent.util.SecurityExcerpts
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
@@ -123,8 +124,10 @@ class ContextCollector(
                         name = redactText(name.orEmpty()),
                         severity = i.severity()?.name,
                         confidence = i.confidence()?.name,
-                        detail = detail?.let(redactText),
-                        remediation = remediation?.let(redactText),
+                        // The extension stores issue text as escaped <br>-joined HTML; the redaction
+                        // rules need the plain text back (32-REVIEW CR-01). The name is never escaped.
+                        detail = detail?.let { redactText(IssueUtils.issueDetailHtmlToText(it)) },
+                        remediation = remediation?.let { redactText(IssueUtils.issueDetailHtmlToText(it)) },
                         affectedHost =
                             host?.let {
                                 if (policy.anonymizeHosts) UrlRedaction.aliasHost(it, options.hostSalt) else it
