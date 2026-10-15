@@ -1,51 +1,47 @@
 package com.six2dez.burp.aiagent.mcp.tools
 
 import burp.api.montoya.collaborator.CollaboratorClient
-import com.six2dez.burp.aiagent.util.scheduleGuarded
 import java.util.concurrent.ConcurrentHashMap
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
+/**
+ * The MCP Collaborator-client registry: handles the MCP tools hand out, kept for at most the TTL.
+ *
+ * Phase 33 / D-10 (LIFE-01): it owns no thread and no executor. Expiry happens on access: `put` prunes
+ * every expired entry before adding its own, and `get` drops an expired entry it is asked for. So touching
+ * the registry never starts a thread, and with MCP disabled nothing here ever runs. The registry is
+ * emptied by `GenericToolProvider.onMcpServerStopped`, both when the MCP server stops and at unload
+ * (`McpSupervisor.shutdown` runs every provider's stop hook).
+ */
 object CollaboratorRegistry {
     private data class TimedCollaboratorClient(
         val client: CollaboratorClient,
         val createdAtMs: Long,
-    )
+    ) {
+        fun isExpired(
+            nowMs: Long,
+            ttlMs: Long,
+        ): Boolean = nowMs - createdAtMs >= ttlMs
+    }
 
     private val clients = ConcurrentHashMap<String, TimedCollaboratorClient>()
     private val ttlMs = AtomicLong(TimeUnit.MINUTES.toMillis(DEFAULT_TTL_MINUTES.toLong()))
     private val loggerRef = AtomicReference<(String) -> Unit>({})
-    private val cleaner =
-        Executors.newSingleThreadScheduledExecutor { runnable ->
-            Thread(runnable, "McpCollaboratorRegistryCleaner").apply { isDaemon = true }
-        }
-
-    init {
-        // REL-06: routed through scheduleGuarded so a throw on one cleaner tick cannot silently
-        // cancel expiry for the rest of the Burp session. See util/GuardedScheduling.kt.
-        cleaner.scheduleGuarded(
-            "CollaboratorRegistry",
-            "expiry cleanup",
-            ::log,
-            CLEANUP_INTERVAL_MINUTES,
-            CLEANUP_INTERVAL_MINUTES,
-            TimeUnit.MINUTES,
-        ) { cleanupExpired() }
-    }
 
     fun put(
         key: String,
         client: CollaboratorClient,
     ) {
+        cleanupExpired()
         clients[key] = TimedCollaboratorClient(client = client, createdAtMs = System.currentTimeMillis())
     }
 
     fun get(key: String): CollaboratorClient? {
         val now = System.currentTimeMillis()
         val entry = clients[key] ?: return null
-        if (isExpired(entry, now)) {
+        if (entry.isExpired(now, ttlMs.get())) {
             if (clients.remove(key, entry)) {
                 log("Expired MCP collaborator client key=$key")
             }
@@ -83,7 +79,7 @@ object CollaboratorRegistry {
         val iterator = clients.entries.iterator()
         while (iterator.hasNext()) {
             val (key, entry) = iterator.next()
-            if (isExpired(entry, now)) {
+            if (entry.isExpired(now, ttlMs.get())) {
                 iterator.remove()
                 removed++
                 log("Expired MCP collaborator client key=$key")
@@ -94,11 +90,6 @@ object CollaboratorRegistry {
         }
     }
 
-    private fun isExpired(
-        entry: TimedCollaboratorClient,
-        nowMs: Long,
-    ): Boolean = nowMs - entry.createdAtMs >= ttlMs.get()
-
     private fun log(message: String) {
         try {
             loggerRef.get().invoke(message)
@@ -108,5 +99,4 @@ object CollaboratorRegistry {
     }
 
     private const val DEFAULT_TTL_MINUTES = 60
-    private const val CLEANUP_INTERVAL_MINUTES = 5L
 }

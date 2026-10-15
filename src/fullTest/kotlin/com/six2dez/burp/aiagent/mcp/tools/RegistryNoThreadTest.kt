@@ -126,7 +126,12 @@ class RegistryNoThreadTest {
         assertEquals(0, CollaboratorRegistry.sizeForTests())
     }
 
-    private fun liveThreads(): Set<Thread> = Thread.getAllStackTraces().keys.filter { it.isAlive }.toSet()
+    private fun liveThreads(): Set<Thread> =
+        Thread
+            .getAllStackTraces()
+            .keys
+            .filter { it.isAlive }
+            .toSet()
 
     private fun repository(prefs: InMemoryPreferences): AgentSettingsRepository {
         val api = mock<MontoyaApi>(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
