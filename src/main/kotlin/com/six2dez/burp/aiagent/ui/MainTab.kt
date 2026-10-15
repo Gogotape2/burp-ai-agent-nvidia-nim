@@ -1071,6 +1071,14 @@ class MainTab(
         supervisor.shutdownAllChatSessions()
     }
 
+    // RED skeletons (Phase 33-09 Task 2): signatures only.
+    fun quiesce() = Unit
+
+    @Suppress("UnusedParameter")
+    fun dispose(deadline: com.six2dez.burp.aiagent.util.ShutdownDeadline) = Unit
+
+    internal fun attachTabPaneForTests(): JTabbedPane? = ensureTabPaneAttached()
+
     fun shutdown() {
         // FIRST, before settingsPanel.shutdown(): App.shutdown() calls mainTab?.shutdown() before
         // mcpSupervisor.shutdown(), so disposing here is what stops a settings write submitted just
