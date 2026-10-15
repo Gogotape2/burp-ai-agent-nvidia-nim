@@ -169,10 +169,32 @@ class ActiveAiScanner(
     @Volatile
     private var scheduledExecutor: ScheduledExecutorService? = null
 
-    // Configurable limits
+    // Configurable limits. Written on the EDT / Save worker and read live by the scan workers and the
+    // scheduler tick, so a new value applies to the next target without a restart (Phase 33 / D-01).
+
+    /**
+     * How many targets are scanned at once, at least 1.
+     *
+     * Phase 33 / D-01: setting it on a running scanner resizes the live worker pool (core and maximum
+     * both become the new value), so the pool never exceeds it. This replaces the restart-per-change
+     * that left the old pool's workers attacking alongside the new one (review H14). Never takes the
+     * lifecycle lock: it runs on the EDT. A pool that was just shut down accepts the resize harmlessly.
+     */
+    @Volatile
     var maxConcurrent: Int = 3
+        set(value) {
+            val size = value.coerceAtLeast(1)
+            field = size
+            resizeWorkers(size)
+        }
+
+    @Volatile
     var maxPayloadsPerPoint: Int = 10
+
+    @Volatile
     var timeoutSeconds: Int = 30
+
+    @Volatile
     var requestDelayMs: Long = 100
 
     // Written on the EDT / Save worker, read by scan workers: payload filtering, the IDOR/BOLA gate
@@ -180,9 +202,16 @@ class ActiveAiScanner(
     @Volatile
     var maxRiskLevel: PayloadRisk = PayloadRisk.SAFE
 
+    @Volatile
     var scopeOnly: Boolean = true
+
+    @Volatile
     var scanMode: ScanMode = ScanMode.FULL
+
+    @Volatile
     var useCollaborator: Boolean = false
+
+    @Volatile
     var maxQueueSize: Int = Defaults.ACTIVE_SCAN_MAX_QUEUE_SIZE
 
     /**
@@ -232,6 +261,19 @@ class ActiveAiScanner(
             // INTENTIONAL: the scanner was shut down (unload); there is nothing left to start or stop.
             pendingTransitions.decrementAndGet()
             onSettled?.let { runCatching { it() } }
+        }
+    }
+
+    /** Resizes the live worker pool, if any, to exactly [size] threads (D-01). */
+    private fun resizeWorkers(size: Int) {
+        val pool = executor as? ThreadPoolExecutor ?: return
+        // The JDK rejects a core size above the maximum, so the order depends on the direction.
+        if (size > pool.maximumPoolSize) {
+            pool.maximumPoolSize = size
+            pool.corePoolSize = size
+        } else {
+            pool.corePoolSize = size
+            pool.maximumPoolSize = size
         }
     }
 
@@ -555,6 +597,8 @@ class ActiveAiScanner(
         // taken mid-scan names the subsystem that owns each daemon thread (burp-ai-agent-scan-worker-N,
         // burp-ai-agent-scan-scheduler, burp-ai-agent-oast-poller).
         executor = ExtensionThreads.fixedPool("scan-worker", maxConcurrent)
+        // A resize that landed between building the pool and publishing it is applied now.
+        resizeWorkers(maxConcurrent)
         scheduledExecutor = ExtensionThreads.scheduled("scan-scheduler")
 
         // REL-06: routed through scheduleGuarded so a throw on one tick cannot silently cancel the
