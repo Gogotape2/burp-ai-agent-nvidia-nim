@@ -19,12 +19,14 @@ import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertTimeoutPreemptively
 import org.junit.jupiter.api.io.TempDir
 import org.mockito.Answers
+import org.mockito.Mockito.mockingDetails
 import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.doReturn
@@ -263,13 +265,91 @@ class MainTabUnloadTest {
         assertTrue(healthPool.isShutdown, "quiesce stops the health pool before dispose runs")
     }
 
-    private fun newMainTab(): MainTab {
+    /**
+     * Control for [aConstructorThatThrowsAfterItsTimersStartedLeavesNoTimerRunning]: a tab built normally
+     * keeps its 1 s MCP status timer firing, so the failing case's quiet window is long enough to see a
+     * timer that was left running.
+     */
+    @Test
+    fun aNormallyBuiltTabKeepsItsMcpStatusTimerFiring() {
+        val collaborators = Collaborators()
+        newMainTab(collaborators)
+        onEdt { }
+        val before = statusCalls(collaborators.mcpSupervisor)
+
+        assertTrue(
+            pollUntil(CONTROL_WINDOW_MS) { statusCalls(collaborators.mcpSupervisor) > before },
+            "the status timer of a normally built tab calls McpSupervisor.status() again within ${CONTROL_WINDOW_MS}ms",
+        )
+    }
+
+    /**
+     * WR-04 / LIFE-01 / D-07 — App receives no MainTab whose constructor threw, so it cannot stop that
+     * tab's Swing timers (the ExtensionThreads sweep does not track them). The tab cleans up after itself:
+     * once the original throwable has left the constructor, none of its timers (MCP status, health,
+     * session persist, the Settings panel's, the chat panel's) reaches a collaborator again, and the
+     * health pool it built is shut down.
+     *
+     * The constructor is made to throw through the project-id capture, which runs right after the MCP
+     * status timer started and catches only [Exception], so a test [Error] escapes it.
+     */
+    @Test
+    fun aConstructorThatThrowsAfterItsTimersStartedLeavesNoTimerRunning() {
+        val healthPoolsBefore = healthPools()
+        val poolsAtThrow = AtomicReference<Set<ExecutorService>>()
+        val boom = ConstructionFailure()
         val api = newApi()
+        // The health pool is captured while construction is still running: the pool tracker forgets a
+        // terminated pool as soon as any other pool is tracked.
+        whenever(api.project()).thenAnswer {
+            poolsAtThrow.set(healthPools() - healthPoolsBefore)
+            throw boom
+        }
+        val collaborators = Collaborators(api)
+
+        assertTimeoutPreemptively(Duration.ofSeconds(FAILED_CASE_SECONDS)) {
+            val thrown = assertThrows(ConstructionFailure::class.java) { newMainTab(collaborators) }
+            assertSame(boom, thrown, "the original throwable leaves the constructor, not a cleanup failure")
+
+            // A tick queued before the cleanup may still run; drain it before the snapshot.
+            onEdt { }
+            val before = collaborators.invocationCounts()
+            Thread.sleep(QUIET_WINDOW_MS)
+            onEdt { }
+
+            assertEquals(
+                before,
+                collaborators.invocationCounts(),
+                "no timer of the failed tab reaches the MCP supervisor or the scanners after construction threw",
+            )
+        }
+        val healthPool = checkNotNull(poolsAtThrow.get()) { "construction reached the project-id capture" }.single()
+        assertTrue(healthPool.isShutdown, "the failed construction shut down its health pool")
+    }
+
+    private class ConstructionFailure : Error("test-only construction failure")
+
+    /** The collaborators a MainTab reads; the mocks the failed-construction case watches are kept here. */
+    private inner class Collaborators(
+        val api: MontoyaApi = newApi(),
+    ) {
+        // A real state: deep stubs cannot mock the sealed McpServerState the status timer reads.
+        val mcpSupervisor: McpSupervisor =
+            mock<McpSupervisor>(defaultAnswer = Answers.RETURNS_DEEP_STUBS).also {
+                doReturn(McpServerState.Stopped).whenever(it).status()
+            }
+        val passiveAiScanner: PassiveAiScanner = mock(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
+        val activeAiScanner: ActiveAiScanner = mock(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
+
+        fun invocationCounts(): List<Int> = listOf(mcpSupervisor, passiveAiScanner, activeAiScanner).map { mockingDetails(it).invocations.size }
+    }
+
+    private fun statusCalls(mcpSupervisor: McpSupervisor): Int = mockingDetails(mcpSupervisor).invocations.count { it.method.name == "status" }
+
+    private fun newMainTab(collaborators: Collaborators = Collaborators()): MainTab {
+        val api = collaborators.api
         val registry = BackendRegistry(api)
         val supervisor = AgentSupervisor(api, registry, mock<AuditLogger>(), StoreAiAccessPolicy()).also { supervisors += it }
-        // A real state: deep stubs cannot mock the sealed McpServerState the status timer reads.
-        val mcpSupervisor = mock<McpSupervisor>(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
-        doReturn(McpServerState.Stopped).whenever(mcpSupervisor).status()
         val tab =
             MainTab(
                 api,
@@ -277,9 +357,9 @@ class MainTabUnloadTest {
                 registry,
                 supervisor,
                 mock<AuditLogger>(),
-                mcpSupervisor,
-                mock<PassiveAiScanner>(defaultAnswer = Answers.RETURNS_DEEP_STUBS),
-                mock<ActiveAiScanner>(defaultAnswer = Answers.RETURNS_DEEP_STUBS),
+                collaborators.mcpSupervisor,
+                collaborators.passiveAiScanner,
+                collaborators.activeAiScanner,
                 AiRequestLogger(),
                 buildIdentity = "Custom AI Agent test (test build)",
             )
@@ -329,8 +409,11 @@ class MainTabUnloadTest {
             .keys
             .filter { it.isAlive && it.name == "burp-ai-agent-health" }
 
-    private fun pollUntil(condition: () -> Boolean): Boolean {
-        val end = System.nanoTime() + TimeUnit.SECONDS.toNanos(AWAIT_SECONDS)
+    private fun pollUntil(
+        windowMs: Long = TimeUnit.SECONDS.toMillis(AWAIT_SECONDS),
+        condition: () -> Boolean,
+    ): Boolean {
+        val end = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(windowMs)
         while (System.nanoTime() < end) {
             if (condition()) return true
             Thread.sleep(POLL_MS)
@@ -350,5 +433,8 @@ class MainTabUnloadTest {
         const val EDT_HOLD_SECONDS = 30L
         const val AWAIT_SECONDS = 5L
         const val POLL_MS = 25L
+        const val CONTROL_WINDOW_MS = 3_000L
+        const val QUIET_WINDOW_MS = 2_500L
+        const val FAILED_CASE_SECONDS = 20L
     }
 }
