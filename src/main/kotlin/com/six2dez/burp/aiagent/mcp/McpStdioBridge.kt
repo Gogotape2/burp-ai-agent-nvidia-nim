@@ -22,6 +22,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.io.asSink
 import kotlinx.io.asSource
 import kotlinx.io.buffered
+import kotlin.math.min
 
 class McpStdioBridge(
     private val api: MontoyaApi,
@@ -76,11 +77,11 @@ class McpStdioBridge(
         api.logging().logToOutput("MCP stdio bridge started.")
     }
 
-    fun stop(deadline: ShutdownDeadline?) {
-        stop()
-    }
-
-    fun stop() {
+    /**
+     * Stops the bridge. With a [deadline] (unload, Phase 33 D-05) each close waits at most what is left of
+     * it, and is skipped once nothing is left; without one each close keeps its own 5 s bound.
+     */
+    fun stop(deadline: ShutdownDeadline? = null) {
         job?.cancel()
         job = null
         val currentTransport = transport
@@ -90,13 +91,16 @@ class McpStdioBridge(
         server = null
         scope = null
         runBlocking {
-            withTimeoutOrNull(5000) { currentTransport?.close() }
-            withTimeoutOrNull(5000) { currentServer?.close() }
+            closeTimeoutMs(deadline).takeIf { it > 0 }?.let { budget -> withTimeoutOrNull(budget) { currentTransport?.close() } }
+            closeTimeoutMs(deadline).takeIf { it > 0 }?.let { budget -> withTimeoutOrNull(budget) { currentServer?.close() } }
         }
         currentScope?.coroutineContext?.get(kotlinx.coroutines.Job)?.cancel()
     }
 
     companion object {
-        internal fun closeTimeoutMs(deadline: ShutdownDeadline?): Long = 5_000L
+        private const val CLOSE_TIMEOUT_MS = 5_000L
+
+        /** The bound for one close: [CLOSE_TIMEOUT_MS], capped by what is left of [deadline] when there is one. */
+        internal fun closeTimeoutMs(deadline: ShutdownDeadline?): Long = min(CLOSE_TIMEOUT_MS, deadline?.remainingMs() ?: CLOSE_TIMEOUT_MS)
     }
 }

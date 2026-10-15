@@ -11,6 +11,7 @@ import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
 import com.six2dez.burp.aiagent.spi.PluginSettingsStore
 import com.six2dez.burp.aiagent.spi.ToolProvider
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import com.six2dez.burp.aiagent.util.ShutdownDeadline
 import java.net.BindException
 import java.net.HttpURLConnection
@@ -21,7 +22,7 @@ import java.security.SecureRandom
 import java.security.cert.Certificate
 import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
-import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -42,7 +43,7 @@ class McpSupervisor(
     private val api: MontoyaApi,
     private val serverManager: McpServerManager = KtorMcpServerManager(api),
     private val stdioBridge: McpStdioBridge = McpStdioBridge(api),
-    private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor(),
+    private val scheduler: ScheduledExecutorService = ExtensionThreads.scheduled("mcp-supervisor"),
     private val takeoverClientOverride: McpTakeoverClient? = null,
     private val maxRestartAttempts: Int = DEFAULT_MAX_RESTART_ATTEMPTS,
     private val maxTakeoverAttempts: Int = DEFAULT_MAX_TAKEOVER_ATTEMPTS,
@@ -59,6 +60,12 @@ class McpSupervisor(
     private val preprocessRef = AtomicReference(ResponsePreprocessorSettings())
     private val restartAttempts = AtomicInteger(0)
     private val takeoverAttempts = AtomicInteger(0)
+
+    /**
+     * Phase 33 / D-08 — the unload latch. Once [shutdown] began, neither a settings save nor a delayed
+     * restart may start the server again.
+     */
+    @Volatile private var shuttingDown = false
     private val takeoverClient: McpTakeoverClient =
         takeoverClientOverride ?: object : McpTakeoverClient {
             override fun probe(settings: McpSettings): Boolean = probeExistingServer(settings)
@@ -90,12 +97,20 @@ class McpSupervisor(
         serverManager.setAiToolDependencies(supervisor, passiveScanner, backendRegistry)
     }
 
+    /**
+     * Applies [settings]: starts, restarts or stops the server and the stdio bridge as needed.
+     *
+     * Does nothing once [shutdown] began: a settings save landing during unload must not restart the
+     * server after unload closed it (Phase 33 RESEARCH Pitfall 5).
+     */
+    @Suppress("ReturnCount") // the third return is the unload-latch guard clause, checked before anything else
     fun applySettings(
         settings: McpSettings,
         privacyMode: PrivacyMode,
         determinismMode: Boolean,
         preprocessSettings: ResponsePreprocessorSettings,
     ) {
+        if (shuttingDown) return
         val previousSettings = settingsRef.get()
         val previousPrivacy = privacyRef.get()
         val previousDeterminism = determinismRef.get()
@@ -147,6 +162,11 @@ class McpSupervisor(
         restartAttempts.set(0)
         takeoverAttempts.set(0)
         stdioBridge.stop()
+        notifyServerStopped()
+    }
+
+    /** Runs every provider's `onMcpServerStopped` hook, so each clears what it holds for the server. */
+    private fun notifyServerStopped() {
         toolRegistry().providers().forEach { provider ->
             runProviderHook(provider, "onMcpServerStopped") { provider.onMcpServerStopped() }
         }
@@ -179,20 +199,28 @@ class McpSupervisor(
         }
     }
 
+    /**
+     * Phase 33 / D-05 / D-08 / D-10 — the terminal shutdown, within what is left of [deadline].
+     *
+     * Latches [shuttingDown] first, so no settings save or delayed restart starts the server again;
+     * `shutdownNow()` drops a restart still pending on the scheduler (the default scheduler would not run
+     * it after `shutdown()` either, but an injected one might). Then the server manager and the stdio
+     * bridge stop with the same deadline, every provider's `onMcpServerStopped` hook runs (so the full
+     * build's scanner-task and Collaborator registries are cleared on unload, not only on a stop), and
+     * the scheduler is awaited with what is left, writing one Error line if it does not stop.
+     */
     fun shutdown(deadline: ShutdownDeadline) {
-        shutdown()
+        shuttingDown = true
+        scheduler.shutdownNow()
+        serverManager.shutdown(deadline)
+        stdioBridge.stop(deadline)
+        notifyServerStopped()
+        deadline.awaitOrForce(scheduler, "MCP supervisor") { line -> runCatching { api.logging().logToError(line) } }
+        // A no-op for an injected scheduler the helper never tracked.
+        ExtensionThreads.release(scheduler)
     }
 
-    fun shutdown() {
-        scheduler.shutdown()
-        try {
-            scheduler.awaitTermination(5, TimeUnit.SECONDS)
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-        }
-        serverManager.shutdown()
-        stdioBridge.stop()
-    }
+    fun shutdown() = shutdown(ShutdownDeadline.unload())
 
     private fun startInternal(
         settings: McpSettings,
@@ -278,11 +306,16 @@ class McpSupervisor(
     }
 
     private fun scheduleStart(delayMs: Long) {
-        scheduler.schedule({
-            val current = settingsRef.get() ?: return@schedule
-            if (!current.enabled) return@schedule
-            startInternal(current, privacyRef.get(), determinismRef.get(), preprocessRef.get())
-        }, delayMs, TimeUnit.MILLISECONDS)
+        try {
+            scheduler.schedule({
+                if (shuttingDown) return@schedule
+                val current = settingsRef.get() ?: return@schedule
+                if (!current.enabled) return@schedule
+                startInternal(current, privacyRef.get(), determinismRef.get(), preprocessRef.get())
+            }, delayMs, TimeUnit.MILLISECONDS)
+        } catch (_: RejectedExecutionException) {
+            // The scheduler is gone: unload is under way, and nothing may restart the server.
+        }
     }
 
     private fun isBindException(exception: Throwable): Boolean {
