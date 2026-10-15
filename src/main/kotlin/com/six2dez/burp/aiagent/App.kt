@@ -15,6 +15,7 @@ import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.config.AgentSettingsRepository
 import com.six2dez.burp.aiagent.config.toPreprocessorSettings
 import com.six2dez.burp.aiagent.context.ContextCollector
+import com.six2dez.burp.aiagent.mcp.McpCoroutines
 import com.six2dez.burp.aiagent.mcp.McpSupervisor
 import com.six2dez.burp.aiagent.redact.Redaction
 import com.six2dez.burp.aiagent.redact.SafeRegex
@@ -33,8 +34,10 @@ import com.six2dez.burp.aiagent.spi.StoreFlavorProfile
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.MainTab
 import com.six2dez.burp.aiagent.ui.UiActions
+import com.six2dez.burp.aiagent.util.ShutdownDeadline
 import java.nio.file.Paths
 import java.util.ServiceConfigurationError
+import java.util.concurrent.atomic.AtomicBoolean
 
 object App {
     lateinit var api: MontoyaApi
@@ -63,7 +66,12 @@ object App {
     @Volatile
     private var installedPlugins: List<ExtensionPlugin> = emptyList()
 
+    /** D-07: set by the first [shutdown] of a load, so a second call (handler after failed-load cleanup) is a no-op. */
+    private val shutdownStarted = AtomicBoolean(false)
+
     fun initialize(montoyaApi: MontoyaApi) {
+        // A new load: the next shutdown must run again.
+        shutdownStarted.set(false)
         api = montoyaApi
         // UI-SPEC PC-15: the profile is resolved ONCE. The banner and the Help caption both come from it,
         // so a provider conflict is logged once and the two can never disagree.
@@ -263,7 +271,20 @@ object App {
         )
     }
 
-    fun shutdown() {
+    /**
+     * Phase 33 / D-07 — unloads the extension within one shared [deadline].
+     *
+     * Safe on a partly initialized App: a load that threw part-way leaves some fields unset, and every step
+     * skips a component that was never built. Idempotent: only the first call of a load runs; a second
+     * call (Burp's handler after the failed-load cleanup in [BurpAiAgentExtension]) returns at once.
+     * [shutdownSharedCoroutines] runs the guarded, irreversible shared coroutine shutdown; only the
+     * production unload path passes true.
+     */
+    fun shutdown(
+        shutdownSharedCoroutines: Boolean = false,
+        deadline: ShutdownDeadline = ShutdownDeadline.unload(),
+    ) {
+        if (!shutdownStarted.compareAndSet(false, true)) return
         safeShutdownStep("MainTab") { mainTab?.shutdown() }
         mainTab = null
         // Plug-ins unhook before the scanners stop (the auto-queue plug-in clears the passive sink).
@@ -271,21 +292,21 @@ object App {
             safeShutdownStep("Plug-in ${plugin.javaClass.name}") { plugin.shutdown() }
         }
         installedPlugins = emptyList()
-        safeShutdownStep("AI Request Logger") { aiRequestLogger.shutdown() }
-        safeShutdownStep("Passive scanner") {
+        safeShutdownStep("AI Request Logger", this::aiRequestLogger.isInitialized) { aiRequestLogger.shutdown() }
+        // setEnabled(false) waits for nothing; it clears the shared scan knowledge base, which shutdown does not.
+        safeShutdownStep("Passive scanner", this::passiveAiScanner.isInitialized) {
             passiveAiScanner.setEnabled(false)
-            passiveAiScanner.shutdown()
+            passiveAiScanner.shutdown(deadline)
         }
-        // Split so a throw in setEnabled(false) can't skip shutdown() — shutdown() is the only
-        // place the per-request requestExecutor (a cached thread pool) is terminated on unload.
-        safeShutdownStep("Active scanner disable") { activeAiScanner.setEnabled(false) }
-        safeShutdownStep("Active scanner") { activeAiScanner.shutdown() }
-        safeShutdownStep("Supervisor") { supervisor.shutdown() }
-        safeShutdownStep("MCP supervisor") { mcpSupervisor.shutdown() }
+        // shutdown(deadline) disables the scanner itself and always reaches the per-request pool, so a
+        // separate disable step can no longer skip it.
+        safeShutdownStep("Active scanner", this::activeAiScanner.isInitialized) { activeAiScanner.shutdown(deadline) }
+        safeShutdownStep("Supervisor", this::supervisor.isInitialized) { supervisor.shutdown() }
+        safeShutdownStep("MCP supervisor", this::mcpSupervisor.isInitialized) { mcpSupervisor.shutdown(deadline) }
         // REL-07 / SC5 / D-03: each backend's shutdown() runs inside this step, after the supervisor has
         // stopped. In the full build that drains the CLI temp-file registry (T-24-07; see
         // BackendRegistry.shutdown()).
-        safeShutdownStep("Backend registry") { backendRegistry.shutdown() }
+        safeShutdownStep("Backend registry", this::backendRegistry.isInitialized) { backendRegistry.shutdown() }
         BackendDiagnostics.retry = null
         safeShutdownStep("Redaction mappings") { Redaction.clearMappings() }
         // (PRIV-06) WR-04 / W-08 / T-21-66: unwire the truncation sink beside clearMappings(), so
@@ -310,6 +331,9 @@ object App {
         // harmless even if this line is ever removed.
         safeShutdownStep("Redaction truncation sink") { Redaction.truncationLogger = null }
         AuditLogger.registerGlobalEmitter(null)
+        if (shutdownSharedCoroutines) {
+            safeShutdownStep("Shared coroutine dispatchers") { McpCoroutines.shutdownSharedDispatchers(deadline, ::logError) }
+        }
     }
 
     /**
@@ -367,17 +391,33 @@ object App {
         api.logging().logToOutput("AI logger rolling persistence enabled at $directory")
     }
 
+    /**
+     * Runs one unload step. [ready] is false for a component a partial load never built, and the step is
+     * skipped. A Throwable from the step is logged and the unload goes on to the next step.
+     */
+    @Suppress("TooGenericExceptionCaught") // whatever a step throws, the remaining unload steps must still run
     private fun safeShutdownStep(
         component: String,
+        ready: Boolean = true,
         action: () -> Unit,
     ) {
+        if (!ready) return
         try {
             action()
         } catch (_: InterruptedException) {
             Thread.currentThread().interrupt()
-            api.logging().logToError("$component shutdown interrupted")
-        } catch (e: Exception) {
-            api.logging().logToError("$component shutdown failed: ${e.message}")
+            logError("$component shutdown interrupted")
+        } catch (t: Throwable) {
+            logError("$component shutdown failed: ${t.message}")
+        }
+    }
+
+    /** Writes [message] to Burp's error output, or to System.err when no load ever set [api]. */
+    private fun logError(message: String) {
+        if (this::api.isInitialized) {
+            runCatching { api.logging().logToError(message) }
+        } else {
+            System.err.println(message)
         }
     }
 }

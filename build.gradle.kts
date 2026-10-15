@@ -524,7 +524,11 @@ tasks.test {
     declareStructuralInputs()
     excludeHeavyTestsIfRequested()
     // Phase 30 / CI-01: StoreJarContentTest needs the store JAR property and runs only in storeJarContentTest.
-    filter { excludeTestsMatching("*StoreJarContentTest") }
+    // Phase 33 / LIFE-02: the App-level lifecycle tests run only in unloadLeakTest (see that task).
+    filter {
+        excludeTestsMatching("*StoreJarContentTest")
+        excludeTestsMatching("com.six2dez.burp.aiagent.lifecycle.*")
+    }
 }
 
 // REL-05 / SC1 / S-10: `tasks.test` above enables `-ea`, so a green McpToolExecutorEdtGuardTest there
@@ -554,6 +558,34 @@ tasks.register<Test>("edtGuardWithoutAssertionsTest") {
         includeTestsMatching("*McpToolExecutorEdtGuardTest")
     }
 }
+
+// Phase 33 / LIFE-01, LIFE-02 (D-07, D-12): the App-level load and unload tests, package
+// com.six2dez.burp.aiagent.lifecycle, run here and nowhere else (tasks.test excludes that package).
+// Each test class gets its own JVM (forkEvery = 1) because:
+// - App is a process-wide object, so one class's load or unload would leak into the next class;
+// - the unload's final sweep (ExtensionThreads.terminateAll) stops every pool tracked in the JVM,
+//   including pools other suites' tests are still using;
+// - the production unload path runs Dispatchers.shutdown(), which is irreversible: kotlinx.coroutines
+//   stays unusable for the rest of that JVM. Inside a class, the case that goes through
+//   BurpAiAgentExtension (the path that does this) is ordered last.
+// `check` depends on it; plan 33-11 adds the CI invocations.
+// Run it locally with: ./gradlew unloadLeakTest
+val unloadLeakTest =
+    tasks.register<Test>("unloadLeakTest") {
+        description = "Runs the App-level load/unload lifecycle tests, one JVM per class (LIFE-01, LIFE-02)."
+        group = "verification"
+        useJUnitPlatform()
+        val testSourceSet = sourceSets.test.get()
+        testClassesDirs = testSourceSet.output.classesDirs
+        classpath = testSourceSet.runtimeClasspath
+        jvmArgs("-ea", "-Djava.awt.headless=true")
+        forkEvery = 1
+        filter { includeTestsMatching("com.six2dez.burp.aiagent.lifecycle.*") }
+        testLogging {
+            events("failed")
+            exceptionFormat = TestExceptionFormat.FULL
+        }
+    }
 
 // Phase 29 / D-16: the full flavor's own suite. It runs on the fullTest classpath (main + full + test
 // outputs) and never shares a Test task with `test`, whose classpath must stay store-only.
@@ -913,6 +945,7 @@ val jacocoMcpTreeCoverageVerification =
 
 tasks.named("check") {
     dependsOn(fullTest)
+    dependsOn(unloadLeakTest)
     dependsOn(storeJarContentTest)
     dependsOn(tasks.named("jacocoTestCoverageVerification"))
     dependsOn(jacocoMcpTreeCoverageVerification)
