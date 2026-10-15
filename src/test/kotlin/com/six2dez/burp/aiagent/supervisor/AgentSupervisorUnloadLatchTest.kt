@@ -146,7 +146,7 @@ class AgentSupervisorUnloadLatchTest {
         val supervisor = newSupervisor()
         recording.responder = {
             supervisor.beginShutdown()
-            throw IllegalStateException("connection refused")
+            error("connection refused") // retryable for HttpBackendSupport, so today's backoff would resend
         }
 
         val done = Completion()

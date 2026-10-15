@@ -350,6 +350,11 @@ class AgentSupervisor(
         }
     }
 
+    /**
+     * Sends one agent turn on the running session. Phase 33 / CR-01: the turn is tracked while it runs so
+     * [beginShutdown] can stop it, and a second check of the unload latch after registering closes the
+     * race with an unload that begins after the entry check.
+     */
     fun send(
         text: String,
         history: List<com.six2dez.burp.aiagent.backends.ChatMessage>? = null,
@@ -376,6 +381,17 @@ class AgentSupervisor(
 
         if (!current.connection.isAlive()) {
             onComplete(IllegalStateException("Session is not alive"))
+            return
+        }
+
+        // Phase 33 / CR-01: register the turn, THEN check only the unload latch again (sendChat explains
+        // why). The agent session's connection is idle here, so it is not stopped: the Supervisor step's
+        // stop() ends it.
+        val turn = Any()
+        turnsInFlight[turn] = current.connection
+        if (shuttingDown) {
+            turnsInFlight.remove(turn)
+            onComplete(AiAccessRefusedException(UNLOADING_REFUSAL))
             return
         }
 
@@ -432,6 +448,7 @@ class AgentSupervisor(
             jsonMode = jsonMode,
             maxOutputTokens = maxOutputTokens,
             onComplete = { err ->
+                turnsInFlight.remove(turn)
                 val durationMs = System.currentTimeMillis() - sendStartMs
                 audit.logEvent(
                     "prompt_complete",
@@ -480,6 +497,12 @@ class AgentSupervisor(
         )
     }
 
+    /**
+     * Sends one chat turn on [chatSessionId], reusing the session's connection when there is one.
+     * Phase 33 / CR-01: the turn is tracked while it runs so [beginShutdown] can stop it (a first-turn
+     * connection included), and a second check of the unload latch after registering closes the race
+     * with an unload that begins after the entry check.
+     */
     fun sendChat(
         chatSessionId: String,
         backendId: String,
