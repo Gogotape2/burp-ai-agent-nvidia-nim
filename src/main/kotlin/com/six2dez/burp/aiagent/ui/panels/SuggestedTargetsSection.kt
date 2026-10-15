@@ -44,10 +44,17 @@ internal fun suggestedCounterText(
  * with "Queue N suggested targets", "Queue selected" and "Clear suggestions".
  *
  * The section queues nothing itself: both queue buttons hand entries to [onQueue], which runs the
- * confirmed flow (refusal check, enable prompt, active scan confirmation). It sends nothing, logs nothing
- * and owns no timer; the dialog calls [refreshIfChanged] on its own tick. Target-derived text is shown
- * through [PlainTextTableCellRenderer] (research Pitfall 7) and an injection point's original value is
- * never shown (a cookie point's value is a session secret). EDT only.
+ * confirmed flow (refusal check, enable prompt, active scan confirmation).
+ *
+ * "Queue N suggested targets" hands over the rows the table shows: N on the label is their count, and
+ * the confirmation counts the same set (D-05, 32-REVIEW WR-02). An entry added since the last refresh
+ * is queued only after the table shows it. An entry that left the list since the refresh (cleared, or
+ * auto-queued by the full build) is harmless: the active scanner deduplicates, and only what it really
+ * queued leaves the list (D-08).
+ *
+ * The section sends nothing, logs nothing and owns no timer; the dialog calls [refreshIfChanged] on its
+ * own tick. Target-derived text is shown through [PlainTextTableCellRenderer] (research Pitfall 7) and an
+ * injection point's original value is never shown (a cookie point's value is a session secret). EDT only.
  */
 internal class SuggestedTargetsSection(
     private val list: SuggestedTargetList,
@@ -71,7 +78,7 @@ internal class SuggestedTargetsSection(
         add(JScrollPane(table), BorderLayout.CENTER)
         add(buildFooter(), BorderLayout.SOUTH)
 
-        queueAllButton.addActionListener { onQueue(list.snapshot()) }
+        queueAllButton.addActionListener { onQueue(model.entries()) }
         queueSelectedButton.addActionListener { onQueue(selectedEntries()) }
         clearButton.addActionListener {
             list.clear()
@@ -198,6 +205,9 @@ internal class SuggestedTargetsTableModel(
     }
 
     fun entryAt(modelRow: Int): SuggestedTarget? = rows.getOrNull(modelRow)
+
+    /** The rows the table shows, in model order. */
+    fun entries(): List<SuggestedTarget> = rows
 
     override fun getRowCount(): Int = rows.size
 
