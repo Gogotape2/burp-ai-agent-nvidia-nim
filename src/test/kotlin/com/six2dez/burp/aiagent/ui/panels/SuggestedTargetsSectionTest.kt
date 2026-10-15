@@ -142,6 +142,43 @@ class SuggestedTargetsSectionTest {
         assertEquals(3, list.count(), "the section itself queues and removes nothing")
     }
 
+    /**
+     * 32-REVIEW WR-02 / D-05: "Queue N suggested targets" hands over exactly the N rows the table shows,
+     * never an entry added to the list since the last refresh; after a refresh it shows and hands over all.
+     */
+    @Test
+    fun queueAllHandsOverOnlyTheDisplayedRows() {
+        val list = threeTargets()
+        val late = target("https://late.example/x", "q", InjectionType.URL_PARAM, "1")
+        val calls = mutableListOf<List<SuggestedTarget>>()
+        var displayedKeys: List<String> = emptyList()
+        var labelBefore = ""
+        var labelAfter = ""
+        onEdt {
+            val section = SuggestedTargetsSection(list, { calls += it }, formatter)
+            section.refreshNow()
+            val model = section.table.model as SuggestedTargetsTableModel
+            displayedKeys = (0 until model.rowCount).mapNotNull { model.entryAt(it)?.key }
+            list.addAll(listOf(late))
+            labelBefore = section.queueAllButton.text
+
+            section.queueAllButton.doClick()
+
+            section.refreshNow()
+            labelAfter = section.queueAllButton.text
+            section.queueAllButton.doClick()
+        }
+
+        val lateKey = SuggestedTargetList.keyOf("https://late.example/x", late)
+        assertEquals("Queue 3 suggested targets", labelBefore)
+        assertEquals(2, calls.size)
+        assertEquals(displayedKeys, calls[0].map { it.key }, "queue-all hands over the displayed rows in model order")
+        assertFalse(lateKey in calls[0].map { it.key }, "an entry the table does not show is not queued")
+        assertEquals(4, list.count(), "the section itself removes nothing")
+        assertEquals("Queue 4 suggested targets", labelAfter)
+        assertEquals(list.snapshot().map { it.key }, calls[1].map { it.key }, "after a refresh all four are shown and handed over")
+    }
+
     @Test
     fun queueSelectedResolvesSortedViewRowsByKey() {
         val list = threeTargets()
