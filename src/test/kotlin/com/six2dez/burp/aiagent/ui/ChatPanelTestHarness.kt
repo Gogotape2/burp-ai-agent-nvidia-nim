@@ -125,6 +125,9 @@ object ChatPanelTestHarness {
         getSettings: (() -> AgentSettings)? = null,
         // Phase 31 / D-09: what the stubbed backend completes each turn with; null is a delivered turn.
         completionError: Throwable? = null,
+        // Phase 33 / EDT-01: the pre-send readiness check. The default never probes, which keeps every
+        // existing test on its pre-Phase-33 path; ChatSendOffEdtTest passes a LocalServiceReadiness.
+        readiness: ChatBackendReadiness = ChatBackendReadiness.ALWAYS_READY,
     ): Harness {
         val api: MontoyaApi = mock(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
         whenever(api.burpSuite().version().edition()).thenReturn(BurpSuiteEdition.COMMUNITY_EDITION)
@@ -170,7 +173,7 @@ object ChatPanelTestHarness {
                 supervisor = supervisor,
                 getSettings = getSettings ?: { settings },
                 validateBackend = { null },
-                ensureBackendReady = { true },
+                readiness = readiness,
                 showError = { message -> shownErrors.add(message) },
                 onStatusChanged = { },
                 onTurnSettled = { backendId, error -> turnOutcomes.add(backendId to error) },
