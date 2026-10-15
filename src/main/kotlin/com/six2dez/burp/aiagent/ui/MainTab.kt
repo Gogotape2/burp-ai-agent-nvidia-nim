@@ -676,7 +676,7 @@ class MainTab(
     }
 
     /**
-     * Saves the one field [change] carries on `burp-ai-settings-sync` and nothing else — no MCP apply, no
+     * Saves the one field [change] carries on `burp-ai-agent-settings-sync` and nothing else — no MCP apply, no
      * scanner reload.
      *
      * Each write carries ONE field, never a snapshot read off the Settings tab: the worker
@@ -732,7 +732,7 @@ class MainTab(
 
     /**
      * Saves the MCP enabled flag [change] carries AND re-applies the MCP settings, both on
-     * `burp-ai-settings-sync`.
+     * `burp-ai-agent-settings-sync`.
      *
      * The worker ([persistHeaderChangeAndApplyMcp]) saves the flag onto the SAVED snapshot under the
      * repository write lock and applies MCP built from what was saved (port, external access, privacy

@@ -113,7 +113,7 @@ class SettingsPersistQueueTest {
                     "the whole bounded ten-second MCP stop on the EDT.",
             )
             assertEquals(
-                listOf("burp-ai-settings-sync"),
+                listOf("burp-ai-agent-settings-sync"),
                 workerThread.toList(),
                 "SC4: the persist body must run on the named daemon worker, not the caller's thread.",
             )

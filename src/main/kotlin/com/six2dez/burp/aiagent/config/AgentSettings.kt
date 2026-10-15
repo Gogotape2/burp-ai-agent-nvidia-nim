@@ -177,7 +177,7 @@ class AgentSettingsRepository(
      * Guards every write of the applied snapshot ([save] and [update]), listener notification included,
      * so listeners see saves in save order. [load] never takes it, so the EDT (chat pill, safety
      * indicator, status pill, UiActions) never waits on a save. [save] and [update] run only on worker
-     * threads: `burp-ai-settings-sync` for header writes, `burp-ai-settings-save` for Save settings and
+     * threads: `burp-ai-agent-settings-sync` for header writes, `burp-ai-settings-save` for Save settings and
      * Restore defaults.
      */
     private val writeLock = Any()

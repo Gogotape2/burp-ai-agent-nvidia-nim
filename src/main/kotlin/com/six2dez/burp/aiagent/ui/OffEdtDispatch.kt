@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.ui
 
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import javax.swing.SwingUtilities
 
 /**
@@ -89,8 +90,10 @@ internal object OffEdtDispatch {
      * depends on it and a throw there is the caller's own bug — one that must stay visible instead of
      * being swallowed inside a helper. Wrapping it would buy nothing and hide something.
      *
-     * The daemon flag is set explicitly: a non-daemon worker can hold extension unload open. The thread
-     * is named so a stuck worker is identifiable in a thread dump.
+     * The worker comes from [ExtensionThreads.newThread] (D-11), which sets the daemon flag explicitly —
+     * a non-daemon worker can hold extension unload open, and the EDT that calls this is non-daemon — and
+     * names it `burp-ai-agent-<threadName>`, so a stuck worker is identifiable in a thread dump. A
+     * [threadName] that already starts with `burp-ai-agent-` is used as given; any other gets the prefix.
      */
     fun <T> run(
         threadName: String,
@@ -124,6 +127,6 @@ internal object OffEdtDispatch {
                     }
                 }
             }
-        Thread(body, threadName).apply { isDaemon = true }.start()
+        ExtensionThreads.newThread(threadName.removePrefix(ExtensionThreads.PREFIX), body).start()
     }
 }

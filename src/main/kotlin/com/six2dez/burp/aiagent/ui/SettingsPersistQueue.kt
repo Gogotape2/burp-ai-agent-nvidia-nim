@@ -70,7 +70,7 @@ internal class SettingsPersistQueue(
      * supersede this one. [label] identifies this unit of work in `OffEdtDispatch`'s observers and in the
      * error log; the generation is appended so two clicks on the same control stay distinguishable.
      *
-     * Returns as soon as the worker thread is started. The worker is named `burp-ai-settings-sync`.
+     * Returns as soon as the worker thread is started. The worker is the daemon thread `burp-ai-agent-settings-sync`.
      */
     fun <T> submit(
         label: String,
@@ -84,7 +84,7 @@ internal class SettingsPersistQueue(
         // start daemon threads in.
         val generation = submitted.incrementAndGet()
         OffEdtDispatch.run(
-            threadName = "burp-ai-settings-sync",
+            threadName = "burp-ai-agent-settings-sync",
             label = "$label-$generation",
             logError = logError,
             work = { applyIfCurrent(generation, supersedeKey, payload, apply) },
@@ -194,7 +194,7 @@ internal sealed class HeaderSettingsChange {
 
 /**
  * Worker body of a header write that does not touch MCP: saves [change] onto the saved snapshot through
- * the atomic `AgentSettingsRepository.update`. Runs on `burp-ai-settings-sync`. Returns what was saved.
+ * the atomic `AgentSettingsRepository.update`. Runs on `burp-ai-agent-settings-sync`. Returns what was saved.
  *
  * **Worker-body ledger.** `headerWriteWorkerBodiesSaveOnlyThroughTheAtomicUpdate` asserts these counts
  * as equalities on the comment-stripped code of this file:
