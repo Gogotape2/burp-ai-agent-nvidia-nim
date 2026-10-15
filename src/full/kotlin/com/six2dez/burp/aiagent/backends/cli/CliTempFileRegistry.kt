@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.backends.cli
 
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -167,7 +168,7 @@ internal object CliTempFileRegistry {
     private fun armHook() {
         synchronized(hookLock) {
             if (hook != null) return
-            val thread = Thread({ drain() }, "burp-ai-agent-cli-temp-sweep")
+            val thread = ExtensionThreads.newThread("cli-temp-sweep") { drain() }
             Runtime.getRuntime().addShutdownHook(thread)
             hook = thread
         }

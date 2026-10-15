@@ -13,11 +13,11 @@ import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.spi.PluginSettingsStore
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.ArrayDeque
 import java.util.Locale
-import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
@@ -178,7 +178,8 @@ class CliBackend(
         // REL-04: user-configurable CLI process timeout (issue #71)
         private val cliTimeoutSeconds: Int = Defaults.CLI_PROCESS_TIMEOUT_SECONDS,
     ) : SessionAwareConnection {
-        private val executor = Executors.newSingleThreadExecutor()
+        // Phase 33 / D-11 (LIFE-03): a named daemon worker, so a send in flight never holds the JVM or unload.
+        private val executor = ExtensionThreads.singleThread("cli-connection")
         private val cliSessionIdRef = AtomicReference<String?>(initialCliSessionId)
 
         override fun cliSessionId(): String? = cliSessionIdRef.get()
@@ -302,15 +303,14 @@ class CliBackend(
                             java.util.concurrent.atomic
                                 .AtomicBoolean(false)
                         val readerThread =
-                            Thread({
+                            ExtensionThreads.newThread("cli-reader") {
                                 val reader = BufferedReader(InputStreamReader(process.inputStream))
                                 reader.forEachLine { line ->
                                     rawOutput.appendLine(line)
                                     hasOutput.set(true)
                                     lastOutputAt.set(System.currentTimeMillis())
                                 }
-                            }, "burp-ai-agent-cli-reader")
-                        readerThread.isDaemon = true
+                            }
                         readerThread.start()
 
                         var terminatedAfterIdle = false

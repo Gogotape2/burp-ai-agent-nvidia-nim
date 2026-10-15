@@ -1,6 +1,8 @@
 package com.six2dez.burp.aiagent.mcp.external
 
 import com.six2dez.burp.aiagent.audit.AuditLogger
+import com.six2dez.burp.aiagent.mcp.McpCoroutines
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import com.six2dez.burp.aiagent.util.SsrfGuard
 import io.ktor.client.HttpClient
 import io.ktor.client.engine.cio.CIO
@@ -14,7 +16,6 @@ import io.modelcontextprotocol.kotlin.sdk.client.SseClientTransport
 import io.modelcontextprotocol.kotlin.sdk.client.StdioClientTransport
 import io.modelcontextprotocol.kotlin.sdk.shared.Transport
 import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
@@ -24,7 +25,6 @@ import kotlinx.io.asSink
 import kotlinx.io.asSource
 import kotlinx.io.buffered
 import java.util.concurrent.CopyOnWriteArrayList
-import java.util.concurrent.Executors
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -115,12 +115,13 @@ private data class ServerConnection(
  *
  * @param auditLogger optional [AuditLogger] instance for guarding allocation (CR-02).
  * @param clientFactory override for tests to inject a mock [Client].
- * @param scheduler optional [ScheduledExecutorService] for reconnect — overridden in tests.
+ * @param scheduler optional [ScheduledExecutorService] for reconnect — overridden in tests; the default is
+ *   the daemon `burp-ai-agent-mcp-external` from `ExtensionThreads` (Phase 33 / D-11).
  */
 class ExternalMcpClientManager(
     private val auditLogger: AuditLogger? = null,
     private val clientFactory: (Implementation, ClientOptions) -> Client = { impl, opts -> Client(impl, opts) },
-    private val scheduler: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor(),
+    private val scheduler: ScheduledExecutorService = ExtensionThreads.scheduled("mcp-external"),
     /**
      * Factory for spawning stdio subprocess — overridden in tests to inject a mock [Process].
      * Default implementation uses [ProcessBuilder] with a List (no shell expansion).
@@ -138,8 +139,9 @@ class ExternalMcpClientManager(
         pb.start()
     },
 ) {
-    // Shared scope with SupervisorJob: one child-job failure does not cancel siblings.
-    private val managerScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    // Shared scope with SupervisorJob: one child-job failure does not cancel siblings. Phase 33 / D-12:
+    // it runs on the extension-owned MCP dispatcher, never on the shared IO dispatcher.
+    private val managerScope = CoroutineScope(McpCoroutines.dispatcher() + SupervisorJob())
 
     // Dedicated HttpClient for SSE transport — NEVER reuse the Ktor Netty server instance.
     private val httpClient =
