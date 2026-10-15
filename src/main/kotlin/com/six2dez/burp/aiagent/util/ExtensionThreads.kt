@@ -147,6 +147,13 @@ internal open class ExtensionThreadPools {
         tracked.remove(executor)
     }
 
+    /** RED skeleton: the unload sweep lands in the GREEN commit. */
+    fun terminateAll(
+        deadline: ShutdownDeadline,
+        logError: (String) -> Unit,
+    ) {
+    }
+
     /** A copy of the tracked pools and their subsystem labels. For tests and the unload sweep. */
     fun trackedSnapshot(): Map<ExecutorService, String> = synchronized(tracked) { LinkedHashMap(tracked) }
 
