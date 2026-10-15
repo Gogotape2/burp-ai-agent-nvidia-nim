@@ -2,6 +2,8 @@ package com.six2dez.burp.aiagent.scanner
 
 import burp.api.montoya.MontoyaApi
 import burp.api.montoya.core.BurpSuiteEdition
+import burp.api.montoya.http.message.HttpRequestResponse
+import burp.api.montoya.http.message.requests.HttpRequest
 import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPoint
 import burp.api.montoya.scanner.audit.insertionpoint.AuditInsertionPointType
 import com.six2dez.burp.aiagent.SourceRoots
@@ -17,16 +19,17 @@ import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptDefinition
 import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptFinding
 import com.six2dez.burp.aiagent.prompts.bountyprompt.BountyPromptOutputType
 import com.six2dez.burp.aiagent.redact.PrivacyMode
-import com.six2dez.burp.aiagent.redact.RedactionPolicy
 import com.six2dez.burp.aiagent.ui.UiActions
-import com.six2dez.burp.aiagent.util.IssueUtils
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Answers
+import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import java.io.File
+import java.lang.reflect.InvocationTargetException
+import burp.api.montoya.core.ByteArray as MontoyaByteArray
 
 /**
  * Phase 32 SC4 / SCAN-02 / D-10 / D-11: every issue detail the extension builds renders a payload,
@@ -49,8 +52,8 @@ import java.io.File
  *    the real scan check, `aiPassiveScanCheckLocalFinding*`.
  *  - `scanner/PassiveAiScannerFinding.kt`: AI passive findings via `handleParsedAiIssues`,
  *    `aiPassiveFindingDetail*`.
- *  - `scanner/ActiveAiScanner.kt`: the producer's exact composition,
- *    `formatIssueDetailHtml(buildActiveIssueDetailLines(...))`, `activeScannerDetail*`.
+ *  - `scanner/ActiveAiScanner.kt`: the case drives the real private `createConfirmedIssue` itself, by
+ *    reflection, and checks the issue it files, `activeScannerConfirmedIssue*`.
  *  - `mcp/tools/IssueCreateSupport.kt`: the native MCP `issue_create` tool, all four text fields,
  *    `issueCreate*`.
  *
@@ -283,25 +286,61 @@ class IssueDetailHtmlEncodingTest {
     }
 
     // =============================================================================================
-    // ActiveAiScanner (the producer's exact composition)
+    // ActiveAiScanner (the real createConfirmedIssue, driven by reflection)
     // =============================================================================================
 
+    /**
+     * 32-REVIEW WR-03: the case runs the producer itself, so a change inside `createConfirmedIssue`
+     * that appends raw text after formatting fails here. Markup reaches the injection point name and
+     * value, the payload and the evidence.
+     */
     @Test
-    fun activeScannerDetailRendersMarkupAsLiteralText() {
-        val detail =
-            IssueUtils.formatIssueDetailHtml(
-                ScannerIssueSupport.buildActiveIssueDetailLines(
-                    InjectionPoint(InjectionType.URL_PARAM, "q$MARKUP", MARKUP),
-                    "SQLI",
-                    Payload(MARKUP, VulnClass.SQLI, DetectionMethod.ERROR_BASED, PayloadRisk.SAFE, MARKUP),
-                    MARKUP,
-                    "AI Analysis Metadata\r\n  Backend: test",
-                    RedactionPolicy.fromMode(PrivacyMode.OFF),
-                ),
-            )
+    fun activeScannerConfirmedIssueRendersMarkupAsLiteralText() {
+        PassiveScanCheckRig().use { rig ->
+            val active = ActiveAiScanner(rig.api, rig.supervisor, rig.audit) { rig.settings }
+            try {
+                val original = rig.csrfPost("enc-active.example")
+                val confirmation =
+                    VulnConfirmation(
+                        target =
+                            ActiveScanTarget(
+                                originalRequest = original,
+                                injectionPoint = InjectionPoint(InjectionType.URL_PARAM, "q$MARKUP", MARKUP),
+                                vulnHint = VulnHint(VulnClass.SQLI, ACTIVE_HINT_CONFIDENCE, MARKUP),
+                                priority = ACTIVE_TARGET_PRIORITY,
+                            ),
+                        payload = Payload(MARKUP, VulnClass.SQLI, DetectionMethod.ERROR_BASED, PayloadRisk.SAFE, MARKUP),
+                        originalResponse = original,
+                        exploitResponse = exploitPair(),
+                        confidence = ACTIVE_CONFIRMATION_CONFIDENCE,
+                        evidence = MARKUP,
+                        confirmed = true,
+                    )
 
-        assertHtmlSafe(detail, ACTIVE_SCANNER)
-        assertCarriesEscapedMarkup(detail, ACTIVE_SCANNER)
+                createConfirmedIssue(active, confirmation)
+
+                assertEquals(
+                    listOf("[AI Active] SQLI"),
+                    rig.built.map { it.name },
+                    "$ACTIVE_SCANNER must file exactly one issue. Errors logged: ${rig.errors}",
+                )
+                assertEquals(
+                    1,
+                    rig.extensionAdds.size,
+                    "$ACTIVE_SCANNER must add its issue to the site map once. Errors logged: ${rig.errors}",
+                )
+                assertEquals(
+                    emptyList<String>(),
+                    rig.errors.toList(),
+                    "$ACTIVE_SCANNER logged an error; its catch hides a failure (for example a mock NPE)",
+                )
+                val detail = rig.built.single().detail
+                assertHtmlSafe(detail, ACTIVE_SCANNER)
+                assertCarriesEscapedMarkup(detail, ACTIVE_SCANNER)
+            } finally {
+                active.shutdown()
+            }
+        }
     }
 
     // =============================================================================================
@@ -437,6 +476,39 @@ class IssueDetailHtmlEncodingTest {
         )
 
     /**
+     * Runs the real `ActiveAiScanner.createConfirmedIssue`, the TargetTrafficTlsTest.executeScan way.
+     * Reflection, not a visibility change: the function is private, and its LongMethod detekt baseline
+     * entry is keyed on that private signature, so widening it would break detekt (ADR-17 forbids new
+     * baseline entries). A rename fails loudly here with NoSuchMethodException.
+     */
+    private fun createConfirmedIssue(
+        scanner: ActiveAiScanner,
+        confirmation: VulnConfirmation,
+    ) {
+        val method = ActiveAiScanner::class.java.getDeclaredMethod("createConfirmedIssue", VulnConfirmation::class.java)
+        method.isAccessible = true
+        try {
+            method.invoke(scanner, confirmation)
+        } catch (e: InvocationTargetException) {
+            throw e.cause ?: e
+        }
+    }
+
+    /**
+     * The exploit pair `createConfirmedIssue` marks: its request bytes hold no [MARKUP], so
+     * `markRequestPayload` finds nothing to mark, and its response is null, so `markResponseEvidence`
+     * returns the pair unchanged.
+     */
+    private fun exploitPair(): HttpRequestResponse {
+        val bytes = mock<MontoyaByteArray> { on { getBytes() } doReturn EXPLOIT_REQUEST.toByteArray(Charsets.ISO_8859_1) }
+        val request = mock<HttpRequest> { on { toByteArray() } doReturn bytes }
+        return mock {
+            on { request() } doReturn request
+            on { response() } doReturn null
+        }
+    }
+
+    /**
      * The file's lines read as UTF-8 text, without comment lines: a line whose trimmed text starts
      * with one of [COMMENT_PREFIXES] (a KDoc star, a line comment or a block-comment opener).
      */
@@ -510,7 +582,11 @@ class IssueDetailHtmlEncodingTest {
         const val BOUNTY_PROMPT = "UiActions.buildIssueDetailHtml"
         const val AI_PASSIVE_SCAN_CHECK = "AiPassiveScanCheck.doCheck"
         const val AI_PASSIVE_FINDING = "PassiveAiScannerFinding.handleFinding"
-        const val ACTIVE_SCANNER = "ActiveAiScanner (buildActiveIssueDetailLines + formatIssueDetailHtml)"
+        const val ACTIVE_SCANNER = "ActiveAiScanner.createConfirmedIssue"
+        const val ACTIVE_HINT_CONFIDENCE = 90
+        const val ACTIVE_TARGET_PRIORITY = 80
+        const val ACTIVE_CONFIRMATION_CONFIDENCE = 96
+        const val EXPLOIT_REQUEST = "GET /enc-active HTTP/1.1\r\n\r\n"
         const val AI_FINDING_CONFIDENCE = 90
         const val ISSUE_CREATE = "IssueCreateSupport.executeIssueCreate"
         const val MCP_LIMIT = 4
