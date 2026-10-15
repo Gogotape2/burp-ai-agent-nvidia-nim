@@ -73,14 +73,18 @@ class ActiveScanQueuePanelUnloadTest {
     // --- wiring (source checks) --------------------------------------------------------------------
 
     @Test
-    fun mainTabShutdownClosesTheQueueDialogs() {
+    fun mainTabUnloadClosesTheQueueDialogs() {
         val mainTab = SourceRoots.packageFile("ui/MainTab.kt").readText(Charsets.UTF_8)
-        val shutdown = bodyOf(mainTab, "fun shutdown()")
+        // Phase 33 / D-06: the settings panel stops in quiesce (unload step 0), the dialogs close in
+        // dispose (step 4, with the rest of the UI).
+        val quiesce = bodyOf(mainTab, "fun quiesce()")
+        val dispose = bodyOf(mainTab, "fun dispose(")
 
-        assertTrue(shutdown.contains("ActiveScanQueuePanel.disposeOpenDialogs()"), shutdown)
+        assertTrue(quiesce.contains("settingsPanel.shutdown()"), quiesce)
+        assertTrue(dispose.contains("ActiveScanQueuePanel.disposeOpenDialogs()"), dispose)
         assertTrue(
-            shutdown.indexOf("settingsPanel.shutdown()") < shutdown.indexOf("ActiveScanQueuePanel.disposeOpenDialogs()"),
-            "closed right after the settings panel shuts down",
+            dispose.indexOf("ActiveScanQueuePanel.disposeOpenDialogs()") < dispose.indexOf("chatPanel.shutdown()"),
+            "the queue dialogs close first in dispose",
         )
     }
 

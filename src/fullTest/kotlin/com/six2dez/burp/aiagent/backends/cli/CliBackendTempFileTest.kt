@@ -479,7 +479,7 @@ class CliBackendTempFileTest {
         )
         assertEquals(
             1,
-            code.count { it.contains("safeShutdownStep(\"Backend registry\")") },
+            code.count { it.contains("safeShutdownStep(\"Backend registry\"") },
             "App ledger: exactly one \"Backend registry\" shutdown step. Zero means an extension unload " +
                 "leaves the extension's own exit hook armed — an extension-classloader object pinning a " +
                 "dead classloader on every reload — and leaves any CLI call in flight at unload without " +
@@ -491,9 +491,9 @@ class CliBackendTempFileTest {
             "CliBackend ledger: its shutdown() must actually call into the registry. One call site, no more.",
         )
 
-        val supervisorStep = code.indexOfFirst { it.contains("safeShutdownStep(\"Supervisor\")") }
-        val backendRegistryStep = code.indexOfFirst { it.contains("safeShutdownStep(\"Backend registry\")") }
-        val redactionMappingsStep = code.indexOfFirst { it.contains("safeShutdownStep(\"Redaction mappings\")") }
+        val supervisorStep = code.indexOfFirst { it.contains("safeShutdownStep(\"Supervisor\"") }
+        val backendRegistryStep = code.indexOfFirst { it.contains("safeShutdownStep(\"Backend registry\"") }
+        val redactionMappingsStep = code.indexOfFirst { it.contains("safeShutdownStep(\"Redaction mappings\"") }
 
         assertTrue(
             supervisorStep >= 0 && redactionMappingsStep >= 0,
