@@ -34,6 +34,7 @@ import com.six2dez.burp.aiagent.spi.StoreFlavorProfile
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.MainTab
 import com.six2dez.burp.aiagent.ui.UiActions
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import com.six2dez.burp.aiagent.util.ShutdownDeadline
 import java.nio.file.Paths
 import java.util.ServiceConfigurationError
@@ -272,28 +273,49 @@ object App {
     }
 
     /**
-     * Phase 33 / D-07 — unloads the extension within one shared [deadline].
+     * Phase 33 — unloads the extension: inbound first, within one shared [deadline], silent when clean.
      *
-     * Safe on a partly initialized App: a load that threw part-way leaves some fields unset, and every step
-     * skips a component that was never built. Idempotent: only the first call of a load runs; a second
-     * call (Burp's handler after the failed-load cleanup in [BurpAiAgentExtension]) returns at once.
-     * [shutdownSharedCoroutines] runs the guarded, irreversible shared coroutine shutdown; only the
-     * production unload path passes true.
+     * **Order (D-06).** Work that arrives from outside stops before the objects it uses are torn down:
+     * 0. MainTab quiesce: no settings write (which could restart MCP or a scanner) can start any more;
+     *    timers that trigger work stop. No waits.
+     * 1. MCP supervisor: latches, drops pending restarts, closes the port, stops the stdio bridge and
+     *    clears provider state. MCP must stop before the chat supervisor and the backends it calls.
+     * 2. Plug-ins, then the passive and the active scanner.
+     * 3. Chat supervisor, backend registry, AI request logger.
+     * 4. MainTab dispose (Swing on the EDT) and the global sinks.
+     * 5. The extension-owned MCP coroutine dispatcher, then the sweep of every pool still tracked.
+     * 6. Only when [shutdownSharedCoroutines]: the shared coroutine dispatchers.
+     *
+     * **Budget (D-05).** Every step shares [deadline] (10 s by default) and waits only for what is left;
+     * once it is spent the remaining pools are forced without waiting. Uninterruptible work (a Montoya
+     * request in flight) is left to the final sweep, so it costs the budget once.
+     *
+     * **Reporting (D-09).** A clean unload writes no Error line; a step that timed out or had to be
+     * forced writes exactly one line naming its component.
+     *
+     * **Shared coroutines (D-12).** `Dispatchers.shutdown()` is irreversible for the classloader, so only
+     * the production handler in [BurpAiAgentExtension] passes `shutdownSharedCoroutines = true`, and
+     * [McpCoroutines.shutdownSharedDispatchers] still does nothing unless kotlinx.coroutines belongs to
+     * this extension's own classloader. The default never does it.
+     *
+     * **Robustness (D-07).** Safe on a partly initialized App: a load that threw part-way leaves some
+     * fields unset, and every step skips a component that was never built. Idempotent: only the first
+     * call of a load runs; a second call (Burp's handler after the failed-load cleanup) returns at once.
      */
     fun shutdown(
         shutdownSharedCoroutines: Boolean = false,
         deadline: ShutdownDeadline = ShutdownDeadline.unload(),
     ) {
         if (!shutdownStarted.compareAndSet(false, true)) return
+        // (0) Quiesce.
         safeShutdownStep("MainTab quiesce") { mainTab?.quiesce() }
-        safeShutdownStep("MainTab dispose") { mainTab?.dispose(deadline) }
-        mainTab = null
-        // Plug-ins unhook before the scanners stop (the auto-queue plug-in clears the passive sink).
+        // (1) Inbound: the MCP server and the stdio bridge.
+        safeShutdownStep("MCP supervisor", this::mcpSupervisor.isInitialized) { mcpSupervisor.shutdown(deadline) }
+        // (2) Plug-ins unhook before the scanners stop (the auto-queue plug-in clears the passive sink).
         installedPlugins.forEach { plugin ->
             safeShutdownStep("Plug-in ${plugin.javaClass.name}") { plugin.shutdown() }
         }
         installedPlugins = emptyList()
-        safeShutdownStep("AI Request Logger", this::aiRequestLogger.isInitialized) { aiRequestLogger.shutdown() }
         // setEnabled(false) waits for nothing; it clears the shared scan knowledge base, which shutdown does not.
         safeShutdownStep("Passive scanner", this::passiveAiScanner.isInitialized) {
             passiveAiScanner.setEnabled(false)
@@ -302,12 +324,16 @@ object App {
         // shutdown(deadline) disables the scanner itself and always reaches the per-request pool, so a
         // separate disable step can no longer skip it.
         safeShutdownStep("Active scanner", this::activeAiScanner.isInitialized) { activeAiScanner.shutdown(deadline) }
+        // (3) The AI side.
         safeShutdownStep("Supervisor", this::supervisor.isInitialized) { supervisor.shutdown() }
-        safeShutdownStep("MCP supervisor", this::mcpSupervisor.isInitialized) { mcpSupervisor.shutdown(deadline) }
         // REL-07 / SC5 / D-03: each backend's shutdown() runs inside this step, after the supervisor has
         // stopped. In the full build that drains the CLI temp-file registry (T-24-07; see
         // BackendRegistry.shutdown()).
         safeShutdownStep("Backend registry", this::backendRegistry.isInitialized) { backendRegistry.shutdown() }
+        safeShutdownStep("AI Request Logger", this::aiRequestLogger.isInitialized) { aiRequestLogger.shutdown() }
+        // (4) The UI and the global sinks.
+        safeShutdownStep("MainTab dispose") { mainTab?.dispose(deadline) }
+        mainTab = null
         BackendDiagnostics.retry = null
         safeShutdownStep("Redaction mappings") { Redaction.clearMappings() }
         // (PRIV-06) WR-04 / W-08 / T-21-66: unwire the truncation sink beside clearMappings(), so
@@ -332,6 +358,10 @@ object App {
         // harmless even if this line is ever removed.
         safeShutdownStep("Redaction truncation sink") { Redaction.truncationLogger = null }
         AuditLogger.registerGlobalEmitter(null)
+        // (5) The extension-owned MCP dispatcher, then whatever pool a component left running.
+        safeShutdownStep("MCP coroutines") { McpCoroutines.close(deadline, ::logError) }
+        safeShutdownStep("Thread sweep") { ExtensionThreads.terminateAll(deadline, ::logError) }
+        // (6) Production unload only (D-12).
         if (shutdownSharedCoroutines) {
             safeShutdownStep("Shared coroutine dispatchers") { McpCoroutines.shutdownSharedDispatchers(deadline, ::logError) }
         }
