@@ -30,6 +30,7 @@ import com.six2dez.burp.aiagent.scanner.JsEndpointExtractor
 import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
 import com.six2dez.burp.aiagent.scanner.VulnClass
 import com.six2dez.burp.aiagent.ui.components.CustomPromptDialog
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import com.six2dez.burp.aiagent.util.IssueText
 import com.six2dez.burp.aiagent.util.IssueUtils
 import java.awt.BorderLayout
@@ -64,23 +65,22 @@ object UiActions {
 
     /**
      * Reloads the BountyPrompt definition cache on a background daemon thread so no directory
-     * listing / JSON parsing happens on the Swing EDT. Safe to call repeatedly.
+     * listing / JSON parsing happens on the Swing EDT (BApp #231 finding 2). Safe to call repeatedly.
+     * The thread is `burp-ai-agent-bounty-prompt-refresh`, built by the shared helper (Phase 33 D-11).
      */
     fun refreshBountyPromptCache(settings: AgentSettings) {
         val key = bountyPromptCacheKey(settings)
-        Thread {
-            val loaded =
-                bountyPromptLoader.loadFromDirectory(
-                    settings.bountyPromptDir,
-                    settings.bountyPromptEnabledPromptIds,
-                )
-            bountyPromptCache = loaded
-            bountyPromptCacheKey = key
-        }.apply {
-            name = "bounty-prompt-cache-refresh"
-            isDaemon = true
-            start()
-        }
+        val refresh =
+            ExtensionThreads.newThread("bounty-prompt-refresh") {
+                val loaded =
+                    bountyPromptLoader.loadFromDirectory(
+                        settings.bountyPromptDir,
+                        settings.bountyPromptEnabledPromptIds,
+                    )
+                bountyPromptCache = loaded
+                bountyPromptCacheKey = key
+            }
+        refresh.start()
     }
 
     @Volatile
