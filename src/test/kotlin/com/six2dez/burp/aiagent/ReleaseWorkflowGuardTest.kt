@@ -321,7 +321,7 @@ class ReleaseWorkflowGuardTest {
             "  release:",
             "    steps:",
             "      - run: ./gradlew ktlintCheck detekt --no-daemon",
-            "      - run: ./gradlew test fullTest nightlyRegressionTest nightlyRegressionFullTest edtGuardWithoutAssertionsTest",
+            "      - run: ./gradlew test fullTest nightlyRegressionTest nightlyRegressionFullTest edtGuardWithoutAssertionsTest unloadLeakTest",
             "      - run: ./gradlew bappJar fullJar storeJarContentTest --no-daemon",
             "      - run: ./gradlew cyclonedxBom --no-daemon --no-configuration-cache",
             "      - run: |",
@@ -387,13 +387,14 @@ class ReleaseWorkflowGuardTest {
     private val order =
         listOf(
             Marker("runs ktlintCheck and detekt (the PR lint job)") { gradleRuns("ktlintCheck", "detekt")(it) },
-            Marker("runs both flavors' fast and heavy suites") {
+            Marker("runs both flavors' fast and heavy suites and the unload leak proof (LIFE-01 / SC1)") {
                 gradleRuns(
                     "test",
                     "fullTest",
                     "nightlyRegressionTest",
                     "nightlyRegressionFullTest",
                     "edtGuardWithoutAssertionsTest",
+                    "unloadLeakTest",
                 )(it)
             },
             Marker("builds both JARs and runs storeJarContentTest (D-02)") {

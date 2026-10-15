@@ -62,6 +62,15 @@ jobs:
       - name: Prove the EDT door guard still fires with JVM assertions DISABLED (REL-05 / SC1)
         run: ./gradlew edtGuardWithoutAssertionsTest --no-daemon
 
+      # LIFE-01 / SC1 (Phase 33, D-13a): a full session through App (chat, both scanners, MCP with an
+      # open SSE session), then unload, must leave no extension thread, no MCP listener and no
+      # coroutine worker. App is a process-wide object and the production unload path shuts down the
+      # shared coroutine dispatchers for good, so these tests run in their own Test task with one JVM
+      # per class instead of inside `test`. Run on all three OSes: thread and socket teardown is
+      # platform behaviour.
+      - name: Prove nothing the extension started survives unload (LIFE-01 / SC1)
+        run: ./gradlew unloadLeakTest --no-daemon
+
       # CI-01: the store JAR inspection runs here on all three OSes (Windows exercises the
       # path-separator handling of the derived full-only set). A failure names the offending entry
       # in this step's log and in the uploaded storeJarContentTest report.
@@ -89,6 +98,8 @@ jobs:
             build/test-results/fullTest/**
             build/reports/tests/storeJarContentTest/**
             build/test-results/storeJarContentTest/**
+            build/reports/tests/unloadLeakTest/**
+            build/test-results/unloadLeakTest/**
 
   coverage:
     needs: lint
@@ -110,12 +121,13 @@ jobs:
       # in :fullTest. If another Test task pulled in :test, :fullTest or :jacocoTestReport again, a
       # single invocation would run a whole suite twice (as the assertions-disabled step in pr-gate
       # once did). The dry run reads Gradle's real task graph. storeJarContentTest is a separate Test
-      # task (it builds the store JAR) and must not pull in :test, :fullTest or :jacocoTestReport either.
+      # task (it builds the store JAR) and must not pull in :test, :fullTest or :jacocoTestReport either,
+      # and neither may unloadLeakTest (the App lifecycle tests, one JVM per class).
       - name: Only the test task pulls in the coverage report
         run: |
-          plan="$(./gradlew edtGuardWithoutAssertionsTest nightlyRegressionTest nightlyRegressionFullTest storeJarContentTest --dry-run --no-daemon)"
+          plan="$(./gradlew edtGuardWithoutAssertionsTest nightlyRegressionTest nightlyRegressionFullTest storeJarContentTest unloadLeakTest --dry-run --no-daemon)"
           printf '%s\n' "$plan"
-          for task in edtGuardWithoutAssertionsTest nightlyRegressionTest nightlyRegressionFullTest storeJarContentTest; do
+          for task in edtGuardWithoutAssertionsTest nightlyRegressionTest nightlyRegressionFullTest storeJarContentTest unloadLeakTest; do
             if ! grep -qx ":${task} SKIPPED" <<< "$plan"; then
               echo "::error::the dry run did not list :${task}, so the guard cannot read the task graph"
               exit 1

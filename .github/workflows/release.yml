@@ -32,7 +32,7 @@ jobs:
       # The full asset ships the CLI backends, whose heavy suites live in the full flavor, so the
       # release runs both flavors' fast and heavy suites, not only the store ones.
       - name: Run both flavors' test suites (fast + heavy)
-        run: ./gradlew test fullTest nightlyRegressionTest nightlyRegressionFullTest edtGuardWithoutAssertionsTest --no-daemon
+        run: ./gradlew test fullTest nightlyRegressionTest nightlyRegressionFullTest edtGuardWithoutAssertionsTest unloadLeakTest --no-daemon
 
       # This is the same task PRs run. A failing step stops the job before anything is staged or
       # published, so a tag on a commit that never ran PR CI cannot publish an unchecked store JAR (D-02).
