@@ -102,8 +102,9 @@ class AiScanCheck(
      * BOTH COOKIE CONTROLS DECIDE ONCE, AT WRITE TIME. Route 1
      * (`ScannerIssueSupport.sanitizeInjectionPointValue`) and route 2 ([buildDetail] through
      * [sanitizeCookiePointText]) both run at issue CONSTRUCTION and bake their result into
-     * `AuditIssue.detail()` — an immutable string Burp stores and the `scanner_issues` MCP tool
-     * replays verbatim.
+     * `AuditIssue.detail()` — an immutable string Burp stores. The `scanner_issues` MCP tool decodes
+     * the extension's escaped format (`IssueUtils.issueDetailHtmlToText`) before `redactIfNeeded`
+     * (32-REVIEW CR-01), but the string itself never changes after construction.
      *
      * A READ-TIME REDACTION PASS DOES RUN OVER IT — WHAT IS MISSING IS A TYPE-KEYED ONE.
      * `mcp/tools/McpTool.kt:45` and `:78` wrap every tool result in
@@ -117,7 +118,8 @@ class AiScanCheck(
      * `Cookie:`-style header name, `redactCookieSections` needs a `=== COOKIES ===` span, and
      * `cookieTypedParamRegex` needs a trailing ` (COOKIE)` marker. [buildDetail] emits an
      * `Original Value: <value>` entry inside an HTML-escaped, `<br>`-joined blob (Phase 32 D-10),
-     * which still carries none of the three. An issue built
+     * which still carries none of the three — and neither does the decoded `Original Value: <value>`
+     * line the read paths now redact. An issue built
      * while `privacyMode` was `OFF` therefore still emits that cookie value on a later STRICT read
      * UNLESS one of the generic, non-cookie rules happens to match the value's own shape. That
      * conditional is the honest form of this residual, and the width of the condition is unmeasured
@@ -428,9 +430,13 @@ class AiScanCheck(
      * then the whole line list goes through `IssueUtils.formatIssueDetailHtml`, the formatter route 1
      * already uses (escape `&`, `<`, `>`, join with `<br>`), so a payload, a target-derived value or
      * the evidence renders as literal text in Burp's issue view. Escaping never runs before the gate
-     * decides. It also removes no character the generic token rules match except `&`, `<` and `>`,
-     * which those token shapes do not contain (32-RESEARCH Pitfall 5), so the read-time pass sees the
-     * same values it saw in the old Markdown shape.
+     * decides. The escaped form DOES defeat two kinds of read-time rule (32-REVIEW CR-01): `&amp;`
+     * removes the `[?&]` anchor of `urlTokenParamRegex` and `formBodyParamRegex`, and the `<br>` join
+     * removes the line starts `logicalLineHeaderRule` needs for the auth, API-key and cookie header
+     * rules. So both read paths decode the stored text with `IssueUtils.issueDetailHtmlToText` before
+     * `Redaction.apply`: `ContextCollector.fromAuditIssues` in both builds, and
+     * `AuditIssue.toSerializableForm` for `scanner_issues` in the full build. The escaping itself is
+     * unchanged.
      */
     internal fun buildDetail(
         insertionPoint: AuditInsertionPoint,

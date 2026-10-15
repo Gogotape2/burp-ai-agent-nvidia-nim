@@ -121,7 +121,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   BountyPrompt issues and issues created through the MCP `issue_create` tool) shows payloads, values
   taken from the target and AI text as literal text in Burp's issue view and reports. `issue_create`
   now escapes what an agent sends, so HTML in its detail, remediation or background shows as text.
-  Privacy redaction of cookie values still runs first.
+  Privacy redaction of cookie values still runs first. When an issue is sent to the AI from the
+  issue context menus, or read through the full build's MCP `scanner_issues` tool, its text is
+  turned back into plain text before privacy redaction, so tokens, API-key and authorization
+  headers and cookie headers in issue text are still redacted under STRICT and BALANCED.
 - **Issue text keeps underscores inside words** - issue details and remediation written by the AI,
   by BountyPrompt or through the MCP `issue_create` tool now keep underscores inside words (for
   example `access_token`, `session_id`). Markdown emphasis such as `_italic_` and `__bold__` is
