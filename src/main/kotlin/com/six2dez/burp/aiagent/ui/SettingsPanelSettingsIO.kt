@@ -591,9 +591,11 @@ internal fun SettingsPanel.applyAndSaveSettingsBody(
     activeAiScanner.scanMode = updated.activeAiScanMode
     activeAiScanner.useCollaborator = updated.activeAiUseCollaborator
     // CR-01, guard 3 of 3. Same selectivity as guard 2, and asserted independently of it: a supersede
-    // landing between the two setEnabled calls must still stop this one.
+    // landing between the passive setEnabled and this requestEnabled must still stop this one.
     if (!isCurrent()) return
-    activeAiScanner.setEnabled(updated.activeAiEnabled)
+    // requestEnabled does nothing for the value the scanner already has, so a Save never restarts a
+    // running scanner and keeps its OAST state (Phase 33 D-01, D-03).
+    activeAiScanner.requestEnabled(updated.activeAiEnabled) { SwingUtilities.invokeLater { refreshActiveAiStatus() } }
 
     contributionFailure?.let { throw it }
     api.logging().logToOutput("AI Agent settings saved.")

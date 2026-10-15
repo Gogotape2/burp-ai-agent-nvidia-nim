@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertTimeoutPreemptively
 import org.mockito.Answers
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.never
 import org.mockito.kotlin.times
@@ -664,7 +665,7 @@ class SettingsSaveAsyncTest {
             )
 
             verify(past1.passiveAiScanner, never()).setEnabled(any())
-            verify(past1.activeAiScanner, never()).setEnabled(any())
+            verify(past1.activeAiScanner, never()).requestEnabled(any(), anyOrNull())
 
             // Shape 2 — supersede lands past guard 2; the active guard is the only thing left.
             settledSignal = CountDownLatch(1)
@@ -688,7 +689,7 @@ class SettingsSaveAsyncTest {
             )
 
             verify(past2.passiveAiScanner, times(1)).setEnabled(any())
-            verify(past2.activeAiScanner, never()).setEnabled(any())
+            verify(past2.activeAiScanner, never()).requestEnabled(any(), anyOrNull())
         }
     }
 
@@ -696,7 +697,8 @@ class SettingsSaveAsyncTest {
      * The positive control for [aSaveSupersededByShutdownNeverReEnablesTheScanners].
      *
      * Same fixture, same latch shape, no `shutdown()`. Without it, both `never()` clauses above would
-     * be equally green if the two `setEnabled` calls had simply been deleted from the save body.
+     * be equally green if the passive `setEnabled` and the active `requestEnabled` calls had simply been
+     * deleted from the save body.
      */
     @Test
     fun aSaveThatIsNotSupersededDoesEnableTheScanners() {
@@ -716,7 +718,9 @@ class SettingsSaveAsyncTest {
             assertTrue(settledSignal.await(25, TimeUnit.SECONDS), "The unsuperseded save never settled.")
 
             verify(fixture.passiveAiScanner, times(1)).setEnabled(any())
-            verify(fixture.activeAiScanner, times(1)).setEnabled(any())
+            // Phase 33 D-01 / D-03: Save goes through the non-blocking toggle, never the blocking one.
+            verify(fixture.activeAiScanner, times(1)).requestEnabled(any(), anyOrNull())
+            verify(fixture.activeAiScanner, never()).setEnabled(any())
         }
     }
 

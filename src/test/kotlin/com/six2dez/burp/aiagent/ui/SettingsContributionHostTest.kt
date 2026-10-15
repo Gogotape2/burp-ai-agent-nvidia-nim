@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertTimeoutPreemptively
 import org.mockito.Answers
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.doAnswer
@@ -329,7 +330,7 @@ class SettingsContributionHostTest {
             )
             assertEquals(PrivacyMode.STRICT, fixture.repo.load().privacyMode, "The core save stays applied.")
             verify(fixture.mcpSupervisor).applySettings(any(), any(), any(), any())
-            verify(fixture.activeAiScanner).setEnabled(any())
+            verify(fixture.activeAiScanner).requestEnabled(any(), anyOrNull())
             assertEquals("kept", fixture.panel.pluginSettings.getString(other.key), "The other one persisted.")
         }
     }
