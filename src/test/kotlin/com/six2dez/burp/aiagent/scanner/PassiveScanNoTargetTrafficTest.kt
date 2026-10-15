@@ -4,6 +4,7 @@ import burp.api.montoya.http.Http
 import com.six2dez.burp.aiagent.TestSettings
 import com.six2dez.burp.aiagent.config.AgentSettings
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -127,6 +128,45 @@ class PassiveScanNoTargetTrafficTest {
         }
     }
 
+    /**
+     * 32-REVIEW WR-01 / D-06: an analysis still queued on the scanner's executor when unload starts
+     * finishes during the drain. The list is emptied after the drain, so its suggestions do not survive.
+     */
+    @Test
+    fun anAnalysisThatFinishesDuringShutdownLeavesNothing() {
+        PassiveScanCheckRig(sc1Settings()).use { rig ->
+            val latch = rig.blockExecutor()
+            rig.scanner.executor.submit {
+                rig.scanner.offerSuggestedTargets(rig.csrfPost("sc1-inflight.example"), "SQL Injection", "High", "d", 90, rig.settings)
+            }
+            val shutdown = Thread { rig.scanner.shutdown() }
+            shutdown.start()
+            val deadline = System.currentTimeMillis() + WAIT_MILLIS
+            while (!rig.scanner.executor.isShutdown && System.currentTimeMillis() < deadline) {
+                Thread.sleep(POLL_MILLIS)
+            }
+            assertTrue(rig.scanner.executor.isShutdown, "precondition: shutdown() reached the executor")
+
+            latch.countDown()
+            shutdown.join(WAIT_MILLIS)
+
+            assertFalse(shutdown.isAlive, "shutdown() did not return")
+            assertEquals(0, rig.scanner.suggestedTargets.count(), "an in-flight analysis refilled the list after unload (D-06)")
+        }
+    }
+
+    /** 32-REVIEW WR-01 / D-06: a finding offered after unload (a Burp passive-scan thread) adds nothing. */
+    @Test
+    fun aFindingOfferedAfterShutdownAddsNothing() {
+        PassiveScanCheckRig(sc1Settings()).use { rig ->
+            rig.scanner.shutdown()
+
+            rig.scanner.offerSuggestedTargets(rig.csrfPost("sc1-late.example"), "SQL Injection", "High", "d", 90, rig.settings)
+
+            assertEquals(0, rig.scanner.suggestedTargets.count(), "a late finding refilled the list after unload (D-06)")
+        }
+    }
+
     private fun mockHttp(rig: PassiveScanCheckRig): Http {
         val http = mock<Http>()
         whenever(rig.api.http()).thenReturn(http)
@@ -142,6 +182,8 @@ class PassiveScanNoTargetTrafficTest {
         )
 
     private companion object {
+        const val WAIT_MILLIS = 5_000L
+        const val POLL_MILLIS = 10L
         const val REFUSAL = "This build sends AI requests only while Burp's 'Use AI' setting is enabled."
         val ALLOWED_SUPERVISOR_CALLS = setOf("status", "getCurrentBackendInfo", "refusalForSavedBackend")
     }

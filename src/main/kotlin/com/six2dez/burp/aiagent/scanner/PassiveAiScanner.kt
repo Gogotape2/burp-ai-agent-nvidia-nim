@@ -393,7 +393,6 @@ class PassiveAiScanner(
         } catch (_: Exception) {
         }
         batchQueue.clear()
-        suggestedTargets.clear()
         executor.shutdown()
         try {
             if (!executor.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)) {
@@ -402,6 +401,10 @@ class PassiveAiScanner(
         } catch (_: InterruptedException) {
             executor.shutdownNow()
         }
+        // D-06 / 32-REVIEW WR-01: emptied after the drain, so an analysis still in flight cannot
+        // refill the list; the latch also refuses adds from Burp passive-scan threads. Collection is
+        // deliberately not gated on the enabled flag, because manual scans run with it off (D-09).
+        suggestedTargets.clear(refuseLaterAdds = true)
     }
 
     fun resetStats() {

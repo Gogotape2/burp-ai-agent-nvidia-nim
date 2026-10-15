@@ -27,7 +27,9 @@ data class SuggestedTarget(
  * queues them by hand after a confirmation; nothing in this class sends a request or queues anything.
  *
  * - Session-only (D-06): the list lives in memory, is never persisted and never exported to MCP. It
- *   holds target URLs and parameter values. The passive scanner clears it on unload.
+ *   holds target URLs and parameter values. The passive scanner empties it on unload, after its own
+ *   worker has drained, and the list then refuses every later add, so a finding still in flight
+ *   cannot refill it. "Clear suggestions" uses the plain [clear] and leaves the list open.
  * - Deduplicated (D-07): one entry per (normalized URL, injection point type, injection point name,
  *   vulnerability class). A repeat keeps the first entry, its position and its Suggested At time.
  * - Bounded (D-07): at most [cap] entries; a new entry past the cap evicts the oldest one, counts it in
@@ -51,6 +53,10 @@ class SuggestedTargetList(
     @Volatile
     private var capHit = false
 
+    // Set once by the unload clear; read and written under the lock.
+    @Volatile
+    private var refusingAdds = false
+
     private var changes = 0L
 
     init {
@@ -71,11 +77,15 @@ class SuggestedTargetList(
         val now = clock()
         var added = 0
         synchronized(lock) {
-            for ((key, url, target) in keyed) {
-                if (!entries.containsKey(key)) {
-                    entries[key] = SuggestedTarget(key, target, url, now)
-                    added++
-                    evictOverflow()
+            // Checked under the same lock as the insert, so no add lands between the unload clear and
+            // the latch.
+            if (!refusingAdds) {
+                for ((key, url, target) in keyed) {
+                    if (!entries.containsKey(key)) {
+                        entries[key] = SuggestedTarget(key, target, url, now)
+                        added++
+                        evictOverflow()
+                    }
                 }
             }
             if (added > 0) changes++
@@ -112,13 +122,20 @@ class SuggestedTargetList(
         return removed
     }
 
-    /** Empties the list and resets [capReached] and [droppedCount]. */
-    fun clear() {
+    /**
+     * Empties the list and resets [capReached] and [droppedCount].
+     *
+     * With [refuseLaterAdds] (the passive scanner's unload) the list also refuses every later add, so
+     * a finding still in flight cannot refill it. "Clear suggestions" uses the plain clear, which
+     * leaves the list open.
+     */
+    fun clear(refuseLaterAdds: Boolean = false) {
         synchronized(lock) {
             val changed = entries.isNotEmpty() || capHit || dropped.get() > 0
             entries.clear()
             capHit = false
             dropped.set(0)
+            if (refuseLaterAdds) refusingAdds = true
             if (changed) changes++
         }
     }

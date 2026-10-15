@@ -80,6 +80,43 @@ class SuggestedTargetListTest {
         assertFalse(list.capReached(), "clear resets the cap flag")
     }
 
+    /** 32-REVIEW WR-01 / D-06: the unload clear empties the list and refuses every later add. */
+    @Test
+    fun theUnloadClearEmptiesTheListAndRefusesLaterAdds() {
+        val list = SuggestedTargetList()
+        list.addAll(listOf(target("https://latch.example/a"), target("https://latch.example/b")))
+
+        list.clear(refuseLaterAdds = true)
+        assertEquals(0, list.count())
+        val versionAfterClear = list.version()
+
+        assertEquals(0, list.addAll(listOf(target("https://latch.example/late"))), "a refused add reports nothing added")
+        assertEquals(0, list.count(), "nothing lands after the unload clear")
+        assertEquals(versionAfterClear, list.version(), "a refused add is not a content change")
+    }
+
+    /** "Clear suggestions" uses the plain clear: the list stays open for later findings. */
+    @Test
+    fun thePlainClearLeavesTheListOpen() {
+        val list = SuggestedTargetList()
+        list.addAll(listOf(target("https://open.example/a")))
+
+        list.clear()
+
+        assertEquals(2, list.addAll(listOf(target("https://open.example/b"), target("https://open.example/c"))))
+        assertEquals(2, list.count())
+    }
+
+    @Test
+    fun theUnloadClearOnAnEmptyListStillRefusesLaterAdds() {
+        val list = SuggestedTargetList()
+
+        list.clear(refuseLaterAdds = true)
+
+        assertEquals(0, list.addAll(listOf(target("https://empty-latch.example/a"))))
+        assertEquals(0, list.count())
+    }
+
     @Test
     fun theDefaultListStopsAtFiveHundred() {
         assertEquals(500, SuggestedTargetList.DEFAULT_CAP)
