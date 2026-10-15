@@ -232,6 +232,85 @@ class ActiveScannerLifecycleTest {
     }
 
     // ---------------------------------------------------------------------------------------------
+    // Settings hot-apply (D-01, D-03)
+    // ---------------------------------------------------------------------------------------------
+
+    @Test
+    fun settingMaxConcurrentOnARunningScannerResizesTheLivePoolInBothDirections() {
+        val scanner = rig.scanner()
+        scanner.maxConcurrent = 3
+        scanner.setEnabled(true)
+        val pool = requireNotNull(scanner.workerPoolForTests()) { "a running scanner has a worker pool" }
+
+        scanner.maxConcurrent = 5
+        assertSame(pool, scanner.workerPoolForTests(), "D-01: growing resizes the live pool, never recreates it")
+        assertEquals(5, pool.corePoolSize, "core follows maxConcurrent when growing")
+        assertEquals(5, pool.maximumPoolSize, "maximum follows maxConcurrent when growing")
+
+        scanner.maxConcurrent = 2
+        assertSame(pool, scanner.workerPoolForTests(), "D-01: shrinking resizes the live pool, never recreates it")
+        assertEquals(2, pool.corePoolSize, "core follows maxConcurrent when shrinking")
+        assertEquals(2, pool.maximumPoolSize, "maximum follows maxConcurrent when shrinking: the pool never exceeds it")
+    }
+
+    @Test
+    fun maxConcurrentBelowOneIsClampedToOne() {
+        val scanner = rig.scanner()
+        scanner.setEnabled(true)
+        val pool = requireNotNull(scanner.workerPoolForTests()) { "a running scanner has a worker pool" }
+
+        scanner.maxConcurrent = 0
+
+        assertEquals(1, scanner.maxConcurrent, "0 is clamped to 1")
+        assertEquals(1, pool.corePoolSize)
+        assertEquals(1, pool.maximumPoolSize)
+    }
+
+    @Test
+    fun maxConcurrentOnAStoppedScannerBuildsNoPoolAndTheNextStartUsesIt() {
+        val scanner = rig.scanner()
+
+        scanner.maxConcurrent = 4
+        assertNull(scanner.workerPoolForTests(), "a stopped scanner has no pool to resize and builds none")
+
+        scanner.setEnabled(true)
+        val pool = requireNotNull(scanner.workerPoolForTests()) { "a running scanner has a worker pool" }
+        assertEquals(4, pool.corePoolSize)
+        assertEquals(4, pool.maximumPoolSize)
+    }
+
+    @Test
+    fun aSettingsChangeKeepsTheSharedBaselinesAndThePoolAndOnlyDisableDropsThem() {
+        val scanner = rig.scanner()
+        scanner.setEnabled(true)
+        scanner.queueTarget(rig.target())
+        assertTimeoutPreemptively(Duration.ofSeconds(AWAIT_SECONDS)) {
+            while (scanner.getStatus().scansCompleted < 1) Thread.sleep(POLL_MS)
+        }
+        val baselines = scanner.baselineCacheSizeForTests()
+        assertTrue(baselines > 0, "anti-vacuity: the scanned target must have cached its baseline")
+        val pool = scanner.workerPoolForTests()
+
+        scanner.maxPayloadsPerPoint = 7
+        scanner.timeoutSeconds = 12
+        scanner.requestDelayMs = 50
+        scanner.maxRiskLevel = PayloadRisk.MODERATE
+        scanner.scopeOnly = true
+        scanner.scanMode = ScanMode.BUG_BOUNTY
+        scanner.useCollaborator = true
+        scanner.maxConcurrent = 4
+        scanner.setEnabled(true)
+
+        assertEquals(baselines, scanner.baselineCacheSizeForTests(), "D-03: a settings change keeps the shared baselines")
+        assertSame(pool, scanner.workerPoolForTests(), "D-01: a settings change does not restart the scanner")
+        assertTrue(scanner.getStatus().scanning)
+
+        scanner.setEnabled(false)
+        assertEquals(0, scanner.baselineCacheSizeForTests(), "D-03: disabling the scanner drops the shared baselines")
+        assertEquals(0, scanner.pendingOastCountForTests(), "D-03: disabling the scanner drops pending Collaborator confirmations")
+    }
+
+    // ---------------------------------------------------------------------------------------------
     // Fixture
     // ---------------------------------------------------------------------------------------------
 
