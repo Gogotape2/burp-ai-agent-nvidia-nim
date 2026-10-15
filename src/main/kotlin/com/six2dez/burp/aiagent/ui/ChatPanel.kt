@@ -1226,7 +1226,7 @@ class ChatPanel(
         runningTool.set(token)
         val sessionId = session.id
         OffEdtDispatch.run(
-            threadName = "burp-ai-tool-exec",
+            threadName = "burp-ai-agent-tool-exec",
             label = "chat-tool-dialog-" + UUID.randomUUID().toString(),
             logError = { message -> api.logging().logToError(message) },
             // SC5: user-originated. The user picked the tool and typed the args in ToolInvocationDialog, so
@@ -2651,7 +2651,7 @@ class ChatPanel(
             val token = RunningToolToken(toolName)
             runningTool.set(token)
             OffEdtDispatch.run(
-                threadName = "burp-ai-tool-exec",
+                threadName = "burp-ai-agent-tool-exec",
                 label = "chat-tool-slash-" + UUID.randomUUID().toString(),
                 logError = { message -> api.logging().logToError(message) },
                 // SC5: user-originated. The user typed `/tool <name> <json>` themselves, so this call is
@@ -3220,7 +3220,7 @@ class ChatPanel(
         val token = RunningToolToken(call.tool)
         runningTool.set(token)
         OffEdtDispatch.run(
-            threadName = "burp-ai-tool-exec",
+            threadName = "burp-ai-agent-tool-exec",
             // WR-11 / Phase 22 commit ab55ff5: the label is the trace id so an ordering assertion can
             // select by identity. Keyed on list position it would hide a reordering bug; keyed on
             // identity it reports one.
