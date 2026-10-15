@@ -215,7 +215,7 @@ class HeaderSettingsWritesTest {
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * Parks the FIRST preference write made on the Settings Save worker (`burp-ai-settings-save`) once
+     * Parks the FIRST preference write made on the Settings Save worker (`burp-ai-agent-settings-save`) once
      * armed, i.e. the Save is inside `AgentSettingsRepository.save()` with nothing published yet. The arm
      * flag is consumed by compareAndSet, so no other write and no other thread ever blocks.
      */
@@ -356,7 +356,7 @@ class HeaderSettingsWritesTest {
 
     private companion object {
         const val FAILSAFE_SECONDS = 20L
-        const val SAVE_THREAD_NAME = "burp-ai-settings-save"
+        const val SAVE_THREAD_NAME = "burp-ai-agent-settings-save"
         const val PASSIVE_AI_ENABLED_KEY = "passive.ai.enabled"
     }
 }

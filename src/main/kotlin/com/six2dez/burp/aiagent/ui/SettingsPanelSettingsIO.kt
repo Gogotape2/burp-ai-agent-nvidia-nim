@@ -479,7 +479,7 @@ internal fun SettingsPanel.parseContentTypePrefixesInput(
 }
 
 /**
- * The synchronous body of a Settings save. Runs on the `burp-ai-settings-save` worker, never the EDT.
+ * The synchronous body of a Settings save. Runs on the `burp-ai-agent-settings-save` worker, never the EDT.
  *
  * REL-05 / SC4: this reaches `McpSupervisor.applySettings` → `McpSupervisor.stop()` →
  * `KtorMcpServerManager.stop()`'s bounded `future.get(10, TimeUnit.SECONDS)`, and it also does
@@ -628,7 +628,7 @@ internal fun SettingsPanel.persistContributions(snapshots: List<Pair<SettingsCon
 }
 
 /**
- * Applies [updated] on the `burp-ai-settings-save` worker and reports the outcome to [onDone] on the EDT.
+ * Applies [updated] on the `burp-ai-agent-settings-save` worker and reports the outcome to [onDone] on the EDT.
  *
  * Call this from the EDT with a snapshot already read off the Swing components. It returns as soon as
  * the worker is started; nothing after the dispatch waits on it (REL-05 / SC4).
@@ -682,8 +682,9 @@ internal fun SettingsPanel.applyAndSaveSettingsAsync(
     busyListener?.invoke(true)
     OffEdtDispatch.run(
         // Named so a stuck save is identifiable in a thread dump; the label identifies this unit of
-        // work in OffEdtDispatch's two observers and in the error log.
-        threadName = "burp-ai-settings-save",
+        // work in OffEdtDispatch's two observers and in the error log. The burp-ai-agent- prefix is
+        // the Phase 33 D-11 thread-name convention.
+        threadName = "burp-ai-agent-settings-save",
         label = "settings-save",
         logError = { api.logging().logToError(it) },
         work = {

@@ -146,7 +146,7 @@ class SettingsSaveAsyncTest {
                     "the save body blocked the EDT for the whole bounded ten-second MCP stop wait.",
             )
             assertEquals(
-                "burp-ai-settings-save",
+                "burp-ai-agent-settings-save",
                 workerThread.get(),
                 "SC4: the save body must run on the named daemon worker, not the EDT.",
             )

@@ -291,7 +291,7 @@ class SettingsContributionHostTest {
             assertTrue(collect.onEdt, "UI-SPEC H-2: collect() reads Swing state on the EDT.")
             val persist = contribution.callsOf("persist").single()
             assertFalse(persist.onEdt, "T-29-28: persist() never runs on the EDT.")
-            assertEquals("burp-ai-settings-save", persist.thread, "persist() runs on the settings-save worker.")
+            assertEquals("burp-ai-agent-settings-save", persist.thread, "persist() runs on the settings-save worker.")
             assertEquals(
                 PrivacyMode.OFF,
                 coreModeAtPersist.get(),
@@ -348,7 +348,7 @@ class SettingsContributionHostTest {
 
             assertTrue(contribution.callsOf("applyToUi").single().onEdt, "applyToUi runs on the EDT.")
             val persist = contribution.callsOf("persist").single()
-            assertEquals("burp-ai-settings-save", persist.thread, "Restore persists on the settings-save worker.")
+            assertEquals("burp-ai-agent-settings-save", persist.thread, "Restore persists on the settings-save worker.")
             assertEquals("default", fixture.panel.pluginSettings.getString(contribution.key), "Defaults stored.")
             assertTrue(contribution.callsOf("collect").isEmpty(), "Restore persists defaults(), not the screen.")
         }
