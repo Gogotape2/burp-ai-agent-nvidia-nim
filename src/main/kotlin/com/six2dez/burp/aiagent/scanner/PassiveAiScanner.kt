@@ -9,8 +9,9 @@ import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.spi.SuggestedTargetSink
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.util.BudgetGuard
+import com.six2dez.burp.aiagent.util.ExtensionThreads
+import com.six2dez.burp.aiagent.util.ShutdownDeadline
 import java.util.LinkedHashMap
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -64,10 +65,17 @@ class PassiveAiScanner(
     internal val lastAnalysisTime = AtomicLong(0)
     internal val aiBackoffUntilMs = AtomicLong(0)
     internal val lastBackoffLogTime = AtomicLong(0)
-    internal val executor =
-        Executors.newSingleThreadExecutor { r ->
-            Thread(r, "PassiveAiScanner").apply { isDaemon = true }
-        }
+
+    /** D-11: the single passive analysis worker, the daemon `burp-ai-agent-passive-scan`. */
+    internal val executor = ExtensionThreads.singleThread("passive-scan")
+
+    /**
+     * Phase 33 / SC3: set once unload began. From then on no analysis may start a provider request:
+     * [flushBatch] and [sendSingleAnalysis] return before sending when it is set. Never reset, since
+     * the scanner is not reused after [shutdown].
+     */
+    @Volatile
+    internal var shuttingDown = false
     internal val findings = ArrayDeque<PassiveAiFinding>(Defaults.FINDINGS_BUFFER_SIZE)
 
     /**
@@ -386,21 +394,30 @@ class PassiveAiScanner(
         }
     }
 
-    fun shutdown() {
+    /** Unloads with a fresh, whole unload budget; see the overload taking a [ShutdownDeadline]. */
+    fun shutdown() = shutdown(ShutdownDeadline.unload())
+
+    /**
+     * Phase 33 / SC3, LIFE-02: unloading sends nothing to the AI backend and waits on no AI request.
+     * Pending work is dropped and counted in one Output line; the executor wait uses [deadline].
+     */
+    fun shutdown(deadline: ShutdownDeadline) {
         enabled.set(false)
-        try {
-            flushBatch(getSettings())
-        } catch (_: Exception) {
-        }
+        shuttingDown = true
+        val droppedBatch = batchQueue.size()
         batchQueue.clear()
-        executor.shutdown()
-        try {
-            if (!executor.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)) {
-                executor.shutdownNow()
+        val droppedQueued = executor.shutdownNow().size
+        val dropped = droppedBatch + droppedQueued
+        if (dropped > 0) {
+            runCatching {
+                api.logging().logToOutput(
+                    "[PassiveAiScanner] Unload: dropped $dropped pending passive analysis item(s); " +
+                        "nothing was sent to the AI backend.",
+                )
             }
-        } catch (_: InterruptedException) {
-            executor.shutdownNow()
         }
+        deadline.awaitOrForce(executor, "Passive scanner") { line -> runCatching { api.logging().logToError(line) } }
+        ExtensionThreads.release(executor)
         // D-06 / 32-REVIEW WR-01: emptied after the drain, so an analysis still in flight cannot
         // refill the list; the latch also refuses adds from Burp passive-scan threads. Collection is
         // deliberately not gated on the enabled flag, because manual scans run with it off (D-09).

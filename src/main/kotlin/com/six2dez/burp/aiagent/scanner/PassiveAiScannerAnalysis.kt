@@ -613,6 +613,8 @@ internal fun PassiveAiScanner.doAnalysis(requestResponse: HttpRequestResponse) {
 // ---- batch + single-send ----
 
 internal fun PassiveAiScanner.flushBatch(settings: AgentSettings) {
+    // Phase 33 / SC3: once unload began, nothing is drained and nothing is sent.
+    if (shuttingDown) return
     val batch = batchQueue.drain()
     if (batch.isEmpty()) return
 
@@ -729,6 +731,8 @@ internal fun PassiveAiScanner.sendSingleAnalysis(
     minSeverity: String,
     settings: AgentSettings,
 ) {
+    // Phase 33 / SC3: once unload began, a single analysis starts no provider request.
+    if (shuttingDown) return
     if (!ensureBackendRunning(settings)) return
 
     val promptHash = sha256Hex(prompt)

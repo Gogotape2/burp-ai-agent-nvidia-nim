@@ -10,8 +10,8 @@ import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Assertions.assertTimeoutPreemptively
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Answers
 import org.mockito.kotlin.any
@@ -92,7 +92,10 @@ class PassiveUnloadNoTrafficTest {
     fun theExecutorThreadIsTheNamedDaemonPassiveScanWorker() {
         val f = fixture(SendMode.FAIL_FAST)
 
-        val worker = f.scanner.executor.submit(Callable { Thread.currentThread() }).get(WAIT_SECONDS, TimeUnit.SECONDS)
+        val worker =
+            f.scanner.executor
+                .submit(Callable { Thread.currentThread() })
+                .get(WAIT_SECONDS, TimeUnit.SECONDS)
 
         assertEquals("burp-ai-agent-passive-scan", worker.name)
         assertTrue(worker.isDaemon, "the passive scan worker must be a daemon thread")

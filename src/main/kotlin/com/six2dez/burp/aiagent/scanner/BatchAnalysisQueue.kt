@@ -51,6 +51,9 @@ internal class BatchAnalysisQueue(
 
     fun isEmpty(): Boolean = queue.isEmpty()
 
+    /** How many items wait for the next flush (Phase 33: counted, then dropped, on unload). */
+    fun size(): Int = queue.size
+
     fun clear() {
         queue.clear()
         oldestEnqueueMs.set(0L)
