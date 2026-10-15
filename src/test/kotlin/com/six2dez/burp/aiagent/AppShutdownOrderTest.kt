@@ -9,7 +9,9 @@ import org.junit.jupiter.api.Test
  *
  * Structural on purpose: App-level tests that run the unload live only in the dedicated
  * `unloadLeakTest` JVM, and the ORDER is what makes the unload correct, so it is pinned here in the
- * normal `test` task. Inbound work stops first (MCP, then plug-ins and scanners), then the AI side
+ * normal `test` task. The AI side is latched before anything else (CR-01: the supervisor refuses every
+ * AI request and stops the turns in flight), so no later step's duration opens a window for AI traffic.
+ * Inbound work stops next (MCP, then plug-ins and scanners), then the AI side
  * (chat supervisor, backends), then the UI and the global sinks, then the sweep; the irreversible
  * shared coroutine shutdown runs only when the caller asks for it.
  */
@@ -70,6 +72,7 @@ class AppShutdownOrderTest {
     private companion object {
         val STEP_LABELS =
             listOf(
+                "AI unload latch",
                 "MainTab quiesce",
                 "MCP supervisor",
                 "Plug-in",

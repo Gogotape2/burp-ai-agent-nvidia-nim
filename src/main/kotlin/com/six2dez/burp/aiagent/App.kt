@@ -276,8 +276,10 @@ object App {
      * Phase 33 — unloads the extension: inbound first, within one shared [deadline], silent when clean.
      *
      * **Order (D-06).** Work that arrives from outside stops before the objects it uses are torn down:
-     * 0. MainTab quiesce: no settings write (which could restart MCP or a scanner) can start any more;
-     *    timers that trigger work stop. No waits.
+     * 0. AI unload latch (CR-01, LIFE-02): the chat supervisor refuses every AI request from here on, and
+     *    the turns in flight are stopped now, so no later step's duration opens a window for AI traffic.
+     *    Then the MainTab quiesce: no settings write (which could restart MCP or a scanner) can start any
+     *    more; timers that trigger work stop. No waits.
      * 1. MCP supervisor: latches, drops pending restarts, closes the port, stops the stdio bridge and
      *    clears provider state. MCP must stop before the chat supervisor and the backends it calls.
      * 2. Plug-ins, then the passive and the active scanner.
@@ -307,7 +309,10 @@ object App {
         deadline: ShutdownDeadline = ShutdownDeadline.unload(),
     ) {
         if (!shutdownStarted.compareAndSet(false, true)) return
-        // (0) Quiesce.
+        // (0) Latch the AI side before anything else. It lives here rather than in MainTab.quiesce so a
+        // load that failed before MainTab existed is latched too.
+        safeShutdownStep("AI unload latch", this::supervisor.isInitialized) { supervisor.beginShutdown() }
+        // Then quiesce.
         safeShutdownStep("MainTab quiesce") { mainTab?.quiesce() }
         // (1) Inbound: the MCP server and the stdio bridge.
         safeShutdownStep("MCP supervisor", this::mcpSupervisor.isInitialized) { mcpSupervisor.shutdown(deadline) }
