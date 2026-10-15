@@ -291,6 +291,8 @@ class KtorMcpServerManager(
                             }
                         }
 
+                    // Test-only: lets a test hold this start right before its bind (never set in production).
+                    beforeBindForTests?.let { hook -> runCatching { hook() } }
                     val instance = serverInstance.apply { start(false) }
                     // Test-only: report the port the kernel bound, before the supersede check, so a test
                     // also sees (and probes) a port that a superseded start bound and then closed.
@@ -454,5 +456,14 @@ class KtorMcpServerManager(
          */
         @Volatile
         internal var onBoundForTests: ((Int) -> Unit)? = null
+
+        /**
+         * Test-only: called on the lifecycle thread immediately before every bind, so a test can hold a
+         * start there while a newer start, a stop or unload supersedes it (Phase 33 gap closure, WR-02).
+         * Companion-level for the same reason as [onBoundForTests]. Never set in production; a throwing
+         * hook cannot break a start.
+         */
+        @Volatile
+        internal var beforeBindForTests: (() -> Unit)? = null
     }
 }
