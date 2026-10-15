@@ -14,7 +14,7 @@ import com.six2dez.burp.aiagent.backends.http.ConversationHistory
 import com.six2dez.burp.aiagent.backends.http.HttpBackendSupport
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
 import com.six2dez.burp.aiagent.backends.http.recordHttpFailureIfRetryable
-import java.util.concurrent.Executors
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -78,9 +78,7 @@ class AnthropicBackend : AiBackend {
         UsageAwareConnection {
         private val alive = AtomicBoolean(true)
         private val exec =
-            Executors.newSingleThreadExecutor { runnable ->
-                Thread(runnable, "anthropic-connection").apply { isDaemon = true }
-            }
+            ExtensionThreads.singleThread("anthropic-connection")
         private val conversationHistory = ConversationHistory(20)
         private val lastTokenUsageRef = AtomicReference<TokenUsage?>(null)
 

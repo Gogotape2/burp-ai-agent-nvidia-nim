@@ -11,8 +11,8 @@ import com.six2dez.burp.aiagent.backends.HealthCheckResult
 import com.six2dez.burp.aiagent.backends.http.AiAccessRefusedException
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
 import com.six2dez.burp.aiagent.config.AgentSettings
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 class BurpAiBackend(
@@ -58,10 +58,11 @@ private class BurpAiConnection(
     private val config: BackendLaunchConfig,
 ) : AgentConnection {
     private val alive = AtomicBoolean(true)
+
+    // Phase 33 / D-11: a fixed label. The chat session id is user-correlated data and must never reach
+    // a thread dump, so the worker is burp-ai-agent-burp-ai-connection for every session.
     private val exec: ExecutorService =
-        Executors.newSingleThreadExecutor { r ->
-            Thread(r, "burp-ai-${config.sessionId}").apply { isDaemon = true }
-        }
+        ExtensionThreads.singleThread("burp-ai-connection")
     private val promptOptions =
         PromptOptions
             .promptOptions()

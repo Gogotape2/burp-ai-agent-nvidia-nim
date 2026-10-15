@@ -18,8 +18,8 @@ import com.six2dez.burp.aiagent.backends.http.HttpBackendSupport
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
 import com.six2dez.burp.aiagent.backends.http.recordHttpFailureIfRetryable
 import com.six2dez.burp.aiagent.config.AgentSettings
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import com.six2dez.burp.aiagent.util.HeaderParser
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -129,9 +129,7 @@ class OllamaBackend :
         JsonModeCapable {
         private val alive = AtomicBoolean(true)
         private val exec =
-            Executors.newSingleThreadExecutor { runnable ->
-                Thread(runnable, "ollama-connection").apply { isDaemon = true }
-            }
+            ExtensionThreads.singleThread("ollama-connection")
         private val conversationHistory = ConversationHistory(20)
         private val lastTokenUsageRef = AtomicReference<TokenUsage?>(null)
 
