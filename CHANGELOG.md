@@ -135,10 +135,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   was still running at unload and was stopped". Turning MCP on and off quickly can no longer leave
   the port listening. A load that fails part-way is now cleaned up (nothing it started keeps
   running and the MCP port is released) and is still reported to Burp as a failed load.
-- **Unloading sends nothing to the AI** - a partly filled passive analysis batch is dropped instead
-  of being sent, and an analysis already running sends nothing once unload has begun. One Output
-  line gives the count: "[PassiveAiScanner] Unload: dropped N pending passive analysis item(s);
-  nothing was sent to the AI backend."
+- **Unloading sends nothing to the AI** - from the moment unload begins, the extension starts no
+  new request to an AI provider: a reply in progress is stopped, a tool chain sends no further turn,
+  there are no backend retries, and no health or readiness check reaches a provider. A request that
+  was already on its way when unload began cannot be recalled. A partly filled passive analysis
+  batch is dropped instead of being sent, and an analysis already running sends nothing once unload
+  has begun. One Output line gives the count: "[PassiveAiScanner] Unload: dropped N pending passive
+  analysis item(s); nothing was sent to the AI backend."
 - **Every thread the extension starts is named `burp-ai-agent-...`** and is a daemon thread, so a
   thread dump (`jcmd <pid> Thread.print` or `jstack <pid>`) shows what belongs to the extension and
   none of them can keep Burp from exiting. In the full build, the MCP scanner-task and Collaborator
