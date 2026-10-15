@@ -185,9 +185,10 @@ class ScanRequestExecutorTest {
         }
         assertTrue(
             code.any { it.contains(BOUNDED_POOL_CONSTRUCTION) },
-            "REL-07 / SC6: `$SCANNER_SOURCE` must construct its request pool explicitly with " +
-                "`$BOUNDED_POOL_CONSTRUCTION` so the ceiling, the queue and the rejection policy are all " +
-                "stated at the call site rather than inherited from an `Executors` convenience factory.",
+            "REL-07 / SC6, Phase 33 / D-11: `$SCANNER_SOURCE` must build its request pool through the thread " +
+                "helper with `$BOUNDED_POOL_CONSTRUCTION`, which takes the ceiling, the queue and the rejection " +
+                "policy as explicit arguments, so all three are still stated at the call site rather than " +
+                "inherited from an `Executors` convenience factory.",
         )
         assertTrue(
             code.any { it.contains(CEILING_CONSTANT) },
@@ -295,7 +296,7 @@ class ScanRequestExecutorTest {
     private companion object {
         const val SCANNER_SOURCE = "com/six2dez/burp/aiagent/scanner/ActiveAiScanner.kt"
         const val THREAD_NAME_PREFIX = "burp-ai-agent-scan-request-"
-        const val BOUNDED_POOL_CONSTRUCTION = "ThreadPoolExecutor("
+        const val BOUNDED_POOL_CONSTRUCTION = "ExtensionThreads.boundedPool("
         const val CEILING_CONSTANT = "Defaults.MAX_SCAN_REQUEST_THREADS"
         const val SEND_REQUEST_SIGNATURE = "fun sendRequestWithTimeout("
         const val TRY_OPENER = "return try {"

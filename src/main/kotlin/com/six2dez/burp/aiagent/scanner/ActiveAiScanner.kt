@@ -12,13 +12,14 @@ import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.redact.RedactionPolicy
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import com.six2dez.burp.aiagent.util.IssueUtils
+import com.six2dez.burp.aiagent.util.ShutdownDeadline
 import com.six2dez.burp.aiagent.util.scheduleGuarded
 import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
@@ -31,6 +32,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import kotlin.math.abs
 
 data class ActiveAiFinding(
@@ -53,6 +55,9 @@ private data class PendingOast(
 )
 
 private const val OAST_POLL_INTERVAL_SECONDS = 60L
+
+/** Phase 33 / D-04: the one local wait an OFF toggle gives the worker and scheduler pools, together. */
+private const val TOGGLE_STOP_BUDGET_MS = 5_000L
 
 /**
  * AI-powered Active Scanner that confirms vulnerabilities by sending test payloads
@@ -91,16 +96,31 @@ class ActiveAiScanner(
     //    construction, while maxConcurrent is a mutable var written later from settings.
     //  - AbortPolicy makes saturation observable. Its throw site is handled in
     //    sendRequestWithTimeout (returns null) and on the scheduler thread by scheduleGuarded.
+    //  - Phase 33 / D-11: the pool comes from the thread helper, which names its daemon threads
+    //    burp-ai-agent-scan-request-N and tracks it for the unload sweep.
     private val requestExecutor: ExecutorService =
-        ThreadPoolExecutor(
+        ExtensionThreads.boundedPool(
+            "scan-request",
             0,
             Defaults.MAX_SCAN_REQUEST_THREADS,
             Defaults.SCAN_REQUEST_THREAD_KEEPALIVE_SECONDS,
             TimeUnit.SECONDS,
             SynchronousQueue(),
-            scanRequestThreadFactory(),
             ThreadPoolExecutor.AbortPolicy(),
         )
+
+    // Phase 33 / D-04, EDT-01: every start and stop runs under this lock. UI code never takes it: it
+    // calls requestEnabled, which hands the transition to the one lifecycle thread below, so a stop that
+    // waits for busy workers never blocks the EDT and two clicks run one after the other (FIFO).
+    private val lifecycleLock = ReentrantLock()
+    private val lifecycle: ExecutorService = ExtensionThreads.singleThread("scan-lifecycle")
+
+    /** Lifecycle requests submitted and not yet finished; `stopping` is reported from this. */
+    private val pendingTransitions = AtomicInteger(0)
+
+    /** Set by [shutdown]; once true nothing starts again for the rest of the load. */
+    @Volatile
+    private var terminated = false
 
     // Finding #7 (BApp #231): SSRF out-of-band confirmation is asynchronous. A single shared
     // Collaborator client + one scheduled poller replace the old per-target client that blocked a
@@ -108,6 +128,8 @@ class ActiveAiScanner(
     private val oastLock = ReentrantLock()
     private var collaboratorClient: CollaboratorClient? = null
     private val pendingOast = ConcurrentHashMap<String, PendingOast>()
+
+    @Volatile
     private var oastPoller: ScheduledExecutorService? = null
 
     // Quick 261008-vau: one baseline per original request, shared by all of its targets (points x
@@ -140,7 +162,11 @@ class ActiveAiScanner(
             RegexOption.IGNORE_CASE,
         )
 
+    // Written under lifecycleLock, read by the scheduler tick, the settings setters and getStatus.
+    @Volatile
     private var executor: ExecutorService? = null
+
+    @Volatile
     private var scheduledExecutor: ScheduledExecutorService? = null
 
     // Configurable limits
@@ -159,12 +185,75 @@ class ActiveAiScanner(
     var useCollaborator: Boolean = false
     var maxQueueSize: Int = Defaults.ACTIVE_SCAN_MAX_QUEUE_SIZE
 
+    /**
+     * Turns the scanner on or off and returns once the transition is done. For the load path and tests:
+     * an OFF waits (bounded) for busy workers, so NEVER call it on the EDT; UI code calls
+     * [requestEnabled].
+     *
+     * Idempotent (Phase 33 / D-01): ON while the scanner already runs keeps the running pools, the
+     * shared baselines and the pending Collaborator confirmations; OFF on a stopped scanner only drops
+     * what is left of them.
+     */
     fun setEnabled(value: Boolean) {
         enabled.set(value)
-        if (value) {
-            startProcessing()
-        } else {
-            stopProcessing()
+        lifecycleLock.withLock { applyCurrentIntent() }
+    }
+
+    /**
+     * Phase 33 / D-04, EDT-01 — the non-blocking toggle for UI callers.
+     *
+     * Records the intent at once (so [isEnabled] and [getStatus] answer it immediately) and runs the start
+     * or stop on the daemon `burp-ai-agent-scan-lifecycle` thread. While an OFF is in progress
+     * [ActiveScannerStatus.stopping] is true, so the UI can show "Stopping…". Requests run one at a time
+     * in the order they were made, and each applies the intent current when it runs, so the final state
+     * follows the latest request. [onSettled] runs on the lifecycle thread once this request's transition
+     * finished (or at once after [shutdown]); a throw from it is ignored.
+     *
+     * Never takes the lifecycle lock on the calling thread.
+     */
+    fun requestEnabled(
+        value: Boolean,
+        onSettled: (() -> Unit)? = null,
+    ) {
+        enabled.set(value)
+        pendingTransitions.incrementAndGet()
+        val transition =
+            Runnable {
+                try {
+                    lifecycleLock.withLock { applyCurrentIntent() }
+                } finally {
+                    pendingTransitions.decrementAndGet()
+                    onSettled?.let { runCatching { it() } }
+                }
+            }
+        try {
+            lifecycle.execute(transition)
+        } catch (_: RejectedExecutionException) {
+            // INTENTIONAL: the scanner was shut down (unload); there is nothing left to start or stop.
+            pendingTransitions.decrementAndGet()
+            onSettled?.let { runCatching { it() } }
+        }
+    }
+
+    /** Applies the current intent. The caller holds [lifecycleLock]. */
+    private fun applyCurrentIntent() {
+        if (enabled.get()) startIfIdle() else stopProcessing()
+    }
+
+    /** Starts the pools unless they already run or the scanner was shut down. The caller holds [lifecycleLock]. */
+    private fun startIfIdle() {
+        if (enabled.get() && !scanning.get() && !terminated) startProcessing()
+    }
+
+    /**
+     * A manual scan asks for processing without starting it inline (EDT-01): the start is handed to the
+     * lifecycle thread, so a manual scan run on the EDT while a stop is in progress does not wait for it.
+     */
+    private fun requestProcessing() {
+        try {
+            lifecycle.execute { lifecycleLock.withLock { startIfIdle() } }
+        } catch (_: RejectedExecutionException) {
+            // INTENTIONAL: the scanner was shut down (unload); nothing may start now.
         }
     }
 
@@ -202,6 +291,8 @@ class ActiveAiScanner(
             scansCompleted = scansCompleted.get(),
             vulnsConfirmed = vulnsConfirmed.get(),
             currentTarget = currentTarget.get(),
+            // Phase 33 / D-04: an OFF request is queued or running on the lifecycle thread.
+            stopping = !enabled.get() && pendingTransitions.get() > 0,
             // Phase 31 / D-02: computed from the live policy on every refresh (local, no request).
             aiGatePaused = enabled.get() && supervisor.refusalForSavedBackend(getSettings().preferredBackendId) != null,
         )
@@ -302,7 +393,7 @@ class ActiveAiScanner(
         if (queued > 0) {
             api.logging().logToOutput("[ActiveAiScanner] Manual active scan: $queued targets queued")
             if (!scanning.get() && enabled.get()) {
-                startProcessing()
+                requestProcessing()
             }
         }
 
@@ -355,7 +446,7 @@ class ActiveAiScanner(
                         "${insertionPoint.type}:${insertionPoint.name}",
                 )
             if (!scanning.get() && enabled.get()) {
-                startProcessing()
+                requestProcessing()
             }
         }
 
@@ -400,7 +491,7 @@ class ActiveAiScanner(
         if (queued.isNotEmpty()) {
             api.logging().logToOutput("[ActiveAiScanner] Suggested targets: ${queued.size} queued by the user")
             if (!scanning.get() && enabled.get()) {
-                startProcessing()
+                requestProcessing()
             }
         }
 
@@ -455,22 +546,16 @@ class ActiveAiScanner(
         processedTargets.clear()
     }
 
+    /** Builds and starts the pools. The caller holds [lifecycleLock]. */
     private fun startProcessing() {
-        stopProcessing()
+        if (executor != null || scheduledExecutor != null || oastPoller != null) stopProcessing()
         scanning.set(true)
 
-        // REL-07 / SC6: naming only — sizes, intervals and every other argument are unchanged. A
-        // Burp thread dump taken mid-scan has to say which subsystem owns each thread, and an
-        // anonymous `pool-N-thread-M` says nothing.
-        val workerThreadCounter = AtomicInteger(0)
-        executor =
-            Executors.newFixedThreadPool(maxConcurrent) { runnable ->
-                Thread(runnable, "burp-ai-agent-scan-worker-${workerThreadCounter.incrementAndGet()}").apply { isDaemon = true }
-            }
-        scheduledExecutor =
-            Executors.newSingleThreadScheduledExecutor { runnable ->
-                Thread(runnable, "burp-ai-agent-scan-scheduler").apply { isDaemon = true }
-            }
+        // REL-07 / SC6, Phase 33 / D-11: every pool comes from the thread helper, so a Burp thread dump
+        // taken mid-scan names the subsystem that owns each daemon thread (burp-ai-agent-scan-worker-N,
+        // burp-ai-agent-scan-scheduler, burp-ai-agent-oast-poller).
+        executor = ExtensionThreads.fixedPool("scan-worker", maxConcurrent)
+        scheduledExecutor = ExtensionThreads.scheduled("scan-scheduler")
 
         // REL-06: routed through scheduleGuarded so a throw on one tick cannot silently cancel the
         // queue drain for the rest of the Burp session. See util/GuardedScheduling.kt for the full
@@ -486,10 +571,7 @@ class ActiveAiScanner(
 
         // Single poller for out-of-band (Collaborator) confirmations — polls every 60 s and matches
         // interactions against pending payloads, so no scanner thread blocks waiting (BApp #231).
-        oastPoller =
-            Executors.newSingleThreadScheduledExecutor { runnable ->
-                Thread(runnable, "burp-ai-agent-oast-poller").apply { isDaemon = true }
-            }
+        oastPoller = ExtensionThreads.scheduled("oast-poller")
         oastPoller?.scheduleWithFixedDelay({
             try {
                 pollOastInteractions()
@@ -499,21 +581,41 @@ class ActiveAiScanner(
         }, OAST_POLL_INTERVAL_SECONDS, OAST_POLL_INTERVAL_SECONDS, TimeUnit.SECONDS)
     }
 
-    private fun stopProcessing() {
+    /**
+     * Stops the pools (idempotent). The caller holds [lifecycleLock].
+     *
+     * `shutdownNow()` interrupts the workers, and the payload loops honour the interrupt (D-02). With
+     * [waitForWorkers] the worker and scheduler pools then get ONE shared [TOGGLE_STOP_BUDGET_MS] wait
+     * (the toggle path; it runs on the lifecycle thread or a non-EDT caller). [shutdown] passes false and
+     * waits on the unload deadline instead.
+     *
+     * D-03: pending Collaborator confirmations, the shared baselines and the Collaborator client are
+     * dropped here, on disable and unload only; a settings change no longer comes through here.
+     */
+    private fun stopProcessing(waitForWorkers: Boolean = true) {
         scanning.set(false)
-        executor?.shutdownNow()
-        scheduledExecutor?.shutdownNow()
-        oastPoller?.shutdownNow()
-        try {
-            executor?.awaitTermination(5, TimeUnit.SECONDS)
-            scheduledExecutor?.awaitTermination(5, TimeUnit.SECONDS)
-        } catch (_: InterruptedException) {
-            // INTENTIONAL: thread interrupt during executor shutdown; interrupt flag restored
-            Thread.currentThread().interrupt()
+        val workers = executor
+        val scheduler = scheduledExecutor
+        val poller = oastPoller
+        workers?.shutdownNow()
+        scheduler?.shutdownNow()
+        poller?.shutdownNow()
+        if (waitForWorkers) {
+            val budget = ShutdownDeadline(TOGGLE_STOP_BUDGET_MS)
+            try {
+                workers?.awaitTermination(budget.remainingMs(), TimeUnit.MILLISECONDS)
+                scheduler?.awaitTermination(budget.remainingMs(), TimeUnit.MILLISECONDS)
+            } catch (_: InterruptedException) {
+                // INTENTIONAL: thread interrupt during executor shutdown; interrupt flag restored
+                Thread.currentThread().interrupt()
+            }
         }
         executor = null
         scheduledExecutor = null
         oastPoller = null
+        // Pools that stopped leave the helper's tracking; one still running stays tracked so the
+        // unload sweep forces and reports it.
+        listOfNotNull(workers, scheduler, poller).filter { it.isTerminated }.forEach { ExtensionThreads.release(it) }
         // Abandon any pending OOB confirmations, drop the shared baselines and drop the shared
         // client for a clean restart.
         pendingOast.clear()
@@ -1793,21 +1895,65 @@ class ActiveAiScanner(
 
     private fun extractInjectionPoints(requestResponse: HttpRequestResponse): List<InjectionPoint> = InjectionPointExtractor.extract(requestResponse.request(), headerInjectionAllowlist)
 
-    fun shutdown() {
+    /** Unload with a fresh shared deadline; see the overload. */
+    fun shutdown() = shutdown(ShutdownDeadline.unload())
+
+    /**
+     * Phase 33 / D-05 — stops the scanner for good within the shared unload [deadline].
+     *
+     * Nothing starts again afterwards ([setEnabled] and [requestEnabled] become no-ops). The worker and
+     * scheduler pools are interrupted and awaited only for what is left of [deadline]; one that does not
+     * stop is forced and reported with one Error line. The per-request pool is `shutdownNow()`'d but NOT
+     * awaited: a Montoya request in flight cannot be interrupted, and the final unload sweep waits for it
+     * once. Queued lifecycle requests still run (they can no longer start anything) so their callbacks
+     * fire.
+     */
+    fun shutdown(deadline: ShutdownDeadline) {
+        terminated = true
         enabled.set(false)
-        stopProcessing()
-        executor?.shutdownNow()
-        scheduledExecutor?.shutdownNow()
-        requestExecutor.shutdown()
-        try {
-            if (!requestExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
-                requestExecutor.shutdownNow()
+        val logError: (String) -> Unit = { line -> runCatching { api.logging().logToError(line) } }
+        val workers = executor
+        val scheduler = scheduledExecutor
+        withLifecycleLockWithin(deadline) { stopProcessing(waitForWorkers = false) }
+        workers?.let { deadline.awaitOrForce(it, "Active scanner workers", logError) }
+        scheduler?.let { deadline.awaitOrForce(it, "Active scanner scheduler", logError) }
+        requestExecutor.shutdownNow()
+        lifecycle.shutdown()
+        deadline.awaitOrForce(lifecycle, "Active scanner lifecycle", logError)
+        listOfNotNull(workers, scheduler, lifecycle).forEach { ExtensionThreads.release(it) }
+    }
+
+    /**
+     * Runs [block] holding [lifecycleLock] when it can be taken before [deadline]; otherwise runs it
+     * anyway. At unload a toggle stop that still holds the lock must not eat the whole budget, and every
+     * step of the disable transition is safe to repeat.
+     */
+    private fun withLifecycleLockWithin(
+        deadline: ShutdownDeadline,
+        block: () -> Unit,
+    ) {
+        val locked =
+            try {
+                lifecycleLock.tryLock(deadline.remainingMs(), TimeUnit.MILLISECONDS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                false
             }
-        } catch (_: InterruptedException) {
-            // INTENTIONAL: thread interrupt on executor shutdown; shutdownNow() for immediate termination
-            requestExecutor.shutdownNow()
+        try {
+            block()
+        } finally {
+            if (locked) lifecycleLock.unlock()
         }
     }
+
+    /** The live worker pool, or null while the scanner is stopped. Tests only. */
+    internal fun workerPoolForTests(): ThreadPoolExecutor? = executor as? ThreadPoolExecutor
+
+    /** How many shared baselines are cached. Tests only. */
+    internal fun baselineCacheSizeForTests(): Int = baselineCache.size()
+
+    /** How many Collaborator confirmations are pending. Tests only. */
+    internal fun pendingOastCountForTests(): Int = pendingOast.size
 }
 
 /**
@@ -1818,15 +1964,12 @@ class ActiveAiScanner(
  * owns the stuck threads instead of showing an anonymous `pool-N-thread-M`. That readability is the
  * stated point of SC6; an unnamed bounded pool would satisfy the ceiling and none of the diagnosis.
  *
- * The counter is per factory instance, so each pool numbers its own threads from 1.
+ * Phase 33 / D-11: the thread helper builds the threads (`ExtensionThreads.factory("scan-request")`), the
+ * same factory the live pool gets from `ExtensionThreads.boundedPool("scan-request", ...)`. The counter
+ * is per factory instance, so each pool numbers its own threads from 1.
  *
  * Visibility: `internal` so `ScanRequestExecutorTest` can assert on the names and the daemon flag by
  * calling this directly, with no live pool and no reflection (same pattern as `buildTimeoutMessage`
  * / `CliTimeoutMessageTest`). Not part of the scanner's public surface.
  */
-internal fun scanRequestThreadFactory(): ThreadFactory {
-    val counter = AtomicInteger(0)
-    return ThreadFactory { runnable ->
-        Thread(runnable, "burp-ai-agent-scan-request-${counter.incrementAndGet()}").apply { isDaemon = true }
-    }
-}
+internal fun scanRequestThreadFactory(): ThreadFactory = ExtensionThreads.factory("scan-request")
