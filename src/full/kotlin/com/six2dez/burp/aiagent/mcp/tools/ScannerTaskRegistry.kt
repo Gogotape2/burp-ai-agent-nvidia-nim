@@ -74,6 +74,9 @@ object ScannerTaskRegistry {
 
     internal val ttlMillisForTests: Long get() = ttlMs.get()
 
+    /** The raw entry count, expired entries included: tests read it to prove a prune happened without a `get`. */
+    internal fun sizeForTests(): Int = idToTask.size
+
     private fun cleanupExpired() {
         val now = System.currentTimeMillis()
         var removed = 0
