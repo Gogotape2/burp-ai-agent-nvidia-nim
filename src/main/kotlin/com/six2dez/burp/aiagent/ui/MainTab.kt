@@ -1111,43 +1111,36 @@ class MainTab(
     /**
      * Phase 33 / D-06, LIFE-01 — unload step 4, after MCP, the scanners and the backends stopped: tears
      * the UI down. Swing state is touched on the EDT; the health pool is stopped without waiting.
-     * [deadline] is the shared unload budget (D-05): nothing here waits on it, the final sweep does.
+     * [deadline] is the shared unload budget (D-05). WR-03: both EDT waits here, the tab-pane listener
+     * removal and the chat teardown, are bounded by what is left of it; a part the EDT did not tear
+     * down in time writes one Error line naming it (D-09), and its teardown still runs once the EDT is
+     * free.
      */
-    fun dispose(
-        @Suppress("UnusedParameter") deadline: ShutdownDeadline,
-    ) {
+    fun dispose(deadline: ShutdownDeadline) {
         // Phase 32 / D-13: no queue dialog or queue refresh timer outlives the extension.
         ActiveScanQueuePanel.disposeOpenDialogs()
-        removeTabPaneListener()
+        removeTabPaneListener(deadline)
         // No wait and no release: a health check in flight is a Montoya request that cannot be
         // interrupted. The pool stays tracked, so the final unload sweep waits for it within the
         // deadline and reports it only if it outlives the deadline.
         healthExec.shutdownNow()
         sessionPersistTimer?.stop()
         sessionPersistTimer = null
-        chatPanel.shutdown()
+        chatPanel.shutdown(deadline)
         chatPanel.saveSessions()
         aiLoggerPanel?.shutdown()
     }
 
-    /** LIFE-01: removes the listener this tab added to Burp's tab pane, on the EDT. */
-    private fun removeTabPaneListener() {
-        val work = {
+    /**
+     * LIFE-01: removes the listener this tab added to Burp's tab pane, on the EDT. WR-03: waits for the
+     * EDT at most what is left of [deadline].
+     */
+    private fun removeTabPaneListener(deadline: ShutdownDeadline) {
+        EdtTeardown.runWithin("MainTab", deadline, { api.logging().logToError(it) }) {
             tabPaneListener?.let { listener -> tabbedPane?.removeChangeListener(listener) }
             tabPaneListener = null
             // tabbedPane stays set on purpose: a late setAttention then finds it attached and adds no
             // new listener.
-        }
-        if (SwingUtilities.isEventDispatchThread()) {
-            work()
-        } else {
-            try {
-                SwingUtilities.invokeAndWait(work)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-            } catch (_: java.lang.reflect.InvocationTargetException) {
-                // Swallow: dispose must not throw out of the unload handler.
-            }
         }
     }
 }

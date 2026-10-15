@@ -36,6 +36,7 @@ import com.six2dez.burp.aiagent.ui.components.ToolInvocationDialog
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
 import com.six2dez.burp.aiagent.util.BudgetGuard
 import com.six2dez.burp.aiagent.util.GuardedBy
+import com.six2dez.burp.aiagent.util.ShutdownDeadline
 import com.six2dez.burp.aiagent.util.TokenTracker
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -918,8 +919,9 @@ class ChatPanel(
      * around it used to suggest otherwise.
      *
      * **What actually holds REL-01 is the callers.** Every entry point reachable off the EDT marshals
-     * before it touches a guarded map — the unload path is the documented example, wrapping its whole
-     * teardown block in `invokeAndWait` because Burp's unload handler runs on a Montoya thread. The
+     * before it touches a guarded map, with `invokeAndWait` or a posted block — the unload path is the
+     * documented example, handing its whole teardown block to the EDT through `EdtTeardown` (bounded by
+     * the unload deadline, WR-03) because Burp's unload handler runs on a Montoya thread. The
      * evidence that the discipline holds is `ChatPanelEdtConfinementTest`, not this function. If you
      * meet a violation, fix the CALLER by marshalling onto the EDT; do not expect this to have caught
      * it in the field.
@@ -1209,9 +1211,10 @@ class ChatPanel(
      *
      * REL-01: reads `sessionsList.selectedValue` / `sessionPanels` (both `@GuardedBy("EDT")`)
      * and mutates Swing (`setSendingState`, `panel.addMessage`), so it MUST run on the EDT.
-     * Callers reachable off the EDT must marshal with `invokeAndWait` before calling it — the unload
-     * path is the worked example, and it is the one that matters most, because Burp's unload handler
-     * runs on a Montoya thread rather than the EDT.
+     * Callers reachable off the EDT must marshal with `invokeAndWait` before calling it. The unload
+     * path, the one that matters most because Burp's unload handler runs on a Montoya thread rather
+     * than the EDT, marshals through `EdtTeardown` instead, so its wait is bounded by the unload
+     * deadline (WR-03).
      *
      * That marshalling is the whole of the guarantee. The check on the first line is a development-time
      * aid the JVM disables without `-ea`, so it catches nothing in a shipped Burp; see its KDoc.
@@ -1831,39 +1834,38 @@ class ChatPanel(
     /** Project-scoped storage: extensionData() is saved inside the .burp project file. */
     private fun projectData(): burp.api.montoya.persistence.PersistedObject = api.persistence().extensionData()
 
-    fun shutdown() {
-        // REL-01: shutdown() is wired to Burp's unload handler, which runs on a Montoya/Burp
-        // thread, NOT the EDT. cancelInFlightRequest() + stopAllTimers() touch @GuardedBy("EDT")
-        // maps and Swing, so marshal onto the EDT. Use invokeAndWait so unload is synchronous
-        // (Burp may tear down the classloader right after), guarded against EDT re-entrancy.
-        val work = {
-            // Teardown path 5 of 5. Inside the marshalled block because pendingDecisions is
-            // @GuardedBy("EDT") like every other session map here. No backend turn is started from
-            // this path: dispatching a request while Burp tears down the extension classloader is how
-            // a safety control turns into an unload hang (T-22-33).
-            //
-            // A RUNNING tool worker is superseded through the in-flight cancel below, which takes the
-            // running-tool token — this path needs no second take() of its own (D-08). And it
-            // deliberately does not WAIT for that worker: a bounded join here would put the same
-            // ten-second blocking wait back on the EDT that plan 23-03 removed from the Settings save
-            // path. What makes that safe is the daemon flag OffEdtDispatch sets explicitly — a daemon
-            // thread never holds JVM exit open — plus the supersede, which is what stops the worker's
-            // tail writing into a panel whose classloader is being torn down.
-            resolveAllPending(ImplicitDenyReason.UNLOAD)
-            cancelInFlightRequest()
-            sessionPanels.values.forEach { it.stopAllTimers() }
-        }
-        if (SwingUtilities.isEventDispatchThread()) {
-            work()
-        } else {
-            try {
-                SwingUtilities.invokeAndWait(work)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-            } catch (_: java.lang.reflect.InvocationTargetException) {
-                // Swallow: shutdown must not throw out of the unload handler.
-            }
-        }
+    /**
+     * Unload step 4 (`MainTab.dispose`). REL-01: Burp's unload handler runs on a Montoya/Burp thread,
+     * NOT the EDT, and [unloadTeardown] touches @GuardedBy("EDT") maps and Swing, so it is still
+     * marshalled onto the EDT. WR-03 / D-05: the wait for the EDT is bounded by what is left of the
+     * shared unload [deadline] instead of an unbounded block; when the EDT does not run the teardown in
+     * time this writes one Error line naming the chat panel (D-09) and returns, and the teardown still
+     * runs once the EDT is free. Called on the EDT it runs inline.
+     */
+    fun shutdown(deadline: ShutdownDeadline = ShutdownDeadline.unload()) {
+        EdtTeardown.runWithin("Chat panel", deadline, { api.logging().logToError(it) }) { unloadTeardown() }
+    }
+
+    /**
+     * EDT only. The unload teardown both [shutdown] (step 4, bounded) and the step-0 cancel run. It is
+     * idempotent: a second run finds no pending card, no turn in flight and no running timer.
+     */
+    private fun unloadTeardown() {
+        // Teardown path 5 of 5. Inside the marshalled block because pendingDecisions is
+        // @GuardedBy("EDT") like every other session map here. No backend turn is started from
+        // this path: dispatching a request while Burp tears down the extension classloader is how
+        // a safety control turns into an unload hang (T-22-33).
+        //
+        // A RUNNING tool worker is superseded through the in-flight cancel below, which takes the
+        // running-tool token — this path needs no second take() of its own (D-08). And it
+        // deliberately does not WAIT for that worker: a bounded join here would put the same
+        // ten-second blocking wait back on the EDT that plan 23-03 removed from the Settings save
+        // path. What makes that safe is the daemon flag OffEdtDispatch sets explicitly — a daemon
+        // thread never holds JVM exit open — plus the supersede, which is what stops the worker's
+        // tail writing into a panel whose classloader is being torn down.
+        resolveAllPending(ImplicitDenyReason.UNLOAD)
+        cancelInFlightRequest()
+        sessionPanels.values.forEach { it.stopAllTimers() }
     }
 
     /**

@@ -83,7 +83,7 @@ class ActiveScanQueuePanelUnloadTest {
         assertTrue(quiesce.contains("settingsPanel.shutdown()"), quiesce)
         assertTrue(dispose.contains("ActiveScanQueuePanel.disposeOpenDialogs()"), dispose)
         assertTrue(
-            dispose.indexOf("ActiveScanQueuePanel.disposeOpenDialogs()") < dispose.indexOf("chatPanel.shutdown()"),
+            dispose.indexOf("ActiveScanQueuePanel.disposeOpenDialogs()") < dispose.indexOf("chatPanel.shutdown("),
             "the queue dialogs close first in dispose",
         )
     }

@@ -25,14 +25,18 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertTimeoutPreemptively
 import org.junit.jupiter.api.io.TempDir
 import org.mockito.Answers
+import org.mockito.kotlin.anyOrNull
+import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import java.nio.file.Path
 import java.time.Duration
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.JTabbedPane
 import javax.swing.SwingUtilities
@@ -52,6 +56,13 @@ class MainTabUnloadTest {
     private val tabs = CopyOnWriteArrayList<MainTab>()
     private val supervisors = CopyOnWriteArrayList<AgentSupervisor>()
 
+    // Every Error line any MainTab built by this test writes (newApi captures them).
+    private val errors = CopyOnWriteArrayList<String>()
+
+    // A latch a test uses to hold the EDT busy; released in disposeEverything as well, so a failing case
+    // cannot wedge the EDT for the tests after it.
+    private val edtRelease = CountDownLatch(1)
+
     @BeforeEach
     fun isolateProfiles() {
         AgentProfileLoader.setBaseDirForTests(profileHome)
@@ -59,6 +70,7 @@ class MainTabUnloadTest {
 
     @AfterEach
     fun disposeEverything() {
+        edtRelease.countDown()
         tabs.forEach { tab ->
             runCatching {
                 tab.quiesce()
@@ -134,6 +146,106 @@ class MainTabUnloadTest {
         }
     }
 
+    /**
+     * WR-03 / D-05 / D-09 — with the EDT busy, dispose waits on it only within the shared deadline, then
+     * names each part whose teardown did not run in time, once, and returns. The posted teardown still
+     * runs on the EDT once it is free (D-06), so the listener is removed in the end.
+     */
+    @Test
+    fun disposeWithTheEdtBusyReturnsWithinItsDeadlineAndNamesWhatDidNotStop() {
+        val tab = newMainTab()
+        val pane = placeInTabbedPane(tab)
+        val listenersBefore = onEdt { pane.changeListeners.size }
+        onEdt { tab.attachTabPaneForTests() }
+        assertEquals(listenersBefore + 1, onEdt { pane.changeListeners.size }, "attaching adds exactly one listener")
+
+        try {
+            holdEdtBusy()
+            assertTimeoutPreemptively(Duration.ofSeconds(AWAIT_SECONDS), "dispose must not wait on a busy EDT past its deadline") {
+                tab.quiesce()
+                tab.dispose(ShutdownDeadline(BUSY_EDT_BUDGET_MS))
+            }
+            tabs.remove(tab)
+        } finally {
+            edtRelease.countDown()
+        }
+        onEdt { }
+
+        assertEquals(
+            1,
+            errors.count { it == ShutdownDeadline.deadlineMissed("MainTab") },
+            "exactly one MainTab deadline line: $errors",
+        )
+        assertEquals(
+            1,
+            errors.count { it == ShutdownDeadline.deadlineMissed("Chat panel") },
+            "exactly one Chat panel deadline line: $errors",
+        )
+        assertEquals(listenersBefore, onEdt { pane.changeListeners.size }, "the late teardown still removes the listener")
+    }
+
+    @Test
+    fun edtTeardownOnTheEdtRunsTheWorkInline() {
+        val lines = CopyOnWriteArrayList<String>()
+        val (returned, ranInline) =
+            onEdt {
+                var ran = false
+                val ok = EdtTeardown.runWithin("Inline", ShutdownDeadline(DISPOSE_BUDGET_MS), { lines += it }) { ran = true }
+                ok to ran
+            }
+
+        assertTrue(returned, "runWithin on the EDT reports the work done")
+        assertTrue(ranInline, "the work ran before runWithin returned, so it ran inline and did not wait on itself")
+        assertTrue(lines.isEmpty(), "a clean teardown writes nothing: $lines")
+    }
+
+    @Test
+    fun edtTeardownFromAWorkerRunsTheWorkOnTheEdtAndWritesNothing() {
+        val lines = CopyOnWriteArrayList<String>()
+        val ranOnEdt = AtomicReference<Boolean>()
+
+        val returned =
+            EdtTeardown.runWithin("Worker", ShutdownDeadline(DISPOSE_BUDGET_MS), { lines += it }) {
+                ranOnEdt.set(SwingUtilities.isEventDispatchThread())
+            }
+
+        assertTrue(returned, "the EDT was free, so the work finished within the deadline")
+        assertEquals(true, ranOnEdt.get(), "the work ran on the EDT")
+        assertTrue(lines.isEmpty(), "a clean teardown writes nothing: $lines")
+    }
+
+    @Test
+    fun edtTeardownReportsAThrowingWorkOnceAndTheWaiterStillReturns() {
+        val lines = CopyOnWriteArrayList<String>()
+
+        assertTimeoutPreemptively(Duration.ofSeconds(1), "a throwing work must still release the waiter") {
+            EdtTeardown.runWithin("Boom part", ShutdownDeadline(DISPOSE_BUDGET_MS), { lines += it }) {
+                throw IllegalStateException("boom")
+            }
+        }
+
+        assertEquals(listOf("Boom part shutdown failed: boom"), lines.toList())
+    }
+
+    @Test
+    fun edtTeardownPostFromAWorkerNeverWaits() {
+        val lines = CopyOnWriteArrayList<String>()
+        val runs = AtomicInteger()
+        try {
+            holdEdtBusy()
+            assertTimeoutPreemptively(Duration.ofSeconds(1), "post must not wait on a busy EDT") {
+                EdtTeardown.post("Posted", { lines += it }) { runs.incrementAndGet() }
+            }
+            assertEquals(0, runs.get(), "the EDT is still busy, so the posted work has not run yet")
+        } finally {
+            edtRelease.countDown()
+        }
+        onEdt { }
+
+        assertEquals(1, runs.get(), "the posted work runs once the EDT is drained")
+        assertTrue(lines.isEmpty(), "a clean teardown writes nothing: $lines")
+    }
+
     private fun newMainTab(): MainTab {
         val api = newApi()
         val registry = BackendRegistry(api)
@@ -163,7 +275,24 @@ class MainTabUnloadTest {
         val preferences = InMemoryPreferences()
         val api: MontoyaApi = mock(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
         whenever(api.persistence().preferences()).thenReturn(preferences)
+        // Capture Error lines before construction, so every line the tab writes reaches [errors]. The
+        // deep-stubbed logging() is resolved first, for the same UnfinishedStubbingException reason.
+        val logging = api.logging()
+        doAnswer { invocation ->
+            errors += invocation.getArgument<String>(0)
+            null
+        }.whenever(logging).logToError(anyOrNull<String>())
         return api
+    }
+
+    /** Holds the EDT on [edtRelease]; returns once the EDT is inside the holding runnable. */
+    private fun holdEdtBusy() {
+        val entered = CountDownLatch(1)
+        SwingUtilities.invokeLater {
+            entered.countDown()
+            edtRelease.await(EDT_HOLD_SECONDS, TimeUnit.SECONDS)
+        }
+        assertTrue(entered.await(AWAIT_SECONDS, TimeUnit.SECONDS), "the EDT picked up the holding runnable")
     }
 
     private fun placeInTabbedPane(tab: MainTab): JTabbedPane =
@@ -200,6 +329,8 @@ class MainTabUnloadTest {
 
     private companion object {
         const val DISPOSE_BUDGET_MS = 5_000L
+        const val BUSY_EDT_BUDGET_MS = 300L
+        const val EDT_HOLD_SECONDS = 30L
         const val AWAIT_SECONDS = 5L
         const val POLL_MS = 25L
     }
