@@ -18,6 +18,7 @@ import com.six2dez.burp.aiagent.spi.AiAccessPolicy
 import com.six2dez.burp.aiagent.spi.BackendModelHint
 import com.six2dez.burp.aiagent.spi.PluginSettingsStore
 import com.six2dez.burp.aiagent.spi.Plugins
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import com.six2dez.burp.aiagent.util.HeaderParser
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicReference
@@ -890,8 +891,13 @@ class AgentSupervisor(
             // ENTIRE lifetime of the service process. Unbounded-duration work belongs on its own
             // dedicated, named daemon thread (Phase 23 D-05), never on a shared pool where it would
             // park a worker for as long as the service runs.
+            // Phase 23 D-05 / Phase 33 D-11: the thread is burp-ai-agent-service-<name> and daemon.
+            // ExtensionThreads sets the daemon flag explicitly on every thread it builds, so "a daemon
+            // thread never blocks unload" holds here without a separate isDaemon line: a non-daemon
+            // pump would keep the JVM alive after Burp quits. <name> is one of the two fixed service
+            // labels (ollama-serve, lmstudio-server), never user input.
             val pumpThread =
-                Thread({
+                ExtensionThreads.newThread("service-$name") {
                     try {
                         process.inputStream.bufferedReader().use { reader ->
                             reader.forEachLine { line ->
@@ -901,10 +907,7 @@ class AgentSupervisor(
                     } catch (e: Exception) {
                         safeLogOutput("[$name] output stream closed: ${e.message}")
                     }
-                }, "burp-ai-agent-service-$name")
-            // Phase 23 D-05: set explicitly. "A daemon thread never blocks unload" only holds if the
-            // flag is actually set — a non-daemon pump would keep the JVM alive after Burp quits.
-            pumpThread.isDaemon = true
+                }
             pumpThread.start()
             safeLogOutput("Started service: $name")
             true

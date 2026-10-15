@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.supervisor
 
 import com.six2dez.burp.aiagent.SourceRoots
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -23,43 +24,57 @@ import org.junit.jupiter.api.Test
  * through [SourceRoots.file], which fails when the file is in neither production root or in both, and
  * comment lines are stripped so the explanatory prose in `AgentSupervisor.kt` cannot satisfy or trip
  * the counts.
+ *
+ * **Phase 33 / D-11.** The pump is built by `ExtensionThreads.newThread("service-$name")`, which names
+ * it `burp-ai-agent-service-<name>` and sets the daemon flag explicitly on every thread it builds, so
+ * the source no longer carries a separate `isDaemon` line. The structural case pins the helper call;
+ * the behavioural case pins the resulting name and daemon flag for both fixed service labels.
  */
 class ServicePumpThreadTest {
     @Test
-    fun startServiceNamesItsStdoutPumpThreadOnceAndMarksItDaemon() {
+    fun startServiceBuildsItsStdoutPumpThreadOnceThroughTheHelperAndStartsIt() {
         val code = codeLinesOf(SUPERVISOR_SOURCE)
 
         assertEquals(
             1,
-            code.count { it.contains(SERVICE_THREAD_NAME_PREFIX) },
-            "REL-07 / SC6: `$SUPERVISOR_SOURCE` must name its service stdout pump thread exactly once, as " +
-                "`$SERVICE_THREAD_NAME_PREFIX<name>`. Zero occurrences means the pump went onto a pool or onto " +
+            code.count { it.contains(SERVICE_PUMP_BUILDER) },
+            "REL-07 / SC6: `$SUPERVISOR_SOURCE` must build its service stdout pump thread exactly once, " +
+                "through `$SERVICE_PUMP_BUILDER`. Zero occurrences means the pump went onto a pool or onto " +
                 "an anonymous thread, so a Burp thread dump no longer says which service owns it; more than " +
                 "one means a second pump was introduced without going through this guard.",
         )
 
         val body = startServiceBody(code)
-        assertTrue(
-            body.any { it.contains(SERVICE_THREAD_NAME_PREFIX) },
-            "REL-07 / SC6: the `$SERVICE_THREAD_NAME_PREFIX` thread must be created inside `startService`, " +
-                "the method that launches the service process whose stdout it drains.",
-        )
-
-        val daemonLine = body.indexOfFirst { it.contains(SERVICE_PUMP_DAEMON_FLAG) }
+        val builderLine = body.indexOfFirst { it.contains(SERVICE_PUMP_BUILDER) }
         val startLine = body.indexOfFirst { it.contains(SERVICE_PUMP_START) }
         assertTrue(
-            daemonLine >= 0,
-            "REL-07 / SC6 (T-24-19): the service pump thread must set `$SERVICE_PUMP_DAEMON_FLAG` " +
-                "explicitly. Phase 23 D-05 requires the flag be set rather than assumed: a non-daemon pump " +
-                "holds the JVM open after Burp quits.",
+            builderLine >= 0,
+            "REL-07 / SC6: the pump thread must be built inside `startService`, the method that launches " +
+                "the service process whose stdout it drains.",
         )
         assertTrue(
-            startLine > daemonLine,
-            "REL-07 / SC6: `$SERVICE_PUMP_START` must come after `$SERVICE_PUMP_DAEMON_FLAG`. " +
-                "`Thread.setDaemon` throws once the thread has started, so a start before the flag " +
-                "would fail every service launch. Found the flag at body line $daemonLine and the start " +
-                "at $startLine.",
+            startLine > builderLine,
+            "REL-07 / SC6: `$SERVICE_PUMP_START` must come after the pump is built. Found the builder at " +
+                "body line $builderLine and the start at $startLine.",
         )
+    }
+
+    @Test
+    fun theHelperNamesEveryServicePumpWithTheServicePrefixAndMarksItDaemon() {
+        SERVICE_LABELS.forEach { label ->
+            val pump = ExtensionThreads.newThread("service-$label") {}
+
+            assertEquals(
+                "$SERVICE_THREAD_NAME_PREFIX$label",
+                pump.name,
+                "REL-07 / SC6: the `$label` pump must be named `$SERVICE_THREAD_NAME_PREFIX<name>` in a thread dump",
+            )
+            assertTrue(
+                pump.isDaemon,
+                "REL-07 / SC6 (T-24-19): the `$label` pump must be daemon: a non-daemon pump holds the JVM " +
+                    "open after Burp quits (Phase 23 D-05).",
+            )
+        }
     }
 
     /** The code lines of `startService`, from its declaration up to the next function declaration. */
@@ -92,8 +107,9 @@ class ServicePumpThreadTest {
     private companion object {
         const val SUPERVISOR_SOURCE = "com/six2dez/burp/aiagent/supervisor/AgentSupervisor.kt"
         const val SERVICE_THREAD_NAME_PREFIX = "burp-ai-agent-service-"
-        const val SERVICE_PUMP_DAEMON_FLAG = "pumpThread.isDaemon = true"
+        const val SERVICE_PUMP_BUILDER = "ExtensionThreads.newThread(\"service-\$name\")"
         const val SERVICE_PUMP_START = "pumpThread.start()"
+        val SERVICE_LABELS = listOf("ollama-serve", "lmstudio-server")
         const val START_SERVICE_DECLARATION = "private fun startService("
         val FUNCTION_DECLARATION = Regex("""^\s*(private |internal |override )*fun """)
     }

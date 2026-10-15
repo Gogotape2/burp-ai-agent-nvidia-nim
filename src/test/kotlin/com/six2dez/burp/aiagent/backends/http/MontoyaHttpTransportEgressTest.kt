@@ -77,7 +77,7 @@ class MontoyaHttpTransportEgressTest {
 
         assertTrue(onEdt.get(), "the post must run on the EDT for this test to mean anything")
         assertEquals(REFUSAL, thrown.get()?.message)
-        val offload = Thread.getAllStackTraces().keys.filter { it.name == "montoya-http-offedt" && it.isAlive }
+        val offload = Thread.getAllStackTraces().keys.filter { it.name == "burp-ai-agent-http-offedt" && it.isAlive }
         assertTrue(offload.isEmpty(), "a refused request must start no off-EDT worker, found $offload")
         assertEquals(0, recording.sendCount())
     }

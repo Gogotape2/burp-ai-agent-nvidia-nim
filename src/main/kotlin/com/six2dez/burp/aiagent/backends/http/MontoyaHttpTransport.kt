@@ -5,6 +5,7 @@ import burp.api.montoya.http.RequestOptions
 import burp.api.montoya.http.message.requests.HttpRequest
 import burp.api.montoya.http.message.responses.HttpResponse
 import com.six2dez.burp.aiagent.backends.HealthCheckResult
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import java.util.concurrent.ExecutionException
 import java.util.concurrent.FutureTask
 import java.util.concurrent.TimeUnit
@@ -122,9 +123,11 @@ class MontoyaHttpTransport private constructor(
                 // Burp throws "Extensions should not make HTTP requests in the Swing event dispatch
                 // thread" if sendRequest runs on the EDT (#80 — reached via the pre-send LM Studio /
                 // Ollama health check). Run it on a short-lived daemon worker and block for the
-                // result; the request is already bounded by timeoutMs.
+                // result; the request is already bounded by timeoutMs. The worker's name,
+                // burp-ai-agent-http-offedt, is the detector Phase 33's EDT tests look for: such a
+                // thread during an EDT-01 action means that action blocked the EDT on a request.
                 val task = FutureTask { api.http().sendRequest(request, options) }
-                Thread(task, "montoya-http-offedt").apply { isDaemon = true }.start()
+                ExtensionThreads.newThread("http-offedt", task).start()
                 try {
                     task.get(timeoutMs + EDT_OFFLOAD_GRACE_MS, TimeUnit.MILLISECONDS)
                 } catch (e: ExecutionException) {
