@@ -32,7 +32,9 @@ internal object ActiveScanPrompts {
                     JOptionPane.YES_NO_OPTION,
                 )
             if (enable == JOptionPane.YES_OPTION) {
-                activeAiScanner.setEnabled(true)
+                // Phase 33 EDT-01: requestEnabled sets the enabled intent at once, so the queue call that
+                // follows accepts targets, while processing starts on the scanner's lifecycle thread.
+                activeAiScanner.requestEnabled(true)
             } else {
                 return false
             }
