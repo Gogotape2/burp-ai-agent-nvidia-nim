@@ -164,7 +164,13 @@ class MainTab(
                 // Quick 261008-n0c (H10): the chat reads the applied snapshot and never saves or applies.
                 getSettings = { settingsRepo.load() },
                 validateBackend = { validateBackendCommand(it) },
-                ensureBackendReady = { ensureBackendReady(it) },
+                // Interim bridge (33-08 Task 1); Task 2 moves the prompt into confirmLocalServiceStart.
+                readiness =
+                    LocalServiceReadiness(
+                        backendHealth = { readinessProbe(it) },
+                        onProbed = { },
+                        onUnreachable = { ensureBackendReady(it) },
+                    ),
                 showError = { showError(it) },
                 onStatusChanged = { refreshStatus() },
                 onTurnSettled = { backendId, error -> onChatTurnSettled(backendId, error) },

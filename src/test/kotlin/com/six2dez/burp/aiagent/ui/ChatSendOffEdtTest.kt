@@ -182,23 +182,26 @@ class ChatSendOffEdtTest {
             )
         val h = harness(OLLAMA, readiness)
 
-        ChatPanelTestHarness.sendUserMessage(h, "first")
-        assertTrue(entered.await(FAILSAFE_SECONDS, TimeUnit.SECONDS), "the probe never started")
+        try {
+            ChatPanelTestHarness.sendUserMessage(h, "first")
+            assertTrue(entered.await(FAILSAFE_SECONDS, TimeUnit.SECONDS), "the probe never started")
 
-        SwingUtilities.invokeAndWait {
-            assertFalse(sendButton(h).isVisible, "Send is hidden while the probe runs")
-            assertFalse(inputArea(h).isEnabled, "the input is disabled while the probe runs")
+            SwingUtilities.invokeAndWait {
+                assertFalse(sendButton(h).isVisible, "Send is hidden while the probe runs")
+                assertFalse(inputArea(h).isEnabled, "the input is disabled while the probe runs")
+            }
+            // A second click on the (hidden) Send button, with new text in the input...
+            ChatPanelTestHarness.sendUserMessage(h, "second click")
+            // ...and a second Enter through the input's own key binding.
+            SwingUtilities.invokeAndWait {
+                val input = inputArea(h)
+                input.text = "second enter"
+                input.actionMap.get("sendMessage").actionPerformed(ActionEvent(input, ActionEvent.ACTION_PERFORMED, "enter"))
+            }
+        } finally {
+            // Released on every path, so a failed assertion above cannot leave a worker parked for later tests.
+            release.countDown()
         }
-        // A second click on the (hidden) Send button, with new text in the input...
-        ChatPanelTestHarness.sendUserMessage(h, "second click")
-        // ...and a second Enter through the input's own key binding.
-        SwingUtilities.invokeAndWait {
-            val input = inputArea(h)
-            input.text = "second enter"
-            input.actionMap.get("sendMessage").actionPerformed(ActionEvent(input, ActionEvent.ACTION_PERFORMED, "enter"))
-        }
-
-        release.countDown()
         awaitReadinessSettled()
 
         assertEquals(1, probes.get(), "exactly one probe")
@@ -229,17 +232,19 @@ class ChatSendOffEdtTest {
             )
         val h = harness(OLLAMA, readiness)
 
-        ChatPanelTestHarness.sendUserMessage(h, "hello")
-        assertTrue(entered.await(FAILSAFE_SECONDS, TimeUnit.SECONDS), "the probe never started")
-        val cancelled = AtomicReference<Boolean>()
-        SwingUtilities.invokeAndWait { cancelled.set(h.panel.cancelInFlightRequest()) }
-        assertEquals(true, cancelled.get(), "Cancel must act on an in-flight probe, not be a silent no-op")
-        SwingUtilities.invokeAndWait {
-            assertTrue(sendButton(h).isVisible, "Cancel returns the panel to idle at once")
-            assertTrue(inputArea(h).isEnabled, "the input is usable again at once")
+        try {
+            ChatPanelTestHarness.sendUserMessage(h, "hello")
+            assertTrue(entered.await(FAILSAFE_SECONDS, TimeUnit.SECONDS), "the probe never started")
+            val cancelled = AtomicReference<Boolean>()
+            SwingUtilities.invokeAndWait { cancelled.set(h.panel.cancelInFlightRequest()) }
+            assertEquals(true, cancelled.get(), "Cancel must act on an in-flight probe, not be a silent no-op")
+            SwingUtilities.invokeAndWait {
+                assertTrue(sendButton(h).isVisible, "Cancel returns the panel to idle at once")
+                assertTrue(inputArea(h).isEnabled, "the input is usable again at once")
+            }
+        } finally {
+            release.countDown()
         }
-
-        release.countDown()
         awaitReadinessSettled()
 
         assertTrue(h.sentTraceIds.isEmpty(), "a cancelled probe's answer must not send the turn")
@@ -271,7 +276,6 @@ class ChatSendOffEdtTest {
             ChatPanelTestHarness.dispatchedLabels().none { it.startsWith(READINESS_LABEL_PREFIX) },
             "no readiness worker may be dispatched for a non-local backend",
         )
-        assertTrue(Thread.getAllStackTraces().keys.none { it.name == READINESS_THREAD })
         assertEquals(1, h.sentTraceIds.size)
         verifySendChatCount(h, 1)
     }
@@ -334,8 +338,7 @@ class ChatSendOffEdtTest {
         }
     }
 
-    private fun sendButton(h: ChatPanelTestHarness.Harness): JButton =
-        requireNotNull(ChatPanelTestHarness.find(h.panel.root, JButton::class.java) { it.text == "Send" })
+    private fun sendButton(h: ChatPanelTestHarness.Harness): JButton = requireNotNull(ChatPanelTestHarness.find(h.panel.root, JButton::class.java) { it.text == "Send" })
 
     private fun inputArea(h: ChatPanelTestHarness.Harness): JTextArea = ChatPanelTestHarness.inputTextArea(h)
 

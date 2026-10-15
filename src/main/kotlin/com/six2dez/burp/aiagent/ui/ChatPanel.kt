@@ -6,6 +6,7 @@ import com.six2dez.burp.aiagent.audit.ActivityType
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.backends.AgentConnection
 import com.six2dez.burp.aiagent.backends.ChatMessage
+import com.six2dez.burp.aiagent.backends.HealthCheckResult
 import com.six2dez.burp.aiagent.backends.UsageAwareConnection
 import com.six2dez.burp.aiagent.backends.http.AiAccessRefusedException
 import com.six2dez.burp.aiagent.config.AgentSettings
@@ -119,7 +120,11 @@ class ChatPanel(
      */
     private val getSettings: () -> AgentSettings,
     private val validateBackend: (AgentSettings) -> String?,
-    private val ensureBackendReady: (AgentSettings) -> Boolean,
+    /**
+     * Phase 33 / EDT-01: the pre-send readiness check. Its probe runs off the EDT on
+     * `burp-ai-agent-chat-readiness`; its confirm step (the "start it now?" prompt) runs on the EDT.
+     */
+    private val readiness: ChatBackendReadiness = ChatBackendReadiness.ALWAYS_READY,
     private val showError: (String) -> Unit,
     private val onStatusChanged: () -> Unit,
     /**
@@ -144,6 +149,23 @@ class ChatPanel(
     private val runningTool = RunningToolTracker()
 
     @Volatile private var isSending = false
+
+    /**
+     * The readiness probes in flight (Phase 33 / EDT-01), one opaque token each, same idea as
+     * [runningTool]: a probe's EDT tail acts only while its token is still here, so a Cancel (or the
+     * unload path's cancel) that cleared the set makes the probe's answer a no-op. A set rather than one
+     * slot because a context-menu send can start a second probe, which must not silently drop the first.
+     */
+    @GuardedBy("EDT")
+    private val readinessProbes = mutableSetOf<Any>()
+
+    /**
+     * Trace ids whose readiness probe already confirmed, mapped to the probed backend. One-shot: the
+     * re-entered [sendMessage] consumes its entry, so it skips the probe exactly once. A marker rather
+     * than a parameter because `sendMessage`'s signature is detekt-baseline-keyed and cannot take a flag.
+     */
+    @GuardedBy("EDT")
+    private val readinessCleared = mutableMapOf<String, String>()
     private val inputArea = JTextArea(3, 24)
     private val newSessionBtn = JButton("New Session")
     private val privacyPill = PrivacyPill()
@@ -587,6 +609,9 @@ class ChatPanel(
     }
 
     private fun sendFromInput() {
+        // Phase 33 / EDT-01: while the readiness probe runs, Send is hidden and the input disabled, but a
+        // hidden button still answers doClick and a key binding can still be invoked. One probe, one turn.
+        if (readinessProbes.isNotEmpty()) return
         val text = inputArea.text.trim()
         if (text.isBlank()) return
         val session = sessionsList.selectedValue ?: createSession("Chat ${sessionsModel.size + 1}")
@@ -634,7 +659,16 @@ class ChatPanel(
             onTurnSettled(settings.preferredBackendId, AiAccessRefusedException(accessRefusal))
             return
         }
-        if (!ensureBackendReady(settings)) return
+        if (readiness.needsProbe(settings) && readinessCleared.remove(traceId) != settings.preferredBackendId) {
+            // Phase 33 / EDT-01: the probe reaches MontoyaHttpTransport, which on the EDT would offload the
+            // request and then block the EDT on it. So the probe runs on a named worker, and this call
+            // re-enters from the EDT tail once confirm() said yes, skipping the probe once through the
+            // one-shot readinessCleared marker. The turn is never sent before the answer, nor after a decline.
+            probeThenSend(settings, traceId) {
+                sendMessage(sessionId, userText, contextJson, allowToolCalls, actionName, onCompleted, toolIterationsLeft, traceId)
+            }
+            return
+        }
         val error = validateBackend(settings)
         if (error != null) {
             showError(error)
@@ -1122,6 +1156,55 @@ class ChatPanel(
     }
 
     /**
+     * Phase 33 / EDT-01: runs [readiness]'s probe for [settings] on `burp-ai-agent-chat-readiness` and,
+     * back on the EDT, calls [resend] only when `confirm` says the turn may go.
+     *
+     * The busy state is entered BEFORE the dispatch, so Send is hidden and the input disabled for the
+     * whole probe. The label is not the trace id: `ChatPanelTestHarness.chainTraceId` reads trace-id
+     * labels as chain tool workers.
+     */
+    private fun probeThenSend(
+        settings: AgentSettings,
+        traceId: String,
+        resend: () -> Unit,
+    ) {
+        val probe = Any()
+        readinessProbes.add(probe)
+        setSendingState(true)
+        OffEdtDispatch.run(
+            threadName = "burp-ai-agent-chat-readiness",
+            label = "chat readiness $traceId",
+            logError = { message -> api.logging().logToError(message) },
+            work = { readiness.probe(settings) },
+            onEdt = { result -> finishReadinessProbe(settings, traceId, probe, result, resend) },
+        )
+    }
+
+    /**
+     * The EDT tail of [probeThenSend]. A Cancel (or the unload path's cancel) that cleared
+     * [readinessProbes] makes the answer a no-op; a failed probe counts as unreachable.
+     */
+    private fun finishReadinessProbe(
+        settings: AgentSettings,
+        traceId: String,
+        probe: Any,
+        result: Result<HealthCheckResult>,
+        resend: () -> Unit,
+    ) {
+        if (!readinessProbes.remove(probe)) return
+        if (readinessProbes.isEmpty()) setSendingState(false)
+        val health = result.getOrElse { HealthCheckResult.Unavailable(it.message ?: "Health check failed") }
+        if (!readiness.confirm(settings, health)) return
+        readinessCleared[traceId] = settings.preferredBackendId
+        try {
+            resend()
+        } finally {
+            // Consumed by the re-entered call unless it returned before the readiness check.
+            readinessCleared.remove(traceId)
+        }
+    }
+
+    /**
      * Cancel the current in-flight AI request.
      *
      * REL-01: reads `sessionsList.selectedValue` / `sessionPanels` (both `@GuardedBy("EDT")`)
@@ -1142,7 +1225,10 @@ class ChatPanel(
         // nothing, which is the worst possible affordance on a security tool.
         val toolToken = runningTool.take() as? RunningToolToken
         val conn = inFlightConnection.take()
-        if (toolToken == null && conn == null) return false
+        // Phase 33 / EDT-01: a readiness probe in flight is cancelled too; its EDT tail then sends nothing.
+        val probeCancelled = readinessProbes.isNotEmpty()
+        readinessProbes.clear()
+        if (toolToken == null && conn == null && !probeCancelled) return false
         // S0 immediately. The user does not wait for the worker: Montoya's sendRequest takes no
         // cancellation token, so the worker runs to completion and its return lands in S4 instead
         // (finishApprovedToolCall's supersede branch — the token it holds no longer matches).
@@ -1160,7 +1246,8 @@ class ChatPanel(
         // existing line stays byte-identical; a tool call was NOT cancelled, so it gets a sibling that
         // says so. Telling a penetration tester their request was cancelled when it was actually sent to
         // the target is the kind of wrong that ends up in someone's report.
-        val line = if (conn != null) "Request cancelled." else toolCancelLine(requireNotNull(toolToken).tool)
+        // A cancelled readiness probe sent nothing anywhere, so it gets the backend-turn line.
+        val line = if (conn == null && toolToken != null) toolCancelLine(toolToken.tool) else "Request cancelled."
         panel.addMessage("System", line)
         return true
     }
