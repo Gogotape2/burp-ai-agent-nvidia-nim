@@ -118,8 +118,9 @@ class ChatPanelEdtConfinementTest {
                 "and the whole Burp UI freezes for as long as the call runs there.",
         )
         assertTrue(captured.isDaemon, "E9/D-08: a non-daemon worker can hold extension unload open.")
-        assertTrue(
-            captured.name.startsWith("burp-ai-tool"),
+        assertEquals(
+            "burp-ai-agent-tool-exec",
+            captured.name,
             "E9: a stuck worker must be identifiable in a thread dump. Thread name was '${captured.name}'.",
         )
     }
