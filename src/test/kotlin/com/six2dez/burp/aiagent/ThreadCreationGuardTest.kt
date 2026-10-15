@@ -3,7 +3,6 @@ package com.six2dez.burp.aiagent
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
-import java.io.File
 
 /**
  * Phase 33 / D-11, D-12, LIFE-03 — no production file outside the thread helper builds a thread, a pool,
@@ -169,7 +168,17 @@ class ThreadCreationGuardTest {
          * kotlin `thread(` matcher allows no space before the parenthesis, so prose like "a daemon thread
          * (Phase 23)" in a trailing comment never matches.
          */
-        // RED: no matcher yet.
-        val TOKENS: List<Pair<String, Regex>> = emptyList()
+        val TOKENS: List<Pair<String, Regex>> =
+            listOf(
+                THREAD to Regex("""(?<![A-Za-z0-9_.])Thread\s*[({]|\bjava\.lang\.Thread\s*[({]"""),
+                EXECUTORS to Regex("""\bExecutors\s*\.\s*new\w+\s*\("""),
+                RAW_POOL to Regex("""\b(Scheduled)?ThreadPoolExecutor\s*\("""),
+                THREAD_FACTORY to Regex("""\bThreadFactory\s*\{"""),
+                KOTLIN_THREAD to Regex("""(?<![A-Za-z0-9_.])thread\(|\bkotlin\.concurrent\.thread\b"""),
+                JAVA_TIMER to Regex("""\bjava\.util\.Timer\b|\bTimerTask\b"""),
+                SHARED_COROUTINES to
+                    Regex("""\bDispatchers\s*\.\s*(IO|Default)\b|\bGlobalScope\b|\bnew(SingleThread|FixedThreadPool)Context\b"""),
+                OTHER_POOLS to Regex("""\bForkJoinPool\b|\bSwingWorker\b|\b(supply|run)Async\s*[({]|\bparallelStream\b"""),
+            )
     }
 }
