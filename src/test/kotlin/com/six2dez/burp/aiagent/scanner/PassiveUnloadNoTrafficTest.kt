@@ -171,10 +171,10 @@ class PassiveUnloadNoTrafficTest {
             val sends = AtomicInteger(0)
             val inBackendCheck = CountDownLatch(1)
             val release = CountDownLatch(1)
-            stubRunningBackend(rig, sends) {
+            stubRunningBackend(rig, sends, beforeStatus = {
                 inBackendCheck.countDown()
                 awaitIgnoringInterrupts(release)
-            }
+            })
             assertEquals(1, rig.scanner.manualScan(listOf(rig.pageGet("late-send.example", smugglingIndicators = false))))
             assertTrue(inBackendCheck.await(WAIT_SECONDS, TimeUnit.SECONDS), "the analysis reached the backend check")
 
@@ -192,12 +192,35 @@ class PassiveUnloadNoTrafficTest {
     fun controlTheSameAnalysisSendsOnceWhenNoUnloadHappens() {
         PassiveScanCheckRig(singleRequestSettings()).use { rig ->
             val sends = AtomicInteger(0)
-            stubRunningBackend(rig, sends) {}
+            stubRunningBackend(rig, sends, beforeStatus = {})
 
             assertEquals(1, rig.scanner.manualScan(listOf(rig.pageGet("control-send.example", smugglingIndicators = false))))
             rig.drain()
 
             assertEquals(1, sends.get(), "without unload this path reaches supervisor.send, so the case above is not vacuous")
+        }
+    }
+
+    @Test
+    fun aSingleAnalysisWaitingForItsAnswerIsInterruptedQuietlyAtUnload() {
+        PassiveScanCheckRig(singleRequestSettings()).use { rig ->
+            val sends = AtomicInteger(0)
+            val inFlight = CountDownLatch(1)
+            // Like a real backend: send returns at once and the answer never comes, so the analysis waits.
+            stubRunningBackend(rig, sends, beforeStatus = {}) { inFlight.countDown() }
+            assertEquals(1, rig.scanner.manualScan(listOf(rig.pageGet("in-flight.example", smugglingIndicators = false))))
+            assertTrue(inFlight.await(WAIT_SECONDS, TimeUnit.SECONDS), "the analysis sent and is waiting")
+
+            assertTimeoutPreemptively(Duration.ofSeconds(5)) {
+                rig.scanner.shutdown(ShutdownDeadline(2_000))
+            }
+
+            assertEquals(1, sends.get(), "no further send after the interrupt")
+            assertEquals(
+                emptyList<String>(),
+                synchronized(rig.errors) { rig.errors.toList() },
+                "an analysis stopped by unload writes no Error line",
+            )
         }
     }
 
@@ -210,12 +233,14 @@ class PassiveUnloadNoTrafficTest {
 
     /**
      * Makes the rig's supervisor look like a running backend on the preferred id. [beforeStatus] runs on
-     * every `status()` call (the first call of the backend check); every send is counted and fails at once.
+     * every `status()` call (the first call of the backend check); every send is counted, then [onSend]
+     * runs with the send's `onComplete` (by default it fails the send at once).
      */
     private fun stubRunningBackend(
         rig: PassiveScanCheckRig,
         sends: AtomicInteger,
         beforeStatus: () -> Unit,
+        onSend: ((Throwable?) -> Unit) -> Unit = { onComplete -> onComplete(IllegalStateException("stub backend error")) },
     ) {
         whenever(rig.supervisor.currentSessionId()).thenReturn("session-under-test")
         whenever(rig.supervisor.status()).thenAnswer {
@@ -238,7 +263,7 @@ class PassiveUnloadNoTrafficTest {
             ),
         ).thenAnswer { invocation ->
             sends.incrementAndGet()
-            invocation.getArgument<(Throwable?) -> Unit>(ON_COMPLETE_ARG)(IllegalStateException("stub backend error"))
+            onSend(invocation.getArgument(ON_COMPLETE_ARG))
             Unit
         }
     }
