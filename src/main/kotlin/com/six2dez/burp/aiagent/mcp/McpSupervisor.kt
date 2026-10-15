@@ -258,6 +258,10 @@ class McpSupervisor(
     }
 
     private fun handleFailure(exception: Throwable) {
+        // WR-02: a failure that arrives after unload began (a start that was already binding) must not
+        // probe the port holder, POST /__mcp/shutdown to it or schedule a restart, and must spend none of
+        // the shared unload budget.
+        if (shuttingDown) return
         val settings = settingsRef.get() ?: return
         if (!settings.enabled) return
 

@@ -313,6 +313,10 @@ class KtorMcpServerManager(
                     api.logging().logToOutput("Started MCP server on ${settings.host}:${settings.port}")
                     callback(McpServerState.Running)
                 } catch (e: Exception) {
+                    // WR-02: a start that was superseded, or was binding when unload began, reports nothing.
+                    // The supervisor would otherwise answer a bind failure with a takeover POST to whatever
+                    // holds the port and schedule a restart. Mirrors the two checks around the bind.
+                    if (terminated || gen != generation.get()) return@start
                     api.logging().logToError(e)
                     callback(McpServerState.Failed(e))
                 }
