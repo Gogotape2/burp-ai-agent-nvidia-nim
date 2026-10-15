@@ -29,7 +29,6 @@ import org.mockito.Answers
 import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
-import java.io.File
 import java.lang.reflect.InvocationTargetException
 import burp.api.montoya.core.ByteArray as MontoyaByteArray
 
@@ -59,10 +58,15 @@ import burp.api.montoya.core.ByteArray as MontoyaByteArray
  *  - `mcp/tools/IssueCreateSupport.kt`: the native MCP `issue_create` tool, all four text fields,
  *    `issueCreate*`.
  *
- * The producer census ([everyIssueProducerIsKnownAndCallsTheSharedFormatter]) pins that set of files
- * and requires `IssueUtils.formatIssueDetailHtml(` in each. A new producer joins the census only
- * with a markup case of its own in this class. The census is an escaping census too: it is not the
- * D-28-06 / WR-01 cookie single-producer gate and must not be cited as closing it.
+ * The producer census ([everyIssueProducerIsKnownAndCallsTheSharedFormatter]) counts per call, not
+ * per file: it pins the number of non-comment `auditIssue(` calls in each producer file
+ * (`KNOWN_PRODUCERS`) and requires at least as many non-comment `IssueUtils.formatIssueDetailHtml(`
+ * calls in that file, so a second raw producer in a file that already escapes fails
+ * ([theCensusCatchesASecondRawProducerInAFileThatAlreadyEscapes] proves it on synthetic lines). A new
+ * producer joins the census only with a markup case of its own in this class, and a producer added to
+ * a known file must also update that file's count in `KNOWN_PRODUCERS`. The census is an escaping
+ * census too: it is not the D-28-06 / WR-01 cookie single-producer gate and must not be cited as
+ * closing it.
  */
 class IssueDetailHtmlEncodingTest {
     // =============================================================================================
@@ -426,8 +430,9 @@ class IssueDetailHtmlEncodingTest {
     // =============================================================================================
 
     /**
-     * Every production file that builds an AuditIssue is a known producer, and every producer calls
-     * the shared formatter. A new producer file, or a producer that drops the call, fails here.
+     * Every production file that builds an AuditIssue is a known producer with its exact number of
+     * `auditIssue(` calls, and each producer holds at least as many shared-formatter calls. A new
+     * producer file, a new call in a known file, or a producer that drops a formatter call fails here.
      * The behavioral cases above catch a producer that keeps the call but bypasses it.
      */
     @Test
@@ -439,26 +444,33 @@ class IssueDetailHtmlEncodingTest {
                 "of $MIN_EXPECTED_MAIN_FILES. A walk that reaches nothing reports a clean tree; fix the walk first.",
         )
 
-        val producers =
+        val census =
             files
-                .filter { file -> codeLines(file).any { AUDIT_ISSUE_CALL.containsMatchIn(it) } }
-                .associateBy { SourceRoots.packageRelativePath(it) }
+                .associate { SourceRoots.packageRelativePath(it) to producerCensus(it.readText(Charsets.UTF_8).lines()) }
+                .filterValues { it.auditIssueCalls > 0 }
+        val producerCounts = census.mapValues { it.value.auditIssueCalls }
 
         assertEquals(
             KNOWN_PRODUCERS,
-            producers.keys,
-            "the set of production files with a non-comment auditIssue( call changed. Unexpected: " +
-                "${producers.keys - KNOWN_PRODUCERS}; missing: ${KNOWN_PRODUCERS - producers.keys}. A new " +
-                "producer must route its detail through IssueUtils.formatIssueDetailHtml and add a markup " +
-                "case of its own to this class before it joins KNOWN_PRODUCERS.",
+            producerCounts,
+            "the non-comment auditIssue( calls per production file changed: " +
+                (KNOWN_PRODUCERS.keys + producerCounts.keys)
+                    .filter { KNOWN_PRODUCERS[it] != producerCounts[it] }
+                    .joinToString("; ") { path ->
+                        "$path has ${producerCounts[path] ?: 0} auditIssue( call(s) and " +
+                            "${census[path]?.formatterCalls ?: 0} $FORMATTER_CALL call(s), pinned at " +
+                            "${KNOWN_PRODUCERS[path] ?: 0}"
+                    } +
+                ". Route every new producer's detail through IssueUtils.formatIssueDetailHtml, add a markup " +
+                "case for it to this class, and only then update its count in KNOWN_PRODUCERS.",
         )
-        val nonEscaping =
-            producers.filterValues { file -> codeLines(file).none { it.contains(FORMATTER_CALL) } }.keys
+        val violations = census.filterValues { it.violation != null }.map { (path, counts) -> "$path: ${counts.violation}" }
         assertEquals(
-            emptySet<String>(),
-            nonEscaping,
-            "these producers never call $FORMATTER_CALL. Route the issue detail through " +
-                "IssueUtils.formatIssueDetailHtml and add a markup case for the producer to this class.",
+            emptyList<String>(),
+            violations,
+            "each producer file needs at least one $FORMATTER_CALL call per auditIssue( call. Route the " +
+                "unescaped issue detail through IssueUtils.formatIssueDetailHtml, add a markup case for the " +
+                "producer to this class, and update its count in KNOWN_PRODUCERS.",
         )
     }
 
@@ -552,13 +564,16 @@ class IssueDetailHtmlEncodingTest {
      */
     private fun producerCensus(lines: List<String>): ProducerCensus {
         val code = codeLines(lines)
-        val producers = code.count { AUDIT_ISSUE_CALL.containsMatchIn(it) }
-        val formatters = code.count { it.contains(FORMATTER_CALL) }
-        val violation = if (producers > 0 && formatters == 0) "never calls $FORMATTER_CALL" else null
+        val producers = code.sumOf { AUDIT_ISSUE_CALL.findAll(it).count() }
+        val formatters = code.sumOf { FORMATTER_CALL_PATTERN.findAll(it).count() }
+        val violation =
+            if (formatters < producers) {
+                "$producers auditIssue( call(s) but only $formatters $FORMATTER_CALL call(s)"
+            } else {
+                null
+            }
         return ProducerCensus(producers, formatters, violation)
     }
-
-    private fun codeLines(file: File): List<String> = codeLines(file.readText(Charsets.UTF_8).lines())
 
     /**
      * The lines without comment lines: a line whose trimmed text starts with one of
@@ -654,18 +669,22 @@ class IssueDetailHtmlEncodingTest {
         /** Non-vacuity floor for the census walk over the production roots. */
         const val MIN_EXPECTED_MAIN_FILES = 150
 
-        /** Package-relative paths of every production file that builds an AuditIssue (D-12). */
-        val KNOWN_PRODUCERS =
-            setOf(
-                "scanner/AiScanCheck.kt",
-                "scanner/ActiveAiScanner.kt",
-                "scanner/PassiveAiScannerFinding.kt",
-                "scanner/AiPassiveScanCheck.kt",
-                "ui/UiActions.kt",
-                "mcp/tools/IssueCreateSupport.kt",
+        /**
+         * Package-relative path of every production file that builds an AuditIssue (D-12), mapped to
+         * its exact number of non-comment `auditIssue(` calls.
+         */
+        val KNOWN_PRODUCERS: Map<String, Int> =
+            mapOf(
+                "scanner/AiScanCheck.kt" to 1,
+                "scanner/ActiveAiScanner.kt" to 1,
+                "scanner/PassiveAiScannerFinding.kt" to 1,
+                "scanner/AiPassiveScanCheck.kt" to 1,
+                "ui/UiActions.kt" to 1,
+                "mcp/tools/IssueCreateSupport.kt" to 1,
             )
         val AUDIT_ISSUE_CALL = Regex("""\bauditIssue\(""")
         const val FORMATTER_CALL = "IssueUtils.formatIssueDetailHtml("
+        val FORMATTER_CALL_PATTERN = Regex.fromLiteral(FORMATTER_CALL)
         val COMMENT_PREFIXES = listOf("*", "//", "/*")
         const val SECOND_RAW_PRODUCERS = 2
         val COMMENTED_PRODUCERS = listOf(" * AuditIssue.auditIssue(", "// auditIssue(")
