@@ -1094,7 +1094,9 @@ class MainTab(
 
     /**
      * Phase 33 / D-06 — unload step 0, before MCP stops: stops everything that could start new work.
-     * Takes no lock and waits for nothing.
+     * CR-01 (UI half) / LIFE-02: it also stops the status-pill health pool and asks the chat panel to
+     * cancel its readiness probes, its turn in flight and every pending tool card. Takes no lock and
+     * waits for nothing: the chat cancel is posted to the EDT, not awaited.
      */
     fun quiesce() {
         // FIRST: App.shutdown() calls quiesce() before mcpSupervisor.shutdown(deadline), so disposing the
@@ -1103,6 +1105,13 @@ class MainTab(
         // flight; the save worker that is running is superseded and its tail does nothing.
         settingsPersistQueue.dispose()
         settingsPanel.shutdown()
+        // No wait and no release: a health check in flight is a Montoya request that cannot be
+        // interrupted. The pool stays tracked, so the final unload sweep waits for it within the
+        // deadline and reports it only if it outlives the deadline. From step 0 on, a pill click or a
+        // backend change can no longer submit a status-pill check, which in the full build could
+        // reach a cloud provider: the gate's submit is rejected and releases itself.
+        healthExec.shutdownNow()
+        chatPanel.cancelForUnload()
         mcpStatusTimer.stop()
         healthTimer?.stop()
         healthTimer = null
@@ -1110,7 +1119,7 @@ class MainTab(
 
     /**
      * Phase 33 / D-06, LIFE-01 — unload step 4, after MCP, the scanners and the backends stopped: tears
-     * the UI down. Swing state is touched on the EDT; the health pool is stopped without waiting.
+     * the UI down. Swing state is touched on the EDT; the health pool was already stopped by [quiesce].
      * [deadline] is the shared unload budget (D-05). WR-03: both EDT waits here, the tab-pane listener
      * removal and the chat teardown, are bounded by what is left of it; a part the EDT did not tear
      * down in time writes one Error line naming it (D-09), and its teardown still runs once the EDT is
@@ -1120,10 +1129,6 @@ class MainTab(
         // Phase 32 / D-13: no queue dialog or queue refresh timer outlives the extension.
         ActiveScanQueuePanel.disposeOpenDialogs()
         removeTabPaneListener(deadline)
-        // No wait and no release: a health check in flight is a Montoya request that cannot be
-        // interrupted. The pool stays tracked, so the final unload sweep waits for it within the
-        // deadline and reports it only if it outlives the deadline.
-        healthExec.shutdownNow()
         sessionPersistTimer?.stop()
         sessionPersistTimer = null
         chatPanel.shutdown(deadline)

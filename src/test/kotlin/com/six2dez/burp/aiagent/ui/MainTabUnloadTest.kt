@@ -246,6 +246,23 @@ class MainTabUnloadTest {
         assertTrue(lines.isEmpty(), "a clean teardown writes nothing: $lines")
     }
 
+    /**
+     * Phase 33 / CR-01 (UI half), LIFE-02 — from unload step 0 no status-pill check can start: quiesce
+     * stops the health pool at once, without waiting, before dispose (step 4) runs.
+     */
+    @Test
+    fun quiesceStopsTheHealthPoolAtOnce() {
+        val healthPoolsBefore = healthPools()
+        val tab = newMainTab()
+        val healthPool = (healthPools() - healthPoolsBefore).single()
+
+        assertTimeoutPreemptively(Duration.ofSeconds(1), "quiesce takes no lock and waits for nothing") {
+            tab.quiesce()
+        }
+
+        assertTrue(healthPool.isShutdown, "quiesce stops the health pool before dispose runs")
+    }
+
     private fun newMainTab(): MainTab {
         val api = newApi()
         val registry = BackendRegistry(api)

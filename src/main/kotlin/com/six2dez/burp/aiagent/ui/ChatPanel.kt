@@ -1847,7 +1847,20 @@ class ChatPanel(
     }
 
     /**
-     * EDT only. The unload teardown both [shutdown] (step 4, bounded) and the step-0 cancel run. It is
+     * Phase 33 / CR-01 (UI half), LIFE-02 — unload step 0 (`MainTab.quiesce`). Cancels the readiness
+     * probes, the turn in flight and every pending tool card in every session, and sends no turn. It
+     * posts [unloadTeardown] to the EDT and returns at once, never waiting: step 0 waits for nothing,
+     * so a busy EDT cannot spend the unload budget before MCP stops (D-06). The synchronous guarantee
+     * that no provider request leaves after unload began is AgentSupervisor's unload latch, set before
+     * this step. [shutdown] at step 4 runs the same teardown again, bounded by the deadline; it is
+     * idempotent.
+     */
+    fun cancelForUnload() {
+        EdtTeardown.post("Chat panel", { api.logging().logToError(it) }) { unloadTeardown() }
+    }
+
+    /**
+     * EDT only. The unload teardown both [shutdown] (step 4, bounded) and [cancelForUnload] (step 0) run. It is
      * idempotent: a second run finds no pending card, no turn in flight and no running timer.
      */
     private fun unloadTeardown() {
