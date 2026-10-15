@@ -102,6 +102,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   for active testing" on, "[AutoQueue] Queued N suggested target(s) to the Active Scanner" counts
   only the targets the AI Active Scanner accepted, and those leave the suggested list. Targets it
   could not queue, for example while Burp's "Use AI" is off, stay in the list and nothing is logged.
+- **AI Active Scanner settings apply without a restart** - changing a spinner (max concurrent,
+  request delay and the others), the risk level, the scan mode or a checkbox on the AI Active
+  Scanner tab, or pressing Save, applies to the next target and never restarts the scanner, so
+  pending Collaborator checks and baselines are kept. Only the on/off switch starts or stops it,
+  and the switch answers at once. Turning the scanner off shows "Active: Stopping…" in the status
+  line until in-flight work has stopped, then "Active: OFF"; after that no new request goes to the
+  target, except one that was already sent. Answering Yes to "Active Scanner is disabled. Enable
+  it now?" no longer blocks Burp either.
+- **Chat send, site-map actions and Test connection no longer freeze Burp** - the Ollama / LM Studio
+  check that runs before a chat message, the walk of a selected site-map subtree before any
+  context-menu action on it (AI Passive Scan, AI Active Scan, the targeted tests, BountyPrompt), and
+  Test connection now run in the background. The dialogs still appear as before ("Ollama is not
+  running. Start it now?", the scan confirmations with real target counts taken from the list that
+  is actually queued, the Test connection result). If the site map cannot be read, a dialog says
+  "Could not read the selected site map subtree." and the action stops.
 
 ### Removed
 
@@ -113,6 +128,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **The AI Active Scanner Queue dialog closes when the extension unloads**, and its refresh timer
   stops.
+- **Unloading leaves nothing running** - no thread, timer, MCP listener or tab listener of the
+  extension survives an unload, in both builds. Unload takes about 10 seconds at most. It writes
+  nothing when everything stops cleanly, and one Error line for each part that had to be stopped
+  forcibly: "Unload: <component> did not stop before the unload deadline" or "Unload: <component>
+  was still running at unload and was stopped". Turning MCP on and off quickly can no longer leave
+  the port listening. A load that fails part-way is now cleaned up (nothing it started keeps
+  running and the MCP port is released) and is still reported to Burp as a failed load.
+- **Unloading sends nothing to the AI** - a partly filled passive analysis batch is dropped instead
+  of being sent, and an analysis already running sends nothing once unload has begun. One Output
+  line gives the count: "[PassiveAiScanner] Unload: dropped N pending passive analysis item(s);
+  nothing was sent to the AI backend."
+- **Every thread the extension starts is named `burp-ai-agent-...`** and is a daemon thread, so a
+  thread dump (`jcmd <pid> Thread.print` or `jstack <pid>`) shows what belongs to the extension and
+  none of them can keep Burp from exiting. In the full build, the MCP scanner-task and Collaborator
+  registries no longer run background cleaner threads: their entries expire when they are next
+  read or written, and unload empties them.
 
 ### Security
 
