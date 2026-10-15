@@ -79,7 +79,7 @@ internal open class ExtensionThreadPools {
         subsystem: String,
         numbered: Boolean = true,
     ): ThreadFactory {
-        validate(subsystem)
+        requireSubsystemLabel(subsystem)
         val base = ExtensionThreads.PREFIX + subsystem
         val counter = AtomicInteger(0)
         return ThreadFactory { runnable ->
@@ -147,11 +147,60 @@ internal open class ExtensionThreadPools {
         tracked.remove(executor)
     }
 
-    /** RED skeleton: the unload sweep lands in the GREEN commit. */
+    /**
+     * The final unload sweep (D-05, D-09): stops every tracked pool and reports the ones that misbehaved.
+     *
+     * 1. Every tracked pool its owner never shut down gets `shutdownNow()` and is remembered as forced.
+     * 2. Every tracked pool is then awaited with what is left of [deadline] — one loop sharing the one
+     *    budget, not a fresh budget per pool. A pool still running when its turn's budget is spent is a
+     *    survivor and gets `shutdownNow()` too (its owner may have called only `shutdown()`).
+     * 3. One Error line per subsystem, sorted by subsystem name: a survivor gets
+     *    [ShutdownDeadline.deadlineMissed]; a forced pool that then stopped gets
+     *    `Unload: <subsystem> was still running at unload and was stopped`. A subsystem both forced and
+     *    surviving gets only the deadline line. Pools that stopped on their own write nothing.
+     *
+     * The tracked set is empty afterwards. If the calling thread is interrupted mid-wait, the flag is
+     * restored, every remaining pool is forced, the report is still written, and the sweep returns.
+     */
     fun terminateAll(
         deadline: ShutdownDeadline,
         logError: (String) -> Unit,
     ) {
+        val snapshot =
+            synchronized(tracked) {
+                LinkedHashMap(tracked).also { tracked.clear() }
+            }
+        val forced = sortedSetOf<String>()
+        for ((executor, subsystem) in snapshot) {
+            if (!executor.isShutdown) {
+                executor.shutdownNow()
+                forced += subsystem
+            }
+        }
+        val survivors = sortedSetOf<String>()
+        try {
+            for ((executor, subsystem) in snapshot) {
+                if (!executor.awaitTermination(deadline.remainingMs(), TimeUnit.MILLISECONDS)) {
+                    executor.shutdownNow()
+                    survivors += subsystem
+                }
+            }
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            for ((executor, subsystem) in snapshot) {
+                executor.shutdownNow()
+                if (!executor.isTerminated) survivors += subsystem
+            }
+        }
+        for (subsystem in (forced + survivors).toSortedSet()) {
+            val line =
+                if (subsystem in survivors) {
+                    ShutdownDeadline.deadlineMissed(subsystem)
+                } else {
+                    "Unload: $subsystem was still running at unload and was stopped"
+                }
+            ShutdownDeadline.report(line, logError)
+        }
     }
 
     /** A copy of the tracked pools and their subsystem labels. For tests and the unload sweep. */
@@ -167,19 +216,22 @@ internal open class ExtensionThreadPools {
         }
         return executor
     }
+}
 
-    private fun validate(subsystem: String) {
-        require(subsystem.isNotBlank()) { "Thread subsystem label must not be blank (length ${subsystem.length})." }
-        require(!subsystem.startsWith(ExtensionThreads.PREFIX)) {
-            "Thread subsystem label must not repeat the product prefix (length ${subsystem.length})."
-        }
-        require(LABEL.matches(subsystem)) {
-            "Thread subsystem label must match [A-Za-z0-9][A-Za-z0-9._-]{0,63} (length ${subsystem.length})."
-        }
+/** A subsystem label: a short run of `[A-Za-z0-9._-]` that starts with a letter or digit. */
+private val SUBSYSTEM_LABEL = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+/**
+ * Rejects a blank, prefixed or non-label [subsystem]. The messages carry the value's length only, never
+ * the value, so a URL or host passed here by mistake does not reach the error log either.
+ */
+private fun requireSubsystemLabel(subsystem: String) {
+    require(subsystem.isNotBlank()) { "Thread subsystem label must not be blank (length ${subsystem.length})." }
+    require(!subsystem.startsWith(ExtensionThreads.PREFIX)) {
+        "Thread subsystem label must not repeat the product prefix (length ${subsystem.length})."
     }
-
-    private companion object {
-        val LABEL = Regex("[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+    require(SUBSYSTEM_LABEL.matches(subsystem)) {
+        "Thread subsystem label must match [A-Za-z0-9][A-Za-z0-9._-]{0,63} (length ${subsystem.length})."
     }
 }
 
