@@ -164,12 +164,18 @@ class MainTab(
                 // Quick 261008-n0c (H10): the chat reads the applied snapshot and never saves or applies.
                 getSettings = { settingsRepo.load() },
                 validateBackend = { validateBackendCommand(it) },
-                // Interim bridge (33-08 Task 1); Task 2 moves the prompt into confirmLocalServiceStart.
+                // Phase 33 / EDT-01: the Ollama / LM Studio pre-send probe runs on burp-ai-agent-chat-readiness.
+                // Research OQ2, kept as it was: one loopback health request after Send, through the GATE-01
+                // choke point, painted on the status pill (the first-send refresh for these two backends at no
+                // extra request). The "start it now?" prompt and the service start stay on the EDT.
                 readiness =
                     LocalServiceReadiness(
-                        backendHealth = { readinessProbe(it) },
-                        onProbed = { },
-                        onUnreachable = { ensureBackendReady(it) },
+                        backendHealth = { supervisor.backendHealth(it) },
+                        onProbed = { health ->
+                            val checkedAt = LocalTime.now()
+                            SwingUtilities.invokeLater { renderBackendHealth(health, checkedAt) }
+                        },
+                        onUnreachable = { confirmLocalServiceStart(it) },
                     ),
                 showError = { showError(it) },
                 onStatusChanged = { refreshStatus() },
@@ -998,73 +1004,55 @@ class MainTab(
         }
     }
 
-    internal fun ensureOllamaReadyIfNeeded(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean {
-        if (settings.preferredBackendId != "ollama") return true
-        if (readinessProbe(settings).isReachable) return true
-        val result =
-            JOptionPane.showConfirmDialog(
-                root,
-                "Ollama is not running. Start it now?",
-                "Custom AI Agent",
-                JOptionPane.YES_NO_OPTION,
-            )
-        if (result != JOptionPane.YES_OPTION) return false
-        if (!settings.ollamaAutoStart) {
-            showError("Auto-start for Ollama is disabled in settings.")
-            return false
-        }
-        val ok = supervisor.startOllamaService(settings)
-        if (!ok) showError("Failed to start Ollama. Check the command in settings.")
-        return ok
-    }
-
-    internal fun ensureLmStudioReadyIfNeeded(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean {
-        if (settings.preferredBackendId != "lmstudio") return true
-        if (readinessProbe(settings).isReachable) return true
-
-        if (settings.lmStudioAutoStart) {
-            val ok = supervisor.startLmStudioService(settings)
-            if (!ok) showError("Failed to auto-start LM Studio. Check the command in settings.")
-            return ok
-        }
-
-        val result =
-            JOptionPane.showConfirmDialog(
-                root,
-                "LM Studio is not running. Start it now?",
-                "Custom AI Agent",
-                JOptionPane.YES_NO_OPTION,
-            )
-        if (result != JOptionPane.YES_OPTION) return false
-
-        val ok = supervisor.startLmStudioService(settings)
-        if (!ok) showError("Failed to start LM Studio. Check the command in settings.")
-        return ok
-    }
-
     /**
-     * Research OQ2 — the pre-send readiness probe for Ollama and LM Studio, kept as it was: one
-     * loopback health request after the user pressed Send, through the GATE-01 choke point. Its
-     * result is painted on the status pill, so the probe is also the first-send refresh for these two
-     * backends and costs no extra request. The caller knows the selected backend is the probed one.
+     * Phase 33 / EDT-01: the EDT half of the chat's pre-send readiness check, asked only after the probe
+     * on `burp-ai-agent-chat-readiness` found the selected local service unreachable. Every dialog
+     * string and auto-start rule is the one `ensureOllamaReadyIfNeeded` / `ensureLmStudioReadyIfNeeded`
+     * had; only the probe moved off the EDT. Returns whether the turn may be sent.
      */
-    private fun readinessProbe(settings: com.six2dez.burp.aiagent.config.AgentSettings): HealthCheckResult {
-        val health = supervisor.backendHealth(settings)
-        val checkedAt = LocalTime.now()
-        if (SwingUtilities.isEventDispatchThread()) {
-            renderBackendHealth(health, checkedAt)
-        } else {
-            SwingUtilities.invokeLater { renderBackendHealth(health, checkedAt) }
-        }
-        return health
-    }
-
-    private fun ensureBackendReady(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean =
+    @Suppress("ReturnCount") // moved from ensureOllamaReadyIfNeeded / ensureLmStudioReadyIfNeeded (baseline-keyed on the old signatures); ADR-17 forbids a new entry
+    private fun confirmLocalServiceStart(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean {
         when (settings.preferredBackendId) {
-            "ollama" -> ensureOllamaReadyIfNeeded(settings)
-            "lmstudio" -> ensureLmStudioReadyIfNeeded(settings)
-            else -> true
+            "ollama" -> {
+                val result =
+                    JOptionPane.showConfirmDialog(
+                        root,
+                        "Ollama is not running. Start it now?",
+                        "Custom AI Agent",
+                        JOptionPane.YES_NO_OPTION,
+                    )
+                if (result != JOptionPane.YES_OPTION) return false
+                if (!settings.ollamaAutoStart) {
+                    showError("Auto-start for Ollama is disabled in settings.")
+                    return false
+                }
+                val ok = supervisor.startOllamaService(settings)
+                if (!ok) showError("Failed to start Ollama. Check the command in settings.")
+                return ok
+            }
+            "lmstudio" -> {
+                if (settings.lmStudioAutoStart) {
+                    val ok = supervisor.startLmStudioService(settings)
+                    if (!ok) showError("Failed to auto-start LM Studio. Check the command in settings.")
+                    return ok
+                }
+
+                val result =
+                    JOptionPane.showConfirmDialog(
+                        root,
+                        "LM Studio is not running. Start it now?",
+                        "Custom AI Agent",
+                        JOptionPane.YES_NO_OPTION,
+                    )
+                if (result != JOptionPane.YES_OPTION) return false
+
+                val ok = supervisor.startLmStudioService(settings)
+                if (!ok) showError("Failed to start LM Studio. Check the command in settings.")
+                return ok
+            }
+            else -> return true
         }
+    }
 
     /**
      * Called when the Burp project changes (detected via api.project().id() diff).
