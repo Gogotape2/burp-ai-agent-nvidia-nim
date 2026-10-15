@@ -150,6 +150,9 @@ internal object CliTempFileRegistry {
     /** Whether the exit hook is currently armed. Test seam for D-03's laziness and removal. */
     internal fun isHookRegisteredForTests(): Boolean = synchronized(hookLock) { hook != null }
 
+    /** The armed exit hook, or null. Test seam for its thread name (Phase 33 D-11). */
+    internal fun hookThreadForTests(): Thread? = synchronized(hookLock) { hook }
+
     /**
      * Returns the object to a known state without deleting anything. Test seam.
      *
