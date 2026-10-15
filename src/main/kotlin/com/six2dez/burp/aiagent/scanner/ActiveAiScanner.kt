@@ -122,6 +122,10 @@ class ActiveAiScanner(
     @Volatile
     private var terminated = false
 
+    /** Set by a stop, cleared by the next start; read by [haltRequested] on the workers (D-02). */
+    @Volatile
+    private var stopIssued = false
+
     // Finding #7 (BApp #231): SSRF out-of-band confirmation is asynchronous. A single shared
     // Collaborator client + one scheduled poller replace the old per-target client that blocked a
     // scanner thread polling getAllInteractions() every 500 ms for up to 30 s.
@@ -276,6 +280,20 @@ class ActiveAiScanner(
             pool.maximumPoolSize = size
         }
     }
+
+    /**
+     * Phase 33 / D-02 — whether a payload loop must stop: OFF interrupted this worker, or the scanner
+     * was stopped since it last started (a backstop for an interrupt some callee swallowed). A scanner
+     * that was never started does not halt, so `executeScan` still runs when driven directly.
+     */
+    private fun haltRequested(): Boolean = Thread.currentThread().isInterrupted || (stopIssued && !scanning.get())
+
+    /**
+     * The payload-loop head check (D-02): the elements of this list, lazily, until [haltRequested]. The
+     * check runs before each iteration, so a loop over it ends as soon as OFF interrupts the worker.
+     * Kept out of the loop bodies so the baseline-keyed scan functions keep their signatures.
+     */
+    private fun <T> Iterable<T>.untilHalted(): Sequence<T> = asSequence().takeWhile { !haltRequested() }
 
     /** Applies the current intent. The caller holds [lifecycleLock]. */
     private fun applyCurrentIntent() {
@@ -591,6 +609,7 @@ class ActiveAiScanner(
     /** Builds and starts the pools. The caller holds [lifecycleLock]. */
     private fun startProcessing() {
         if (executor != null || scheduledExecutor != null || oastPoller != null) stopProcessing()
+        stopIssued = false
         scanning.set(true)
 
         // REL-07 / SC6, Phase 33 / D-11: every pool comes from the thread helper, so a Burp thread dump
@@ -637,6 +656,7 @@ class ActiveAiScanner(
      * dropped here, on disable and unload only; a settings change no longer comes through here.
      */
     private fun stopProcessing(waitForWorkers: Boolean = true) {
+        stopIssued = true
         scanning.set(false)
         val workers = executor
         val scheduler = scheduledExecutor
@@ -825,7 +845,7 @@ class ActiveAiScanner(
         }
 
         // Test Boolean-based payloads with DUAL CONFIRMATION
-        for ((truePayload, falsePayload) in booleanPayloadPairs) {
+        for ((truePayload, falsePayload) in booleanPayloadPairs.untilHalted()) {
             try {
                 // Test TRUE condition
                 val trueRequest = injectPayload(target.originalRequest.request(), target.injectionPoint, truePayload.value)
@@ -856,6 +876,10 @@ class ActiveAiScanner(
                 }
 
                 Thread.sleep(requestDelayMs)
+            } catch (_: InterruptedException) {
+                // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
+                Thread.currentThread().interrupt()
+                break
             } catch (e: Exception) {
                 api.logging().logToError("[ActiveAiScanner] Boolean dual test error: ${e.message}")
             }
@@ -863,7 +887,7 @@ class ActiveAiScanner(
 
         // Test non-Boolean payloads normally
         val nonBooleanPayloads = allPayloads.filter { it.detectionMethod != DetectionMethod.BLIND_BOOLEAN }
-        for (payload in nonBooleanPayloads) {
+        for (payload in nonBooleanPayloads.untilHalted()) {
             try {
                 // Build modified request with payload
                 val modifiedRequest =
@@ -926,12 +950,16 @@ class ActiveAiScanner(
 
                 // Rate limiting
                 Thread.sleep(requestDelayMs)
+            } catch (_: InterruptedException) {
+                // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
+                Thread.currentThread().interrupt()
+                break
             } catch (e: Exception) {
                 api.logging().logToError("[ActiveAiScanner] Payload error: ${e.message}")
             }
         }
 
-        if (vulnClass == VulnClass.SSRF) {
+        if (vulnClass == VulnClass.SSRF && !haltRequested()) {
             // OOB confirmation is asynchronous: register the Collaborator payload and let the shared
             // poller create the issue if an interaction arrives, instead of blocking this scanner
             // thread polling for up to 30 s (BApp #231, finding 7).
@@ -978,7 +1006,7 @@ class ActiveAiScanner(
             return ActiveScanResult(target, 0, null, "Baseline response not successful")
         }
 
-        for ((index, payload) in payloads.withIndex()) {
+        for ((index, payload) in payloads.withIndex().untilHalted()) {
             try {
                 val modifiedRequest =
                     injectPayload(
@@ -1006,6 +1034,10 @@ class ActiveAiScanner(
                 }
 
                 Thread.sleep(requestDelayMs)
+            } catch (_: InterruptedException) {
+                // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
+                Thread.currentThread().interrupt()
+                break
             } catch (e: Exception) {
                 api.logging().logToError("[ActiveAiScanner] IDOR test error: ${e.message}")
             }
@@ -1405,6 +1437,8 @@ class ActiveAiScanner(
         // saturated pool throws right here; submitted above the try that throw would escape this
         // function, climb through executeScan into the per-target catch, and abort a whole target
         // with a message of `null` — the exception type usually carries none.
+        // Phase 33 / D-02: a worker that OFF interrupted sends nothing new to the target.
+        if (Thread.currentThread().isInterrupted) return null
         var future: Future<HttpRequestResponse>? = null
         return try {
             future =
@@ -1420,6 +1454,12 @@ class ActiveAiScanner(
             null
         } catch (_: RejectedExecutionException) {
             api.logging().logToError("[ActiveAiScanner] Request rejected — scan request pool saturated for ${request.url().take(80)}")
+            null
+        } catch (_: InterruptedException) {
+            // Phase 33 / D-02: OFF interrupted the wait. A request already on the wire may still finish;
+            // the caller's `?: continue` reaches its loop head, which now leaves the loop.
+            future?.cancel(true)
+            Thread.currentThread().interrupt()
             null
         } catch (e: Exception) {
             future?.cancel(true)
@@ -1748,7 +1788,7 @@ class ActiveAiScanner(
 
         // === Technique 1: IP spoofing headers ===
         val baselineBodyLen = baseline.response()?.body()?.length() ?: 0
-        for ((headerName, headerValue) in bypassHeaders) {
+        for ((headerName, headerValue) in bypassHeaders.untilHalted()) {
             try {
                 val modifiedRequest = request.withAddedHeader(headerName, headerValue)
                 val response = sendRequestWithTimeout(modifiedRequest) ?: continue
@@ -1788,6 +1828,10 @@ class ActiveAiScanner(
                     )
                 }
                 Thread.sleep(requestDelayMs)
+            } catch (_: InterruptedException) {
+                // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
+                Thread.currentThread().interrupt()
+                break
             } catch (e: Exception) {
                 api.logging().logToError("[ActiveAiScanner] 403 bypass header error: ${e.message}")
             }
@@ -1795,7 +1839,7 @@ class ActiveAiScanner(
 
         // === Technique 2: Path manipulation ===
         val pathVariations = buildPathVariations(path)
-        for (variation in pathVariations) {
+        for (variation in pathVariations.untilHalted()) {
             try {
                 val modifiedRequest = request.withPath(variation)
                 val response = sendRequestWithTimeout(modifiedRequest) ?: continue
@@ -1836,6 +1880,10 @@ class ActiveAiScanner(
                     )
                 }
                 Thread.sleep(requestDelayMs)
+            } catch (_: InterruptedException) {
+                // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
+                Thread.currentThread().interrupt()
+                break
             } catch (e: Exception) {
                 api.logging().logToError("[ActiveAiScanner] 403 bypass path error: ${e.message}")
             }
@@ -1843,7 +1891,7 @@ class ActiveAiScanner(
 
         // === Technique 3: HTTP method switching ===
         val alternativeMethods = ScanPolicy.methodSwitchAlternatives(request.method(), maxRiskLevel)
-        for (method in alternativeMethods) {
+        for (method in alternativeMethods.untilHalted()) {
             try {
                 val modifiedRequest = request.withMethod(method)
                 val response = sendRequestWithTimeout(modifiedRequest) ?: continue
@@ -1883,6 +1931,10 @@ class ActiveAiScanner(
                     )
                 }
                 Thread.sleep(requestDelayMs)
+            } catch (_: InterruptedException) {
+                // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
+                Thread.currentThread().interrupt()
+                break
             } catch (e: Exception) {
                 api.logging().logToError("[ActiveAiScanner] 403 bypass method error: ${e.message}")
             }
