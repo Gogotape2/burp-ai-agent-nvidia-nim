@@ -204,9 +204,9 @@ fun SettingsPanel.setActiveAiEnabled(enabled: Boolean) {
 }
 
 /**
- * Teardown hook for the Settings panel, reached from `MainTab.shutdown()` — which `App.shutdown()`
- * calls FIRST, before `passiveAiScanner.shutdown()`, `activeAiScanner.shutdown()` and
- * `mcpSupervisor.shutdown()`.
+ * Teardown hook for the Settings panel, reached from `MainTab.quiesce()` — which `App.shutdown()`
+ * calls FIRST, before `mcpSupervisor.shutdown(deadline)`, `passiveAiScanner.shutdown(deadline)` and
+ * `activeAiScanner.shutdown(deadline)`.
  *
  * The first two statements supersede any `burp-ai-settings-save` worker still in flight (CR-01), so it
  * cannot restart the MCP server or re-enable a scanner after `App.shutdown()` has torn them down. See

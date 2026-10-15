@@ -7,6 +7,7 @@ import com.six2dez.burp.aiagent.audit.AiRequestLogger
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.config.AgentSettingsRepository
+import com.six2dez.burp.aiagent.mcp.McpServerState
 import com.six2dez.burp.aiagent.mcp.McpSupervisor
 import com.six2dez.burp.aiagent.scanner.ActiveAiScanner
 import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
@@ -24,6 +25,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertTimeoutPreemptively
 import org.junit.jupiter.api.io.TempDir
 import org.mockito.Answers
+import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 import java.nio.file.Path
@@ -136,6 +138,9 @@ class MainTabUnloadTest {
         val api = newApi()
         val registry = BackendRegistry(api)
         val supervisor = AgentSupervisor(api, registry, mock<AuditLogger>(), StoreAiAccessPolicy()).also { supervisors += it }
+        // A real state: deep stubs cannot mock the sealed McpServerState the status timer reads.
+        val mcpSupervisor = mock<McpSupervisor>(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
+        doReturn(McpServerState.Stopped).whenever(mcpSupervisor).status()
         val tab =
             MainTab(
                 api,
@@ -143,7 +148,7 @@ class MainTabUnloadTest {
                 registry,
                 supervisor,
                 mock<AuditLogger>(),
-                mock<McpSupervisor>(defaultAnswer = Answers.RETURNS_DEEP_STUBS),
+                mcpSupervisor,
                 mock<PassiveAiScanner>(defaultAnswer = Answers.RETURNS_DEEP_STUBS),
                 mock<ActiveAiScanner>(defaultAnswer = Answers.RETURNS_DEEP_STUBS),
                 AiRequestLogger(),

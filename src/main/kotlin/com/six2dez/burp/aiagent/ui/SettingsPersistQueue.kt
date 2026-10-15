@@ -96,8 +96,8 @@ internal class SettingsPersistQueue(
      * Stops NEW applies from starting. Deliberately does no more than that, and says so.
      *
      * It sets a `@Volatile` flag and returns; it must NEVER acquire [lock]. A worker inside a bounded
-     * ten-second `mcpSupervisor.applySettings` holds that lock, and `MainTab.shutdown()` calls this
-     * from the EDT — a lock-taking `dispose()` would reintroduce, at unload, the precise ten-second
+     * ten-second `mcpSupervisor.applySettings` holds that lock, and `MainTab.quiesce()` calls this
+     * on the unload path — a lock-taking `dispose()` would reintroduce, at unload, the precise ten-second
      * freeze this class exists to remove.
      *
      * The bound it buys is therefore "no new apply starts", not "the in-flight apply is stopped". An

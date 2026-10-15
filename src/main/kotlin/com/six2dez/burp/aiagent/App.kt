@@ -285,7 +285,8 @@ object App {
         deadline: ShutdownDeadline = ShutdownDeadline.unload(),
     ) {
         if (!shutdownStarted.compareAndSet(false, true)) return
-        safeShutdownStep("MainTab") { mainTab?.shutdown() }
+        safeShutdownStep("MainTab quiesce") { mainTab?.quiesce() }
+        safeShutdownStep("MainTab dispose") { mainTab?.dispose(deadline) }
         mainTab = null
         // Plug-ins unhook before the scanners stop (the auto-queue plug-in clears the passive sink).
         installedPlugins.forEach { plugin ->

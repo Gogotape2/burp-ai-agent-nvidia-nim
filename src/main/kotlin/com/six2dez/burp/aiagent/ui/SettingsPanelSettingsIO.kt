@@ -655,7 +655,7 @@ internal fun SettingsPanel.applyAndSaveSettingsAsync(
     // The consequence, stated precisely: onDone is never invoked and the busy seam is never raised,
     // so there is nothing left to lower. That is correct at teardown — the panel is gone and no
     // listener remains to inform — and it is unreachable otherwise, because SettingsPanel.shutdown()
-    // is called only from MainTab.shutdown().
+    // is called only from MainTab.quiesce().
     if (disposed) return
     // Minted FIRST, on the calling thread, before the seam is raised and before anything is dispatched.
     // Same placement rule and same reason as OffEdtDispatch's dispatchedObserver and

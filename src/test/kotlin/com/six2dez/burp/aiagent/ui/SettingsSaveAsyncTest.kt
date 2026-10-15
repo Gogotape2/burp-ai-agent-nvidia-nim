@@ -549,8 +549,8 @@ class SettingsSaveAsyncTest {
      * CR-01 / T-23-08-01 — a save still in flight when the extension unloads never reaches the MCP
      * supervisor.
      *
-     * `App.shutdown()` calls `MainTab.shutdown()` — and so `SettingsPanel.shutdown()` — FIRST, before
-     * `mcpSupervisor.shutdown()`. Without a supersede, the save worker's `mcpSupervisor.applySettings`
+     * `App.shutdown()` calls `MainTab.quiesce()` — and so `SettingsPanel.shutdown()` — FIRST, before
+     * `mcpSupervisor.shutdown(deadline)`. Without a supersede, the save worker's `mcpSupervisor.applySettings`
      * can land afterwards and leave an MCP server LISTENING on `127.0.0.1` owned by an unloaded
      * extension's classloader, with no live extension behind SEC-04's access-control checks.
      *

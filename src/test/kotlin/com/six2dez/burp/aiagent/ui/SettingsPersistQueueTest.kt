@@ -289,7 +289,7 @@ class SettingsPersistQueueTest {
     /**
      * T-23-06-05 — `dispose()` stops new work and never blocks its caller.
      *
-     * `MainTab.shutdown()` calls it from the EDT while a worker may be inside a bounded ten-second
+     * `MainTab.quiesce()` calls it on the unload path while a worker may be inside a bounded ten-second
      * `mcpSupervisor.applySettings`. A `dispose()` that took the queue's lock would block there for the
      * whole wait, reintroducing at unload the exact freeze this class removes — and would fail this
      * test as a deadlock rather than as an assertion.
@@ -339,7 +339,7 @@ class SettingsPersistQueueTest {
                 listOf("held"),
                 appliedIds.toList(),
                 "T-23-06-05: a write submitted after dispose() must never reach its apply body, so no " +
-                    "settings write can start after MainTab.shutdown() has run.",
+                    "settings write can start after MainTab.quiesce() has run.",
             )
         }
     }

@@ -16,17 +16,19 @@ import com.six2dez.burp.aiagent.ui.components.DependencyBanner
 import com.six2dez.burp.aiagent.ui.components.SubtleNotice
 import com.six2dez.burp.aiagent.ui.components.ToggleSwitch
 import com.six2dez.burp.aiagent.ui.panels.ActiveScanQueuePanel
+import com.six2dez.burp.aiagent.util.ExtensionThreads
+import com.six2dez.burp.aiagent.util.ShutdownDeadline
 import java.awt.BorderLayout
 import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.RenderingHints
+import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.time.LocalTime
-import java.util.concurrent.Executors
 import javax.swing.BoxLayout
 import javax.swing.JComponent
 import javax.swing.JLabel
@@ -36,6 +38,7 @@ import javax.swing.JTabbedPane
 import javax.swing.SwingUtilities
 import javax.swing.Timer
 import javax.swing.border.EmptyBorder
+import javax.swing.event.ChangeListener
 
 /**
  * Minimum width of the chat side of the sessions split, in pixels.
@@ -93,8 +96,8 @@ class MainTab(
 
     /**
      * REL-05 / SC4 / CR-02 — the one seam every header and Settings-tab settings write leaves the EDT
-     * through. Disposed first in [shutdown] so no write can start after `App.shutdown()` continues on
-     * to `mcpSupervisor.shutdown()`.
+     * through. Disposed first in [quiesce], which App calls before it stops MCP, so no write can start
+     * after `App.shutdown()` continues on to `mcpSupervisor.shutdown(deadline)`.
      */
     private val settingsPersistQueue = SettingsPersistQueue { api.logging().logToError(it) }
     private val mcpStatusTimer =
@@ -107,6 +110,9 @@ class MainTab(
         }
     private val baseTabCaption = "Custom AI Agent"
     private var tabbedPane: JTabbedPane? = null
+
+    // LIFE-01: the listener ensureTabPaneAttached adds to Burp's tab pane, kept so dispose can remove it.
+    private var tabPaneListener: ChangeListener? = null
     private var attentionActive = false
     private val dependencyBanner =
         DependencyBanner("MCP Server must be enabled. Toggle MCP to enable AI features.")
@@ -120,11 +126,10 @@ class MainTab(
     private var syncingToggles = false
     private var healthTimer: Timer? = null
 
-    // Status-pill health checks: ONE named daemon thread plus a single-flight gate, so checks never
-    // overlap and never pile up threads. A Settings save / click that lands mid-check is coalesced
-    // into exactly one re-check after the flight ends.
-    private val healthExec =
-        Executors.newSingleThreadExecutor { r -> Thread(r, "burp-ai-agent-health").apply { isDaemon = true } }
+    // Status-pill health checks: ONE named daemon thread (burp-ai-agent-health, D-11) plus a
+    // single-flight gate, so checks never overlap and never pile up threads. A Settings save / click
+    // that lands mid-check is coalesced into exactly one re-check after the flight ends.
+    private val healthExec = ExtensionThreads.singleThread("health")
     private val healthGate =
         SingleFlightGate(healthExec) {
             SwingUtilities.invokeLater { requestHealthCheck(HealthCheckTrigger.SETTINGS_CHANGED) }
@@ -343,10 +348,21 @@ class MainTab(
         // ── Keyboard shortcuts ──
         val imap = root.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
         val amap = root.actionMap
+        // Headless guard, as in ChatPanel: under -Djava.awt.headless=true menuShortcutKeyMaskEx throws,
+        // which made MainTab (and so App.initialize) unbuildable in a test. CTRL is the correct modifier
+        // on Linux and Windows, and a real Burp UI on macOS is never headless.
         val meta =
-            java.awt.Toolkit
-                .getDefaultToolkit()
-                .menuShortcutKeyMaskEx
+            if (java.awt.GraphicsEnvironment.isHeadless()) {
+                InputEvent.CTRL_DOWN_MASK
+            } else {
+                try {
+                    java.awt.Toolkit
+                        .getDefaultToolkit()
+                        .menuShortcutKeyMaskEx
+                } catch (_: java.awt.HeadlessException) {
+                    InputEvent.CTRL_DOWN_MASK
+                }
+            }
 
         imap.put(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_N, meta), "newSession")
         amap.put(
@@ -474,11 +490,14 @@ class MainTab(
         if (tabbedPane != null) return tabbedPane
         val pane = findParentTabbedPane() ?: return null
         tabbedPane = pane
-        pane.addChangeListener {
-            if (pane.selectedComponent == root) {
-                setAttention(false)
+        val listener =
+            ChangeListener {
+                if (pane.selectedComponent == root) {
+                    setAttention(false)
+                }
             }
-        }
+        tabPaneListener = listener
+        pane.addChangeListener(listener)
         return pane
     }
 
@@ -1071,31 +1090,64 @@ class MainTab(
         supervisor.shutdownAllChatSessions()
     }
 
-    // RED skeletons (Phase 33-09 Task 2): signatures only.
-    fun quiesce() = Unit
-
-    @Suppress("UnusedParameter")
-    fun dispose(deadline: com.six2dez.burp.aiagent.util.ShutdownDeadline) = Unit
-
     internal fun attachTabPaneForTests(): JTabbedPane? = ensureTabPaneAttached()
 
-    fun shutdown() {
-        // FIRST, before settingsPanel.shutdown(): App.shutdown() calls mainTab?.shutdown() before
-        // mcpSupervisor.shutdown(), so disposing here is what stops a settings write submitted just
-        // before unload from starting after the supervisor is gone. It never takes the queue's lock,
-        // so it cannot itself block the EDT on an in-flight bounded MCP stop.
+    /**
+     * Phase 33 / D-06 — unload step 0, before MCP stops: stops everything that could start new work.
+     * Takes no lock and waits for nothing.
+     */
+    fun quiesce() {
+        // FIRST: App.shutdown() calls quiesce() before mcpSupervisor.shutdown(deadline), so disposing the
+        // queue here is what stops a settings write submitted just before unload from restarting MCP (or
+        // a scanner) after it stopped. It never takes the queue's lock, so it cannot block on a write in
+        // flight; the save worker that is running is superseded and its tail does nothing.
         settingsPersistQueue.dispose()
         settingsPanel.shutdown()
-        // Phase 32 / D-13: no queue dialog or queue refresh timer outlives the extension.
-        ActiveScanQueuePanel.disposeOpenDialogs()
         mcpStatusTimer.stop()
         healthTimer?.stop()
         healthTimer = null
+    }
+
+    /**
+     * Phase 33 / D-06, LIFE-01 — unload step 4, after MCP, the scanners and the backends stopped: tears
+     * the UI down. Swing state is touched on the EDT; the health pool is stopped without waiting.
+     * [deadline] is the shared unload budget (D-05): nothing here waits on it, the final sweep does.
+     */
+    fun dispose(
+        @Suppress("UnusedParameter") deadline: ShutdownDeadline,
+    ) {
+        // Phase 32 / D-13: no queue dialog or queue refresh timer outlives the extension.
+        ActiveScanQueuePanel.disposeOpenDialogs()
+        removeTabPaneListener()
+        // No wait and no release: a health check in flight is a Montoya request that cannot be
+        // interrupted. The pool stays tracked, so the final unload sweep waits for it within the
+        // deadline and reports it only if it outlives the deadline.
         healthExec.shutdownNow()
         sessionPersistTimer?.stop()
         sessionPersistTimer = null
         chatPanel.shutdown()
         chatPanel.saveSessions()
         aiLoggerPanel?.shutdown()
+    }
+
+    /** LIFE-01: removes the listener this tab added to Burp's tab pane, on the EDT. */
+    private fun removeTabPaneListener() {
+        val work = {
+            tabPaneListener?.let { listener -> tabbedPane?.removeChangeListener(listener) }
+            tabPaneListener = null
+            // tabbedPane stays set on purpose: a late setAttention then finds it attached and adds no
+            // new listener.
+        }
+        if (SwingUtilities.isEventDispatchThread()) {
+            work()
+        } else {
+            try {
+                SwingUtilities.invokeAndWait(work)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            } catch (_: java.lang.reflect.InvocationTargetException) {
+                // Swallow: dispose must not throw out of the unload handler.
+            }
+        }
     }
 }
