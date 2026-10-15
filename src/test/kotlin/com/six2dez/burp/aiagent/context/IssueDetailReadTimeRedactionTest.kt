@@ -36,6 +36,7 @@ internal object IssueRoundTripFixture {
     const val TOKEN = "sentineltokencharlie"
     const val API_KEY = "sentinelapikeyalpha"
     const val COOKIE = "sentinelcookiebravo"
+    const val BASIC_AUTH = "sentinelbasicgolf"
     const val REMEDIATION_TOKEN = "sentinelremediationdelta"
     const val BACKGROUND_API_KEY = "sentinelbackgroundecho"
     const val REMEDIATION_BACKGROUND_COOKIE = "sentinelremediationbgfoxtrot"
@@ -49,6 +50,7 @@ internal object IssueRoundTripFixture {
             "GET /api?page=1&access_token=$TOKEN",
             "X-Api-Key: $API_KEY",
             "Cookie: sid=$COOKIE",
+            "Authorization: Basic $BASIC_AUTH",
         )
     val REMEDIATION_LINES =
         listOf(
@@ -58,7 +60,7 @@ internal object IssueRoundTripFixture {
     val BACKGROUND_LINES = listOf("Seen as", "X-Api-Key: $BACKGROUND_API_KEY")
     val REMEDIATION_BACKGROUND_LINES = listOf("Seen as", "Cookie: sid=$REMEDIATION_BACKGROUND_COOKIE")
 
-    val CORE_SENTINELS = listOf(TOKEN, API_KEY, COOKIE, REMEDIATION_TOKEN)
+    val CORE_SENTINELS = listOf(TOKEN, API_KEY, COOKIE, BASIC_AUTH, REMEDIATION_TOKEN)
     val FULL_SENTINELS = CORE_SENTINELS + listOf(BACKGROUND_API_KEY, REMEDIATION_BACKGROUND_COOKIE)
 
     /** Files the fixture through the real issue_create path (privacy OFF) and returns what Burp stored. */
