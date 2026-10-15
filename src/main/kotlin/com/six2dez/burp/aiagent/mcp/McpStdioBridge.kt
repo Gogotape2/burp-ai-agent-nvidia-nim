@@ -6,6 +6,7 @@ import com.six2dez.burp.aiagent.config.McpSettings
 import com.six2dez.burp.aiagent.mcp.tools.ResponsePreprocessorSettings
 import com.six2dez.burp.aiagent.mcp.tools.registerTools
 import com.six2dez.burp.aiagent.redact.PrivacyMode
+import com.six2dez.burp.aiagent.util.ShutdownDeadline
 import io.modelcontextprotocol.kotlin.sdk.Implementation
 import io.modelcontextprotocol.kotlin.sdk.ServerCapabilities
 import io.modelcontextprotocol.kotlin.sdk.server.Server
@@ -75,6 +76,10 @@ class McpStdioBridge(
         api.logging().logToOutput("MCP stdio bridge started.")
     }
 
+    fun stop(deadline: ShutdownDeadline?) {
+        stop()
+    }
+
     fun stop() {
         job?.cancel()
         job = null
@@ -89,5 +94,9 @@ class McpStdioBridge(
             withTimeoutOrNull(5000) { currentServer?.close() }
         }
         currentScope?.coroutineContext?.get(kotlinx.coroutines.Job)?.cancel()
+    }
+
+    companion object {
+        internal fun closeTimeoutMs(deadline: ShutdownDeadline?): Long = 5_000L
     }
 }

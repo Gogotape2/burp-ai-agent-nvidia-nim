@@ -11,6 +11,7 @@ import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
 import com.six2dez.burp.aiagent.spi.PluginSettingsStore
 import com.six2dez.burp.aiagent.spi.ToolProvider
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
+import com.six2dez.burp.aiagent.util.ShutdownDeadline
 import java.net.BindException
 import java.net.HttpURLConnection
 import java.net.URI
@@ -176,6 +177,10 @@ class McpSupervisor(
         } catch (e: Exception) {
             api.logging().logToError("MCP tool provider ${provider.javaClass.name} failed in $hook: ${e.message}")
         }
+    }
+
+    fun shutdown(deadline: ShutdownDeadline) {
+        shutdown()
     }
 
     fun shutdown() {
