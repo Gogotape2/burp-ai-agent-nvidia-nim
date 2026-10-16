@@ -10,7 +10,7 @@
 Custom AI Agent is an extension for Burp Suite that integrates AI into your security workflow. Use local models or cloud providers, connect external AI agents via MCP, and let passive/active scanners find vulnerabilities while you focus on manual testing.
 
 > [!IMPORTANT]
-> **If you are running 1.0.0 or earlier, read [the security advisories](SECURITY.md#security-advisories) and upgrade to 1.0.1.**
+> **If you are running 1.0.0 or earlier, read [the security advisories](SECURITY.md#security-advisories) and upgrade to the latest release, 1.1.0.**
 > Audit files written with Audit logging on may hold the MCP token and full prompts, and right-click
 > "send to AI" context could bypass the privacy mode; both advisories say which credentials to rotate.
 > No CVE or GHSA identifier has been issued for any of them.

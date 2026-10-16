@@ -2,15 +2,18 @@
 
 ## Supported Versions
 
-Only the latest minor release receives security updates. `1.0.1` is the current release of the
-supported `1.0.x` line. `1.0.0` carries the advisories under [Fixed in 1.0.1](#fixed-in-101) below,
-so the remedy for a `1.0.0` install is to upgrade to `1.0.1`. The `0.9.x` line is no longer
-supported: it carries every advisory below unfixed, so upgrade rather than wait for a backport.
+Only the latest minor release receives security updates. `1.1.0` is the current release of the
+supported `1.1.x` line. `1.0.1` and `1.0.0` are no longer supported: `1.0.0` carries the advisories
+under [Fixed in 1.0.1](#fixed-in-101) below, and `1.1.0` also fixes the issues listed under Security
+in its [CHANGELOG](CHANGELOG.md) entry, so the remedy for any `1.0.x` install is to upgrade to
+`1.1.0`. The `0.9.x` line is no longer supported: it carries every advisory below unfixed, so
+upgrade rather than wait for a backport.
 
 | Version | Supported                                                          |
 | ------- | ------------------------------------------------------------------ |
-| 1.0.1   | Yes                                                                |
-| 1.0.0   | No: carries the 1.0.1 advisories below unfixed; upgrade to 1.0.1   |
+| 1.1.0   | Yes                                                                |
+| 1.0.1   | No: upgrade to 1.1.0                                               |
+| 1.0.0   | No: carries the 1.0.1 advisories below unfixed; upgrade            |
 | 0.9.x   | No: carries SEC-04, PRIV-05 and the 1.0.1 advisories; upgrade      |
 | < 0.9   | No                                                                 |
 
