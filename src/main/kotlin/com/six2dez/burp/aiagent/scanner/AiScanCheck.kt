@@ -203,8 +203,8 @@ class AiScanCheck(
                 name.contains("uid") ||
                 name.contains("user") ||
                 name.endsWith("_id") ||
-                baseValue.matches(Regex("^\\d+$")) ||
-                baseValue.matches(Regex("^[a-f0-9-]{36}$", RegexOption.IGNORE_CASE)) -> {
+                baseValue.matches(IDOR_NUMERIC_VALUE_REGEX) ||
+                baseValue.matches(IDOR_UUID_VALUE_REGEX) -> {
                 classes.add(VulnClass.IDOR)
             }
 
@@ -372,18 +372,8 @@ class AiScanCheck(
     ): String {
         val patterns =
             when (vulnClass) {
-                VulnClass.SQLI ->
-                    listOf(
-                        Regex("SQL syntax.*MySQL", RegexOption.IGNORE_CASE),
-                        Regex("ORA-[0-9]+", RegexOption.IGNORE_CASE),
-                        Regex("PostgreSQL.*ERROR", RegexOption.IGNORE_CASE),
-                        Regex("SQLServer", RegexOption.IGNORE_CASE),
-                    )
-                VulnClass.LFI ->
-                    listOf(
-                        Regex("root:.*:0:0:"),
-                        Regex("\\[fonts\\]", RegexOption.IGNORE_CASE),
-                    )
+                VulnClass.SQLI -> SQLI_ERROR_PATTERNS
+                VulnClass.LFI -> LFI_ERROR_PATTERNS
                 else -> emptyList()
             }
 
@@ -501,6 +491,23 @@ class AiScanCheck(
      * asserts, and both remain `internal`.
      */
     companion object {
+        // Phase 34 / PERF-01: compiled once per class load, not per call. Declared in the order the
+        // IDOR heuristic and findErrorPattern read them; the list order is the match order.
+        private val IDOR_NUMERIC_VALUE_REGEX = Regex("^\\d+$")
+        private val IDOR_UUID_VALUE_REGEX = Regex("^[a-f0-9-]{36}$", RegexOption.IGNORE_CASE)
+        private val SQLI_ERROR_PATTERNS =
+            listOf(
+                Regex("SQL syntax.*MySQL", RegexOption.IGNORE_CASE),
+                Regex("ORA-[0-9]+", RegexOption.IGNORE_CASE),
+                Regex("PostgreSQL.*ERROR", RegexOption.IGNORE_CASE),
+                Regex("SQLServer", RegexOption.IGNORE_CASE),
+            )
+        private val LFI_ERROR_PATTERNS =
+            listOf(
+                Regex("root:.*:0:0:"),
+                Regex("\\[fonts\\]", RegexOption.IGNORE_CASE),
+            )
+
         /**
          * (PRIV-05) 28-05 / `CR-02` / `AR-27-08` route 2 — is this insertion point the cookie carrier?
          *

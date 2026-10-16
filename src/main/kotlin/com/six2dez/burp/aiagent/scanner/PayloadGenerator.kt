@@ -1,5 +1,8 @@
 package com.six2dez.burp.aiagent.scanner
 
+// Phase 34 / PERF-01: compiled once per class load, not per call.
+private val UUID_VALUE_REGEX = Regex("[a-f0-9-]{36}", RegexOption.IGNORE_CASE)
+
 /**
  * Generates payloads for active vulnerability testing
  * Focus on HIGH CONFIDENCE detection to minimize false positives
@@ -727,7 +730,7 @@ class PayloadGenerator {
         }
 
         // If UUID, try modifying last character
-        if (originalValue.matches(Regex("[a-f0-9-]{36}", RegexOption.IGNORE_CASE))) {
+        if (originalValue.matches(UUID_VALUE_REGEX)) {
             val lastChar = originalValue.last()
             val newChar = if (lastChar == '0') '1' else '0'
             val modified = originalValue.dropLast(1) + newChar
