@@ -21,6 +21,9 @@ import com.six2dez.burp.aiagent.spi.Plugins
 import com.six2dez.burp.aiagent.util.ExtensionThreads
 import com.six2dez.burp.aiagent.util.HeaderParser
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -59,8 +62,14 @@ class AgentSupervisor(
     private sealed class AgentState {
         data object Idle : AgentState()
 
+        /**
+         * Phase 34 / D-01: [ready] is this start's ready signal. It completes with `true` once the start
+         * reaches [Running] and with `false` when it fails, is stopped, or unload begins. The CAS in
+         * [startOrAttach] still compares this instance by identity.
+         */
         data class Starting(
             val backendId: String,
+            val ready: CompletableFuture<Boolean> = CompletableFuture(),
         ) : AgentState()
 
         data class Running(
@@ -84,6 +93,16 @@ class AgentSupervisor(
      */
     @Volatile
     private var shuttingDown = false
+
+    /**
+     * Phase 34 / D-01: completed by [beginShutdown], never reset. [awaitStartInProgress] waits on it as
+     * well as on the start's own ready signal, so a start published just after unload began cannot leave
+     * a waiter sitting until its deadline.
+     */
+    private val unloadSignal = CompletableFuture<Unit>()
+
+    /** Phase 34 / D-01: how a wait on a start already in progress ended ([awaitStartInProgress]). */
+    enum class StartWait { READY, FAILED, TIMEOUT, UNLOADING, INTERRUPTED }
 
     /**
      * Phase 33 / CR-01: every turn of [send] and [sendChat], from just before its `connection.send` until
@@ -154,6 +173,9 @@ class AgentSupervisor(
      */
     fun beginShutdown() {
         shuttingDown = true
+        // Phase 34 / D-01: end every wait on a start in progress at once.
+        unloadSignal.complete(Unit)
+        (stateRef.get() as? AgentState.Starting)?.ready?.complete(false)
         turnsInFlight.values.toList().forEach { connection -> runCatching { connection.stop() } }
     }
 
@@ -200,6 +222,41 @@ class AgentSupervisor(
     fun currentSessionId(): String? = (stateRef.get() as? AgentState.Running)?.sessionId
 
     fun lastStartError(): String? = lastErrorRef.get()
+
+    /**
+     * Phase 34 / D-01: waits, without polling, for a start that another thread already has in progress.
+     * Answers [StartWait.UNLOADING] at once when unload began, and `null` when no start is in progress
+     * (a mocked supervisor answers `null` too, so callers treat it as "nothing to wait for"). Otherwise
+     * it waits until that start's ready signal or the unload signal completes, or [timeoutMs] passes.
+     * An interrupt keeps the thread's interrupt flag and answers [StartWait.INTERRUPTED].
+     */
+    fun awaitStartInProgress(timeoutMs: Long): StartWait? {
+        val starting = stateRef.get() as? AgentState.Starting
+        return when {
+            shuttingDown -> StartWait.UNLOADING
+            starting == null -> null
+            else -> awaitReady(starting, timeoutMs)
+        }
+    }
+
+    private fun awaitReady(
+        starting: AgentState.Starting,
+        timeoutMs: Long,
+    ): StartWait =
+        try {
+            // anyOf completes on the thread that completes either signal: no new thread, no polling.
+            CompletableFuture.anyOf(starting.ready, unloadSignal).get(timeoutMs, TimeUnit.MILLISECONDS)
+            when {
+                shuttingDown -> StartWait.UNLOADING
+                starting.ready.getNow(false) -> StartWait.READY
+                else -> StartWait.FAILED
+            }
+        } catch (_: TimeoutException) {
+            StartWait.TIMEOUT
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            StartWait.INTERRUPTED
+        }
 
     fun startOrAttach(backendId: String): Boolean {
         // Phase 29 / D-08: an unregistered saved id runs on burp-ai, and the policy judges that backend.
@@ -271,6 +328,8 @@ class AgentSupervisor(
             // Uses the same instance reference set above — AtomicReference.compareAndSet
             // checks identity (===), not structural equality.
             if (stateRef.compareAndSet(startingState, newState)) {
+                // Phase 34 / D-01: the session is Running, so a waiter's final check sees it.
+                startingState.ready.complete(true)
                 audit.logEvent(
                     "session_start",
                     mapOf(
@@ -283,6 +342,7 @@ class AgentSupervisor(
                 true
             } else {
                 // Another thread called stop() while we were launching — clean up
+                startingState.ready.complete(false)
                 conn.stop()
                 false
             }
@@ -292,6 +352,7 @@ class AgentSupervisor(
             api.logging().logToError(msg)
             // Reset to Idle if still in STARTING
             stateRef.compareAndSet(startingState, AgentState.Idle)
+            startingState.ready.complete(false)
             false
         }
     }
@@ -343,6 +404,7 @@ class AgentSupervisor(
                 is AgentState.Starting -> {
                     // Launch in progress — state set to Idle; the launching thread
                     // will detect the CAS failure and clean up the connection.
+                    prev.ready.complete(false)
                     audit.logEvent("session_stop", mapOf("backendId" to prev.backendId, "note" to "cancelled_during_start"))
                 }
                 is AgentState.Idle -> { /* nothing */ }

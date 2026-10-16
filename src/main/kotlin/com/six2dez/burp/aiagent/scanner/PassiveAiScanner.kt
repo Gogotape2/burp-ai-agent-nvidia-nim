@@ -535,7 +535,7 @@ class PassiveAiScanner(
 
     // doAnalysis, analyzeManually, analyzeInBackground, flushBatch,
     // fallbackToIndividualAnalysis, sendSingleAnalysis, ensureBackendRunning,
-    // waitForBackendSession, redactUrlForPrompt, redactSensitiveQuery, hasExcludedExtension,
+    // redactUrlForPrompt, redactSensitiveQuery, hasExcludedExtension,
     // isGeminiCapacityError, maybeLogBackoff, extractAndLogJsEndpoints, reconcileBudgetAndLog
     // are internal extension functions in PassiveAiScannerAnalysis.kt.
 

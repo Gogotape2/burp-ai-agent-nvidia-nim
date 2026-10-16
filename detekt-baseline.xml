@@ -854,7 +854,6 @@
     <ID>ReturnCount:PassiveAiScannerAnalysis.kt$internal fun PassiveAiScanner.ensureBackendRunning(settings: AgentSettings): Boolean</ID>
     <ID>ReturnCount:PassiveAiScannerAnalysis.kt$internal fun PassiveAiScanner.extractAndLogJsEndpoints( request: burp.api.montoya.http.message.requests.HttpRequest, jsBody: String, )</ID>
     <ID>ReturnCount:PassiveAiScannerAnalysis.kt$internal fun PassiveAiScanner.flushBatch(settings: AgentSettings)</ID>
-    <ID>ReturnCount:PassiveAiScannerAnalysis.kt$internal fun PassiveAiScanner.waitForBackendSession( maxWaitMs: Long, pollMs: Long, ): Boolean</ID>
     <ID>ReturnCount:PassiveAiScannerFilters.kt$internal fun PassiveAiScanner.promptResultCacheValue(promptHash: String): List&lt;AiIssueItem>?</ID>
     <ID>ReturnCount:PassiveAiScannerFilters.kt$internal fun PassiveAiScanner.shouldSkipAiAfterLocalFindings( localFindings: List&lt;LocalFinding>, request: HttpRequest, requestBody: String, ): Boolean</ID>
     <ID>ReturnCount:PassiveAiScannerFilters.kt$internal fun PassiveAiScanner.shouldSkipKnownResponseFingerprint( request: HttpRequest, response: HttpResponse?, responseBody: String, ): Boolean</ID>
