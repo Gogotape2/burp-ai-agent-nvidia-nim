@@ -18,8 +18,11 @@ import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.util.ArrayDeque
 import java.util.Locale
+import java.util.concurrent.CompletableFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 class CliBackend(
@@ -296,51 +299,50 @@ class CliBackend(
                         }
 
                         val rawOutput = CliOutputBuffer()
-                        val lastOutputAt =
-                            java.util.concurrent.atomic
-                                .AtomicLong(0L)
-                        val hasOutput =
-                            java.util.concurrent.atomic
-                                .AtomicBoolean(false)
+                        val lastOutputAt = AtomicLong(0L)
+                        // Phase 34 / D-07: completed on the first line, so the opencode wait can race it
+                        // against process exit instead of polling.
+                        val firstOutput = CompletableFuture<Unit>()
                         val readerThread =
                             ExtensionThreads.newThread("cli-reader") {
                                 val reader = BufferedReader(InputStreamReader(process.inputStream))
                                 reader.forEachLine { line ->
                                     rawOutput.appendLine(line)
-                                    hasOutput.set(true)
                                     lastOutputAt.set(System.currentTimeMillis())
+                                    firstOutput.complete(Unit)
                                 }
                             }
                         readerThread.start()
 
                         var terminatedAfterIdle = false
-                        if (backendId == "opencode-cli") {
-                            val start = System.currentTimeMillis()
-                            while (true) {
-                                if (process.waitFor(200, TimeUnit.MILLISECONDS)) break
-                                val idleMs = System.currentTimeMillis() - lastOutputAt.get()
-                                if (hasOutput.get() && idleMs > Defaults.OPENCODE_IDLE_TIMEOUT_MS) {
-                                    terminatedAfterIdle = true
-                                    process.destroyForcibly()
-                                    break
+                        // REL-04: both waits read the user-configured cliTimeoutSeconds instead of a hardcoded constant.
+                        // Phase 34 / D-07: opencode waits on exit with idle and wall-clock deadlines, and its
+                        // wall-clock timeout now takes the same branch (and message) as every other CLI.
+                        val timedOut =
+                            if (backendId == "opencode-cli") {
+                                val timeoutMs = TimeUnit.SECONDS.toMillis(cliTimeoutSeconds.toLong())
+                                when (awaitOpenCodeExit(process, firstOutput, lastOutputAt, timeoutMs)) {
+                                    CliWait.IDLE_KILLED -> {
+                                        terminatedAfterIdle = true
+                                        false
+                                    }
+                                    CliWait.TIMED_OUT -> true
+                                    CliWait.EXITED -> false
                                 }
-                                // REL-04: use the user-configured timeout for the wall-clock safety break
-                                if (System.currentTimeMillis() - start > cliTimeoutSeconds * 1000L) break
+                            } else {
+                                !process.waitFor(cliTimeoutSeconds.toLong(), TimeUnit.SECONDS)
                             }
-                        } else {
-                            // REL-04: read user-configured cliTimeoutSeconds instead of hardcoded constant
-                            if (!process.waitFor(cliTimeoutSeconds.toLong(), TimeUnit.SECONDS)) {
-                                process.destroyForcibly()
-                                try {
-                                    readerThread.join(2000)
-                                } catch (_: InterruptedException) {
-                                    // INTENTIONAL: interrupted while waiting for reader thread; restores interrupt flag
-                                    Thread.currentThread().interrupt()
-                                }
-                                val tail = rawOutput.snapshot().trim().take(2000)
-                                onComplete(IllegalStateException(buildTimeoutMessage(tail, cliTimeoutSeconds)))
-                                return@submit
+                        if (timedOut) {
+                            process.destroyForcibly()
+                            try {
+                                readerThread.join(2000)
+                            } catch (_: InterruptedException) {
+                                // INTENTIONAL: interrupted while waiting for reader thread; restores interrupt flag
+                                Thread.currentThread().interrupt()
                             }
+                            val tail = rawOutput.snapshot().trim().take(2000)
+                            onComplete(IllegalStateException(buildTimeoutMessage(tail, cliTimeoutSeconds)))
+                            return@submit
                         }
                         try {
                             readerThread.join(2000)
@@ -947,4 +949,77 @@ internal fun stripAnsiCodes(text: String): String {
     result = result.replace(Regex("\\[\\d+m"), "")
 
     return result
+}
+
+/** Phase 34 / D-07: how the opencode CLI wait in [awaitOpenCodeExit] ended. */
+internal enum class CliWait { EXITED, IDLE_KILLED, TIMED_OUT }
+
+/** The shortest timed wait [awaitOpenCodeExit] asks for, so a deadline reached exactly never becomes a zero wait. */
+private const val MIN_PROCESS_WAIT_MS = 1L
+
+/**
+ * Phase 34 / D-07: waits for the opencode CLI [process] on its exit and on deadlines, with no
+ * fixed-interval wake-ups.
+ *
+ * - Before any output, the wait races process exit against [firstOutput] (completed by the reader
+ *   thread on the first line), bounded by the wall clock [timeoutMs].
+ * - After output, each wait ends at the earlier of the wall-clock deadline and the idle deadline
+ *   (`lastOutputAt + idleTimeoutMs`). A wake-up that finds newer output re-arms the idle deadline.
+ *
+ * Outcomes: [CliWait.EXITED] when the process ends; [CliWait.IDLE_KILLED] after more than
+ * [idleTimeoutMs] of silence following output (the process is destroyed here, and the output so far
+ * is used); [CliWait.TIMED_OUT] when the wall clock passes, leaving the process for the caller's
+ * timeout branch to destroy.
+ *
+ * @throws InterruptedException when the worker is interrupted (stop()); the caller's catch and
+ *   finally destroy the process.
+ */
+internal fun awaitOpenCodeExit(
+    process: Process,
+    firstOutput: CompletableFuture<Unit>,
+    lastOutputAt: AtomicLong,
+    timeoutMs: Long,
+    idleTimeoutMs: Long = Defaults.OPENCODE_IDLE_TIMEOUT_MS,
+): CliWait {
+    val deadline = System.currentTimeMillis() + timeoutMs
+    try {
+        // Neither future completes exceptionally, so get() cannot throw ExecutionException.
+        CompletableFuture.anyOf(process.onExit(), firstOutput).get(timeoutMs, TimeUnit.MILLISECONDS)
+    } catch (_: TimeoutException) {
+        // INTENTIONAL: no exit and no output before the wall-clock deadline is the timeout outcome
+        return CliWait.TIMED_OUT
+    }
+    var outcome: CliWait? = if (process.isAlive) null else CliWait.EXITED
+    while (outcome == null) {
+        val wakeAt = minOf(deadline, lastOutputAt.get() + idleTimeoutMs)
+        val waitMs = (wakeAt - System.currentTimeMillis()).coerceAtLeast(MIN_PROCESS_WAIT_MS)
+        outcome =
+            if (process.waitFor(waitMs, TimeUnit.MILLISECONDS)) {
+                CliWait.EXITED
+            } else {
+                deadlineOutcome(process, deadline, lastOutputAt.get() + idleTimeoutMs)
+            }
+    }
+    return outcome
+}
+
+/**
+ * The outcome of a wake-up in [awaitOpenCodeExit] that did not see the process exit: the wall clock
+ * passed, the idle deadline passed (the process is destroyed), or null when output moved the idle
+ * deadline and the wait goes on.
+ */
+private fun deadlineOutcome(
+    process: Process,
+    deadline: Long,
+    idleDeadline: Long,
+): CliWait? {
+    val now = System.currentTimeMillis()
+    return when {
+        now >= deadline -> CliWait.TIMED_OUT
+        now > idleDeadline -> {
+            process.destroyForcibly()
+            CliWait.IDLE_KILLED
+        }
+        else -> null
+    }
 }
