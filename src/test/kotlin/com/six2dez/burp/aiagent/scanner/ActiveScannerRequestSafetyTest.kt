@@ -321,6 +321,9 @@ class ActiveScannerRequestSafetyTest {
         assertEquals(1, recorder.originalSends(original), "two classes of one request share one baseline")
 
         scanner.setEnabled(false)
+        // Phase 34 / D-04: a stopped scanner sends nothing (sendRequestWithTimeout checks haltRequested()),
+        // so the next target runs on a restarted scanner; a start does not refill the dropped baselines.
+        scanner.setEnabled(true)
         run(scanner, target(original, point, VulnClass.LFI))
         assertEquals(2, recorder.originalSends(original), "stopping the scanner drops the shared baseline")
     }

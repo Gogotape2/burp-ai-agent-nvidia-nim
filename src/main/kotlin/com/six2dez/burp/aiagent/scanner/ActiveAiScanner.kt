@@ -126,6 +126,9 @@ class ActiveAiScanner(
     @Volatile
     private var stopIssued = false
 
+    /** Phase 34 / D-04: the pacing wait between payloads; released by a stop, reset by the next start. */
+    private val pacing = ScanPacing()
+
     // Finding #7 (BApp #231): SSRF out-of-band confirmation is asynchronous. A single shared
     // Collaborator client + one scheduled poller replace the old per-target client that blocked a
     // scanner thread polling getAllInteractions() every 500 ms for up to 30 s.
@@ -610,6 +613,7 @@ class ActiveAiScanner(
     private fun startProcessing() {
         if (executor != null || scheduledExecutor != null || oastPoller != null) stopProcessing()
         stopIssued = false
+        pacing.reset() // Phase 34 / D-04: the new run's pauses wait the full delay again.
         scanning.set(true)
 
         // REL-07 / SC6, Phase 33 / D-11: every pool comes from the thread helper, so a Burp thread dump
@@ -657,6 +661,9 @@ class ActiveAiScanner(
      */
     private fun stopProcessing(waitForWorkers: Boolean = true) {
         stopIssued = true
+        // Phase 34 / D-04: end every pacing wait now, before the interrupt, so a worker whose
+        // interrupt is swallowed still leaves its wait and halts on haltRequested().
+        pacing.release()
         scanning.set(false)
         val workers = executor
         val scheduler = scheduledExecutor
@@ -852,7 +859,7 @@ class ActiveAiScanner(
                 val trueResponse = sendRequestWithTimeout(trueRequest) ?: continue
                 val trueRequestResponse = HttpRequestResponse.httpRequestResponse(trueRequest, trueResponse.response())
 
-                Thread.sleep(requestDelayMs)
+                pacing.pause(requestDelayMs) // Phase 34 / D-04: OFF and unload end this wait at once.
 
                 // Test FALSE condition
                 val falseRequest = injectPayload(target.originalRequest.request(), target.injectionPoint, falsePayload.value)
@@ -875,7 +882,7 @@ class ActiveAiScanner(
                     return ActiveScanResult(target, allPayloads.indexOf(falsePayload) + 1, confirmation)
                 }
 
-                Thread.sleep(requestDelayMs)
+                pacing.pause(requestDelayMs) // Phase 34 / D-04: OFF and unload end this wait at once.
             } catch (_: InterruptedException) {
                 // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
                 Thread.currentThread().interrupt()
@@ -949,7 +956,7 @@ class ActiveAiScanner(
                 }
 
                 // Rate limiting
-                Thread.sleep(requestDelayMs)
+                pacing.pause(requestDelayMs) // Phase 34 / D-04: OFF and unload end this wait at once.
             } catch (_: InterruptedException) {
                 // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
                 Thread.currentThread().interrupt()
@@ -1033,7 +1040,7 @@ class ActiveAiScanner(
                     return ActiveScanResult(target, index + 1, confirmation)
                 }
 
-                Thread.sleep(requestDelayMs)
+                pacing.pause(requestDelayMs) // Phase 34 / D-04: OFF and unload end this wait at once.
             } catch (_: InterruptedException) {
                 // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
                 Thread.currentThread().interrupt()
@@ -1438,7 +1445,9 @@ class ActiveAiScanner(
         // function, climb through executeScan into the per-target catch, and abort a whole target
         // with a message of `null` — the exception type usually carries none.
         // Phase 33 / D-02: a worker that OFF interrupted sends nothing new to the target.
-        if (Thread.currentThread().isInterrupted) return null
+        // Phase 34 / D-04: the full halt check, so a pacing wait that a stop released without an
+        // interrupt does not go on to send the next request of a boolean pair.
+        if (haltRequested()) return null
         var future: Future<HttpRequestResponse>? = null
         return try {
             future =
@@ -1827,7 +1836,7 @@ class ActiveAiScanner(
                         ),
                     )
                 }
-                Thread.sleep(requestDelayMs)
+                pacing.pause(requestDelayMs) // Phase 34 / D-04: OFF and unload end this wait at once.
             } catch (_: InterruptedException) {
                 // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
                 Thread.currentThread().interrupt()
@@ -1879,7 +1888,7 @@ class ActiveAiScanner(
                         ),
                     )
                 }
-                Thread.sleep(requestDelayMs)
+                pacing.pause(requestDelayMs) // Phase 34 / D-04: OFF and unload end this wait at once.
             } catch (_: InterruptedException) {
                 // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
                 Thread.currentThread().interrupt()
@@ -1930,7 +1939,7 @@ class ActiveAiScanner(
                         ),
                     )
                 }
-                Thread.sleep(requestDelayMs)
+                pacing.pause(requestDelayMs) // Phase 34 / D-04: OFF and unload end this wait at once.
             } catch (_: InterruptedException) {
                 // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
                 Thread.currentThread().interrupt()
