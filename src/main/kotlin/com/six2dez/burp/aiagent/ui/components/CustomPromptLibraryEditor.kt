@@ -398,7 +398,7 @@ class CustomPromptLibraryEditor {
     }
 }
 
-private object CustomPromptEditDialog {
+internal object CustomPromptEditDialog {
     fun show(
         parent: JComponent,
         existing: CustomPromptDefinition?,
@@ -435,7 +435,11 @@ private object CustomPromptEditDialog {
         south.add(favorite)
         panel.add(south, BorderLayout.SOUTH)
 
-        while (true) {
+        // Modal dialog re-prompt loop (Phase 34 / D-05): it waits on user input and keeps asking
+        // until the user cancels or enters valid input. Not a string scan; it never sleeps or polls.
+        var definition: CustomPromptDefinition? = null
+        var asking = true
+        while (asking) {
             val result =
                 JOptionPane.showConfirmDialog(
                     parent,
@@ -444,7 +448,6 @@ private object CustomPromptEditDialog {
                     JOptionPane.OK_CANCEL_OPTION,
                     JOptionPane.PLAIN_MESSAGE,
                 )
-            if (result != JOptionPane.OK_OPTION) return null
             val title = titleField.text.trim()
             val text = textArea.text.trim()
             val tags =
@@ -452,24 +455,29 @@ private object CustomPromptEditDialog {
                     if (httpTag.isSelected) add(CustomPromptTag.HTTP_SELECTION)
                     if (issueTag.isSelected) add(CustomPromptTag.SCANNER_ISSUE)
                 }
-            if (title.isBlank() || text.isBlank() || tags.isEmpty()) {
-                JOptionPane.showMessageDialog(
-                    parent,
-                    "Title, prompt text, and at least one tag are required.",
-                    "Missing fields",
-                    JOptionPane.WARNING_MESSAGE,
-                )
-                continue
+            when {
+                result != JOptionPane.OK_OPTION -> asking = false
+                title.isBlank() || text.isBlank() || tags.isEmpty() ->
+                    JOptionPane.showMessageDialog(
+                        parent,
+                        "Title, prompt text, and at least one tag are required.",
+                        "Missing fields",
+                        JOptionPane.WARNING_MESSAGE,
+                    )
+                else -> {
+                    definition =
+                        CustomPromptDefinition(
+                            id = existing?.id ?: UUID.randomUUID().toString(),
+                            title = title,
+                            promptText = text,
+                            tags = tags,
+                            showInContextMenu = showInMenu.isSelected,
+                            isFavorite = favorite.isSelected,
+                        )
+                    asking = false
+                }
             }
-            val id = existing?.id ?: UUID.randomUUID().toString()
-            return CustomPromptDefinition(
-                id = id,
-                title = title,
-                promptText = text,
-                tags = tags,
-                showInContextMenu = showInMenu.isSelected,
-                isFavorite = favorite.isSelected,
-            )
         }
+        return definition
     }
 }
