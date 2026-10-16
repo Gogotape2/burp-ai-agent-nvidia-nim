@@ -16,6 +16,7 @@ import com.six2dez.burp.aiagent.backends.http.CircuitBreaker
 import com.six2dez.burp.aiagent.backends.http.ConversationHistory
 import com.six2dez.burp.aiagent.backends.http.HttpBackendSupport
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
+import com.six2dez.burp.aiagent.backends.http.RetryingTurnRunner
 import com.six2dez.burp.aiagent.backends.http.recordHttpFailureIfRetryable
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.util.ExtensionThreads
@@ -128,8 +129,12 @@ class OllamaBackend :
         UsageAwareConnection,
         JsonModeCapable {
         private val alive = AtomicBoolean(true)
-        private val exec =
-            ExtensionThreads.singleThread("ollama-connection")
+
+        // Phase 34 / D-06: a scheduler, so a retry backoff is a one-shot task on this worker instead of
+        // a blocked worker. Same worker name as before (`burp-ai-agent-ollama-connection`).
+        private val exec = ExtensionThreads.scheduled("ollama-connection")
+        private val runner =
+            RetryingTurnRunner(exec, "ollama", "Ollama", circuitBreaker, ::isAlive, debugLog, errorLog)
         private val conversationHistory = ConversationHistory(20)
         private val lastTokenUsageRef = AtomicReference<TokenUsage?>(null)
 
@@ -156,163 +161,118 @@ class OllamaBackend :
             }
 
             debugLog("send invoked (alive=${isAlive()}) textBytes=${text.toByteArray(Charsets.UTF_8).size}")
-            exec.submit {
-                try {
+            runner.submit(
+                prologue = {
                     lastTokenUsageRef.set(null)
                     debugLog("worker started on ${Thread.currentThread().name}")
                     if (history != null) {
                         conversationHistory.setHistory(history)
                     }
                     conversationHistory.setSystemPrompt(systemPrompt)
-                    val maxAttempts = 6
-                    var attempt = 0
-                    var lastError: Exception? = null
-                    while (attempt < maxAttempts) {
-                        val permission = circuitBreaker.tryAcquire()
-                        if (!permission.allowed) {
-                            val failFastError = HttpBackendSupport.openCircuitError("Ollama", permission.retryAfterMs)
-                            debugLog("circuit open: ${failFastError.message}")
-                            onComplete(failFastError)
-                            return@submit
+                },
+                attempt = attempt@{ complete ->
+                    // NET-01: Ollama MUST route through MontoyaHttpTransport so Burp's upstream
+                    // proxy / SOCKS / cert store and the egress gate apply. A null transport
+                    // means the supervisor's wiring is broken: fail fast, never send directly.
+                    val boundTransport = checkNotNull(transport) { MontoyaHttpTransport.TRANSPORT_UNAVAILABLE }
+                    // D-08 / GATE-02: resolved here, on the worker, before the first chat
+                    // request; a refusal propagates as AiAccessRefusedException (never retried).
+                    val numCtx = contextWindowFor(boundTransport)
+                    debugLog("serialize start (model=$model, baseUrl=$baseUrl)")
+                    // Add user message to conversation history
+                    conversationHistory.addUser(text)
+                    // Use non-streaming mode for better performance
+                    val json =
+                        buildChatJson(
+                            model = model,
+                            stream = false,
+                            temperature = if (determinismMode) 0.0 else null,
+                            numCtx = numCtx,
+                            formatJson = jsonMode,
+                            numPredict = maxOutputTokens,
+                        )
+                    debugLog("serialize done bytes=${json.toByteArray(Charsets.UTF_8).size}")
+
+                    val endpointUrl = "$baseUrl/api/chat"
+                    val allHeaders =
+                        buildMap {
+                            putAll(headers)
+                            if (!sessionId.isNullOrBlank()) {
+                                put("X-Session-Id", sessionId)
+                            }
                         }
-                        if (!isAlive()) {
-                            onComplete(IllegalStateException("Connection closed"))
-                            return@submit
-                        }
-                        try {
-                            // NET-01: Ollama MUST route through MontoyaHttpTransport so Burp's upstream
-                            // proxy / SOCKS / cert store and the egress gate apply. A null transport
-                            // means the supervisor's wiring is broken: fail fast, never send directly.
-                            val boundTransport = checkNotNull(transport) { MontoyaHttpTransport.TRANSPORT_UNAVAILABLE }
-                            // D-08 / GATE-02: resolved here, on the worker, before the first chat
-                            // request; a refusal propagates as AiAccessRefusedException (never retried).
-                            val numCtx = contextWindowFor(boundTransport)
-                            debugLog("serialize start (model=$model, baseUrl=$baseUrl)")
-                            // Add user message to conversation history
-                            conversationHistory.addUser(text)
-                            // Use non-streaming mode for better performance
-                            val json =
-                                buildChatJson(
-                                    model = model,
-                                    stream = false,
-                                    temperature = if (determinismMode) 0.0 else null,
-                                    numCtx = numCtx,
-                                    formatJson = jsonMode,
-                                    numPredict = maxOutputTokens,
-                                )
-                            debugLog("serialize done bytes=${json.toByteArray(Charsets.UTF_8).size}")
 
-                            val endpointUrl = "$baseUrl/api/chat"
-                            val allHeaders =
-                                buildMap {
-                                    putAll(headers)
-                                    if (!sessionId.isNullOrBlank()) {
-                                        put("X-Session-Id", sessionId)
-                                    }
-                                }
+                    debugLog("request -> $endpointUrl (stream=false)")
 
-                            debugLog("request -> $endpointUrl (stream=false)")
-
-                            val resp = boundTransport.post(endpointUrl, allHeaders, json, timeoutSeconds * 1000)
-                            if (!resp.isSuccessful) {
-                                errorLog("HTTP ${resp.statusCode}: ${resp.body.take(500)}")
-                                circuitBreaker.recordHttpFailureIfRetryable(resp.statusCode)
-                                // WR-04: bound the surfaced body (matches OpenAI/Anthropic .take(800))
-                                // so a large/secret-laden error envelope isn't echoed wholesale into the
-                                // chat bubble and persisted session.messages.
-                                onComplete(IllegalStateException("Ollama HTTP ${resp.statusCode}: ${resp.body.take(800)}"))
-                                return@submit
-                            }
-                            debugLog("response <- HTTP ${resp.statusCode}")
-                            val body = resp.body
-
-                            if (body.isBlank()) {
-                                onComplete(IllegalStateException("Ollama response body was empty"))
-                                return@submit
-                            }
-                            val node = mapper.readTree(body)
-                            if (node.has("error")) {
-                                val errText = node.path("error").asText()
-                                errorLog("error: $errText")
-                                onComplete(IllegalStateException("Ollama error: $errText"))
-                                return@submit
-                            }
-
-                            // Extract content from either 'content' or 'response' field. Use takeIf so
-                            // a blank `message.content` (e.g. `{"message": {}}`) doesn't shadow a real
-                            // value in the legacy `response` field.
-                            val content =
-                                node
-                                    .path("message")
-                                    .path("content")
-                                    .asText()
-                                    .takeIf { it.isNotBlank() }
-                                    ?: node.path("response").asText("")
-                            val promptTokens = node.path("prompt_eval_count").asInt(-1)
-                            val completionTokens = node.path("eval_count").asInt(-1)
-                            if (promptTokens >= 0 || completionTokens >= 0) {
-                                lastTokenUsageRef.set(
-                                    TokenUsage(
-                                        inputTokens = promptTokens.coerceAtLeast(0),
-                                        outputTokens = completionTokens.coerceAtLeast(0),
-                                    ),
-                                )
-                            }
-
-                            if (content.isBlank()) {
-                                // Snippet capped at 200 chars; the body can echo prompt content, so we
-                                // keep this short — enough to diagnose response shape, not enough to
-                                // leak meaningful prompt fragments into Burp's error log.
-                                val snippet = body.take(200).replace("\n", " ")
-                                errorLog("response content empty; raw body snippet: $snippet")
-                                onComplete(
-                                    IllegalStateException(
-                                        "Ollama response content was empty. Raw body snippet: $snippet",
-                                    ),
-                                )
-                                return@submit
-                            }
-
-                            debugLog("received complete response (${content.length} chars)")
-                            // Add assistant response to conversation history
-                            conversationHistory.addAssistant(content)
-                            circuitBreaker.recordSuccess()
-                            onChunk(content)
-                            onComplete(null)
-                            return@submit
-                        } catch (e: Exception) {
-                            lastError = e
-                            val retryable = HttpBackendSupport.isRetryableConnectionError(e)
-                            if (retryable) {
-                                circuitBreaker.recordFailure()
-                            }
-                            if (!retryable || attempt == maxAttempts - 1) {
-                                throw e
-                            }
-                            val delayMs = HttpBackendSupport.retryDelayMs(attempt)
-                            BackendDiagnostics.logRetry("ollama", attempt + 1, delayMs, e.message)
-                            debugLog("retrying in ${delayMs}ms after: ${e.message}")
-                            try {
-                                Thread.sleep(delayMs)
-                            } catch (_: InterruptedException) {
-                                Thread.currentThread().interrupt()
-                                throw e
-                            }
-                            attempt++
-                        }
+                    val resp = boundTransport.post(endpointUrl, allHeaders, json, timeoutSeconds * 1000)
+                    if (!resp.isSuccessful) {
+                        errorLog("HTTP ${resp.statusCode}: ${resp.body.take(500)}")
+                        circuitBreaker.recordHttpFailureIfRetryable(resp.statusCode)
+                        // WR-04: bound the surfaced body (matches OpenAI/Anthropic .take(800))
+                        // so a large/secret-laden error envelope isn't echoed wholesale into the
+                        // chat bubble and persisted session.messages.
+                        complete(IllegalStateException("Ollama HTTP ${resp.statusCode}: ${resp.body.take(800)}"))
+                        return@attempt
                     }
-                    if (lastError != null) {
-                        throw lastError
+                    debugLog("response <- HTTP ${resp.statusCode}")
+                    val body = resp.body
+
+                    if (body.isBlank()) {
+                        complete(IllegalStateException("Ollama response body was empty"))
+                        return@attempt
                     }
-                } catch (e: Exception) {
-                    errorLog("exception: ${e.message}")
-                    onComplete(e)
-                } finally {
-                    if (!isAlive()) {
-                        exec.shutdownNow()
+                    val node = mapper.readTree(body)
+                    if (node.has("error")) {
+                        val errText = node.path("error").asText()
+                        errorLog("error: $errText")
+                        complete(IllegalStateException("Ollama error: $errText"))
+                        return@attempt
                     }
-                }
-            }
+
+                    // Extract content from either 'content' or 'response' field. Use takeIf so
+                    // a blank `message.content` (e.g. `{"message": {}}`) doesn't shadow a real
+                    // value in the legacy `response` field.
+                    val content =
+                        node
+                            .path("message")
+                            .path("content")
+                            .asText()
+                            .takeIf { it.isNotBlank() }
+                            ?: node.path("response").asText("")
+                    val promptTokens = node.path("prompt_eval_count").asInt(-1)
+                    val completionTokens = node.path("eval_count").asInt(-1)
+                    if (promptTokens >= 0 || completionTokens >= 0) {
+                        lastTokenUsageRef.set(
+                            TokenUsage(
+                                inputTokens = promptTokens.coerceAtLeast(0),
+                                outputTokens = completionTokens.coerceAtLeast(0),
+                            ),
+                        )
+                    }
+
+                    if (content.isBlank()) {
+                        // Snippet capped at 200 chars; the body can echo prompt content, so we
+                        // keep this short — enough to diagnose response shape, not enough to
+                        // leak meaningful prompt fragments into Burp's error log.
+                        val snippet = body.take(200).replace("\n", " ")
+                        errorLog("response content empty; raw body snippet: $snippet")
+                        complete(
+                            IllegalStateException(
+                                "Ollama response content was empty. Raw body snippet: $snippet",
+                            ),
+                        )
+                        return@attempt
+                    }
+
+                    debugLog("received complete response (${content.length} chars)")
+                    // Add assistant response to conversation history
+                    conversationHistory.addAssistant(content)
+                    circuitBreaker.recordSuccess()
+                    onChunk(content)
+                    complete(null)
+                },
+                onComplete = onComplete,
+            )
         }
 
         /**
@@ -457,6 +417,8 @@ class OllamaBackend :
 
         override fun stop() {
             alive.set(false)
+            // Cancels a pending retry and completes its turn before the worker goes away.
+            runner.stop()
             exec.shutdownNow()
         }
     }
