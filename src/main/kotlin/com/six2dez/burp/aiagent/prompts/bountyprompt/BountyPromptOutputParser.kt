@@ -7,6 +7,11 @@ import com.fasterxml.jackson.databind.SerializationFeature
 import com.fasterxml.jackson.databind.json.JsonMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 
+// Compiled once. Kept separate from PassiveAiScannerParsing's similar fence patterns on purpose.
+private val NONE_MARKER_REGEX = Regex("\\bNONE\\b", RegexOption.IGNORE_CASE)
+private val OUTPUT_FENCE_START_REGEX = Regex("^```(?:json)?\\s*", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE))
+private val OUTPUT_FENCE_END_REGEX = Regex("\\s*```$", RegexOption.MULTILINE)
+
 class BountyPromptOutputParser(
     private val mapper: ObjectMapper =
         JsonMapper
@@ -21,7 +26,7 @@ class BountyPromptOutputParser(
         definition: BountyPromptDefinition,
     ): List<BountyPromptFinding> {
         if (outputText.isBlank()) return emptyList()
-        if (Regex("\\bNONE\\b", RegexOption.IGNORE_CASE).containsMatchIn(outputText)) {
+        if (NONE_MARKER_REGEX.containsMatchIn(outputText)) {
             return emptyList()
         }
 
@@ -126,8 +131,8 @@ class BountyPromptOutputParser(
 
     private fun stripCodeFences(text: String): String =
         text
-            .replace(Regex("^```(?:json)?\\s*", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)), "")
-            .replace(Regex("\\s*```$", RegexOption.MULTILINE), "")
+            .replace(OUTPUT_FENCE_START_REGEX, "")
+            .replace(OUTPUT_FENCE_END_REGEX, "")
             .trim()
 
     private fun extractBalancedJsonCandidates(text: String): List<String> {

@@ -940,7 +940,7 @@ class ChatPanel(
         }
     }
 
-    private fun sanitizeTitle(raw: String): String = raw.replace(Regex("[\\t\\n\\r\\u0000-\\u001F]"), " ").trim()
+    private fun sanitizeTitle(raw: String): String = raw.replace(TITLE_CONTROL_CHARS_REGEX, " ").trim()
 
     private fun createSession(title: String): ChatSession {
         val id = "chat-" + UUID.randomUUID().toString()
@@ -1113,7 +1113,7 @@ class ChatPanel(
                 }
             }
         val chooser = javax.swing.JFileChooser()
-        chooser.selectedFile = java.io.File("${session.title.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")}.md")
+        chooser.selectedFile = java.io.File("${session.title.replace(EXPORT_FILENAME_UNSAFE_REGEX, "_")}.md")
         if (chooser.showSaveDialog(root) == javax.swing.JFileChooser.APPROVE_OPTION) {
             try {
                 chooser.selectedFile.writeText(md)
@@ -1688,6 +1688,10 @@ class ChatPanel(
     }
 
     companion object {
+        // Compiled once; declared first so no companion initializer can read them before they exist.
+        private val TITLE_CONTROL_CHARS_REGEX = Regex("[\\t\\n\\r\\u0000-\\u001F]")
+        private val EXPORT_FILENAME_UNSAFE_REGEX = Regex("[^a-zA-Z0-9_\\-]")
+
         // `internal`, not `private`, so the module's test compilation can READ it. The one reason is
         // ChatPanelToolGateTest.eightConsecutiveDenialsTerminateTheChainWithNoNinthTurn, which derives
         // its expected turn count from this budget instead of hardcoding 8 — a stale literal silently
