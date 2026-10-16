@@ -117,6 +117,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   running. Start it now?", the scan confirmations with real target counts taken from the list that
   is actually queued, the Test connection result). If the site map cannot be read, a dialog says
   "Could not read the selected site map subtree." and the action stops.
+- **Waits end when you stop them** - backend retries keep their timing but no longer hold a thread,
+  and stop at once when a connection is stopped or the extension unloads. Turning the AI Active
+  Scanner off ends its request pacing at once. A passive item that arrives while another start of
+  the backend is in progress waits up to 10 s for it instead of being dropped. In the full build,
+  an OpenCode timeout reports the same timeout message as the other CLI backends. MCP TLS
+  certificate generation gives up after 60 s instead of waiting forever.
 
 ### Removed
 
