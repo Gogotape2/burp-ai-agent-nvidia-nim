@@ -549,7 +549,7 @@ class ExternalServersPanel(
      * segments, so paths containing spaces survive. No shell is invoked — this is the only tokenizer.
      */
     private fun tokenizeArgs(input: String): List<String> =
-        Regex("\"([^\"]*)\"|(\\S+)")
+        ARG_TOKEN_REGEX
             .findAll(input)
             .map { m -> m.groupValues[1].ifEmpty { m.groupValues[2] } }
             .filter { it.isNotBlank() }
@@ -674,6 +674,9 @@ class ExternalServersPanel(
     // ── Column indices ───────────────────────────────────────────────────────────────────────────
 
     companion object {
+        // WR-03 argument tokenizer pattern, compiled once; declared before the other companion members.
+        private val ARG_TOKEN_REGEX = Regex("\"([^\"]*)\"|(\\S+)")
+
         const val COL_ENABLE = 0
         const val COL_NAME = 1
         const val COL_TRANSPORT = 2
