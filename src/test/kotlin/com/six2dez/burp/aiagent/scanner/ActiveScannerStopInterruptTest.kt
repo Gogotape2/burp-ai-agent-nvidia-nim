@@ -87,18 +87,52 @@ class ActiveScannerStopInterruptTest {
         val scanner = attackingScanner()
 
         // Send 1 is the baseline and send 2 the first payload, which answers at once; the worker then
-        // sits in the 1 s pacing sleep, which is where OFF's interrupt has to land for this case.
+        // sits in the 1 s pacing wait, which is where OFF's interrupt has to land for this case.
         assertTimeoutPreemptively(Duration.ofSeconds(AWAIT_SECONDS)) {
             while (rig.sends.get() < HELD_SEND) Thread.sleep(POLL_MS)
         }
-        Thread.sleep(INTO_PACING_SLEEP_MS)
+        Thread.sleep(INTO_PACING_WAIT_MS)
+        val beforeOff = rig.errorLines().size
         turnOffAndAwaitSettled(scanner)
         Thread.sleep(QUIET_MS)
 
-        val swallowed = rig.errorLines().filter { it.contains("sleep interrupted") }
+        // Phase 34 / D-04: matched on the log shape, not the exception message. A latch wait throws an
+        // InterruptedException with a null message, so a message-based filter would pass even when the
+        // interrupt were logged as "... error: null".
+        val swallowed =
+            rig.errorLines().drop(beforeOff).filter {
+                it.contains("[ActiveAiScanner]") && it.contains("error:", ignoreCase = true)
+            }
         assertTrue(
             swallowed.isEmpty(),
             "D-02: OFF's interrupt must end the payload loop, not be logged as a payload error: $swallowed",
+        )
+    }
+
+    @Test
+    fun offEndsALongPacingWaitAtOnce() {
+        val scanner = attackingScanner(LONG_REQUEST_DELAY_MS)
+
+        // Phase 34 / D-04 (SC3): with a 5 s delay the worker spends almost all of its time in the pacing
+        // wait. OFF must end that wait at once, not when the delay runs out, and nothing more is sent.
+        assertTimeoutPreemptively(Duration.ofSeconds(AWAIT_SECONDS)) {
+            while (rig.sends.get() < HELD_SEND) Thread.sleep(POLL_MS)
+        }
+        Thread.sleep(INTO_PACING_WAIT_MS)
+        val startNs = System.nanoTime()
+        turnOffAndAwaitSettled(scanner)
+        val settleMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - startNs)
+        val atSettle = rig.sends.get()
+
+        assertTrue(
+            settleMs < LONG_WAIT_SETTLE_BUDGET_MS,
+            "D-04: OFF must end a ${LONG_REQUEST_DELAY_MS}ms pacing wait at once; it took ${settleMs}ms to settle",
+        )
+        Thread.sleep(QUIET_MS)
+        assertEquals(
+            atSettle,
+            rig.sends.get(),
+            "D-04: a pacing wait ended by OFF must not send another request. Error lines: ${rig.errorLines()}",
         )
     }
 
@@ -106,10 +140,10 @@ class ActiveScannerStopInterruptTest {
     // Fixture
     // ---------------------------------------------------------------------------------------------
 
-    /** A running scanner attacking one SQLi target with ten payloads paced 1 s apart. */
-    private fun attackingScanner(): ActiveAiScanner {
+    /** A running scanner attacking one SQLi target with ten payloads paced [requestDelayMs] apart (1 s by default). */
+    private fun attackingScanner(requestDelayMs: Long = REQUEST_DELAY_MS): ActiveAiScanner {
         val scanner = rig.scanner()
-        scanner.requestDelayMs = REQUEST_DELAY_MS
+        scanner.requestDelayMs = requestDelayMs
         scanner.maxPayloadsPerPoint = MAX_PAYLOADS
         scanner.setEnabled(true)
         scanner.queueTarget(rig.target(VulnClass.SQLI))
@@ -128,7 +162,9 @@ class ActiveScannerStopInterruptTest {
         const val HELD_SEND = 2
         const val OBSERVATION_MS = 2_500L
         const val QUIET_MS = 300L
-        const val INTO_PACING_SLEEP_MS = 200L
+        const val INTO_PACING_WAIT_MS = 200L
+        const val LONG_REQUEST_DELAY_MS = 5_000L
+        const val LONG_WAIT_SETTLE_BUDGET_MS = 1_500L
         const val AWAIT_SECONDS = 15L
         const val POLL_MS = 10L
     }
