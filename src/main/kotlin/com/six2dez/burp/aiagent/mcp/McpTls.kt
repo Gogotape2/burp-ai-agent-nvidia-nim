@@ -4,6 +4,7 @@ import com.six2dez.burp.aiagent.config.McpSettings
 import java.io.File
 import java.security.KeyStore
 import java.security.MessageDigest
+import java.util.concurrent.TimeUnit
 
 data class McpTlsMaterial(
     val keyStore: KeyStore,
@@ -12,6 +13,12 @@ data class McpTlsMaterial(
 )
 
 object McpTls {
+    /**
+     * Phase 34 / D-07: how long MCP TLS setup waits for keytool. RSA-2048 key generation takes
+     * seconds; a keytool still running after this is treated as hung.
+     */
+    private const val KEYTOOL_TIMEOUT_SECONDS = 60L
+
     fun resolve(settings: McpSettings): McpTlsMaterial? {
         val keystorePath = settings.tlsKeystorePath.trim()
         if (keystorePath.isBlank()) return null
@@ -115,8 +122,11 @@ object McpTls {
                     .also { it.environment()["KS_PASS"] = passStr }
                     .start()
 
+            // Phase 34 / D-07: wait with a deadline BEFORE reading. readText() blocks until keytool
+            // exits, so reading first would defeat the deadline. keytool prints a few lines, far
+            // below a pipe buffer, so waiting first cannot fill the pipe and stall the child.
+            val exitCode = awaitKeytoolExit(process, KEYTOOL_TIMEOUT_SECONDS)
             val output = process.inputStream.bufferedReader().readText()
-            val exitCode = process.waitFor()
             if (exitCode != 0) {
                 throw RuntimeException("keytool failed (exit $exitCode): $output")
             }
@@ -126,6 +136,24 @@ object McpTls {
             // this call frame and it will be eligible for GC as soon as this method returns.
             localPassword.fill(' ')
         }
+    }
+
+    /**
+     * Phase 34 / D-07: waits up to [timeoutSeconds] for the keytool [process] and returns its exit
+     * code. On expiry the process is destroyed and setup fails closed with an IllegalStateException.
+     *
+     * Visibility: `internal` so McpTlsKeytoolWaitTest can drive it with a stand-in child process.
+     */
+    internal fun awaitKeytoolExit(
+        process: Process,
+        timeoutSeconds: Long,
+    ): Int {
+        if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
+            process.destroyForcibly()
+            // error() throws IllegalStateException, the fail-closed setup error.
+            error("keytool did not finish within ${timeoutSeconds}s")
+        }
+        return process.exitValue()
     }
 
     private fun findKeytool(): String {
