@@ -19,6 +19,11 @@ private const val JSON_ARRAY_SAMPLE_SIZE = 3
 private const val HTML_FORMS_SAMPLE_MAX = 3
 private const val HTML_INLINE_SCRIPTS_SAMPLE_MAX = 3
 
+// Phase 34 / PERF-01: compactHtmlBody's patterns, compiled once per extension load, not per call.
+private val HTML_HEAD_REGEX = Regex("(?is)<head[^>]*>(.*?)</head>")
+private val HTML_FORM_REGEX = Regex("(?is)<form\\b[^>]*>.*?</form>")
+private val HTML_INLINE_SCRIPT_REGEX = Regex("(?is)<script(?![^>]*\\bsrc=)[^>]*>.*?</script>")
+
 internal fun truncateWithEllipsis(
     text: String,
     maxChars: Int,
@@ -247,20 +252,20 @@ private fun compactHtmlBody(
     maxChars: Int,
 ): String {
     val head =
-        Regex("(?is)<head[^>]*>(.*?)</head>")
+        HTML_HEAD_REGEX
             .find(body)
             ?.groupValues
             ?.getOrNull(1)
             .orEmpty()
             .trim()
     val forms =
-        Regex("(?is)<form\\b[^>]*>.*?</form>")
+        HTML_FORM_REGEX
             .findAll(body)
             .map { it.value.trim() }
             .take(HTML_FORMS_SAMPLE_MAX)
             .toList()
     val scripts =
-        Regex("(?is)<script(?![^>]*\\bsrc=)[^>]*>.*?</script>")
+        HTML_INLINE_SCRIPT_REGEX
             .findAll(body)
             .map { it.value.trim() }
             .take(HTML_INLINE_SCRIPTS_SAMPLE_MAX)

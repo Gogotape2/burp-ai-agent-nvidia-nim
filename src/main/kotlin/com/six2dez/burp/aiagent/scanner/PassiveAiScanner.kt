@@ -16,6 +16,27 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
 
+// Phase 34 / PERF-01: compiled once per extension load, not per PassiveAiScanner instance. Top-level
+// (not companion) so the same-package extension functions in PassiveAiScannerFilters.kt and
+// PassiveAiScannerAnalysis.kt keep resolving them by name.
+internal val cacheBustingParamRegex = Regex("^(?:_|t|ts|timestamp|cachebust|cb|rnd|nonce)$", RegexOption.IGNORE_CASE)
+internal val dynamicValueStripRegex =
+    Regex(
+        listOf(
+            """\b[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\b""", // UUID
+            """\b[a-f0-9]{24}\b""", // MongoDB ObjectId
+            """\b\d{10,13}\b""", // Unix timestamps (sec/ms)
+            """\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s"',}\]]*""", // ISO 8601
+            """(?<=[":=])\s*"?[A-Za-z0-9_\-]{20,}"?""", // Long tokens/nonces
+        ).joinToString("|"),
+        RegexOption.IGNORE_CASE,
+    )
+internal val staticAssetPathRegex =
+    Regex(
+        "\\.(?:css|js|map|png|jpg|jpeg|gif|svg|ico|woff2?|ttf|eot)(?:\\?|$)",
+        RegexOption.IGNORE_CASE,
+    )
+
 class PassiveAiScanner(
     internal val api: MontoyaApi,
     internal val supervisor: AgentSupervisor,
@@ -176,23 +197,6 @@ class PassiveAiScanner(
             field = value.map { it.lowercase().removePrefix(".") }.toSet()
         }
 
-    internal val cacheBustingParamRegex = Regex("^(?:_|t|ts|timestamp|cachebust|cb|rnd|nonce)$", RegexOption.IGNORE_CASE)
-    internal val dynamicValueStripRegex =
-        Regex(
-            listOf(
-                """\b[a-f0-9]{8}-[a-f0-9]{4}-[1-5][a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}\b""", // UUID
-                """\b[a-f0-9]{24}\b""", // MongoDB ObjectId
-                """\b\d{10,13}\b""", // Unix timestamps (sec/ms)
-                """\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[^\s"',}\]]*""", // ISO 8601
-                """(?<=[":=])\s*"?[A-Za-z0-9_\-]{20,}"?""", // Long tokens/nonces
-            ).joinToString("|"),
-            RegexOption.IGNORE_CASE,
-        )
-    internal val staticAssetPathRegex =
-        Regex(
-            "\\.(?:css|js|map|png|jpg|jpeg|gif|svg|ico|woff2?|ttf|eot)(?:\\?|$)",
-            RegexOption.IGNORE_CASE,
-        )
     internal val requestHeaderAllowlist =
         setOf(
             "authorization",
