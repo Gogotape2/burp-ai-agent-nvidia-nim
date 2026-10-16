@@ -12,6 +12,7 @@ import com.six2dez.burp.aiagent.backends.ChatMessage
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.spi.AiAccessPolicy
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
+import com.six2dez.burp.aiagent.supervisor.AgentSupervisor.StartWait
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -22,6 +23,8 @@ import org.mockito.Answers
 import org.mockito.kotlin.any
 import org.mockito.kotlin.doAnswer
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import java.util.Collections
 import java.util.concurrent.CompletableFuture
@@ -36,8 +39,9 @@ import java.util.concurrent.TimeoutException
  * (at most 10 s, ended at once by unload) and is analysed when the start succeeds, instead of being
  * dropped at once by the "startup already in progress" refusal.
  *
- * The end-to-end cases run a real [AgentSupervisor] over a fake backend whose launch blocks on a latch.
- * Every cross-thread wait is a latch or a future with a failsafe.
+ * The end-to-end cases run a real [AgentSupervisor] over a fake backend whose launch blocks on a latch;
+ * the mocked cases pin the log line the passive scanner writes for each [StartWait] answer. Every
+ * cross-thread wait is a latch or a future with a failsafe.
  */
 class PassiveBackendReadyWaitTest {
     private val output: MutableList<String> = Collections.synchronizedList(mutableListOf())
@@ -99,7 +103,66 @@ class PassiveBackendReadyWaitTest {
         assertEquals(errorsBefore, errors.toList(), "an unload-ended wait writes no Error line")
     }
 
+    // --- Mocked supervisor: the reaction to each answer -------------------------------------------
+
+    @Test
+    fun aSuccessfulStartIsNotWaitedOn() {
+        val supervisor = mockedSupervisor(started = true)
+        whenever(supervisor.currentSessionId()).thenReturn(null, "session-1")
+
+        assertTrue(scanner(supervisor).ensureBackendRunning(settings))
+
+        verify(supervisor, never()).awaitStartInProgress(any())
+        assertTrue(output.contains("[PassiveAiScanner] Backend ready: $FAKE_ID"), "got $output")
+        assertEquals(emptyList<String>(), errors.toList())
+    }
+
+    @Test
+    fun aTimedOutStartDropsTheItemWithOneLine() {
+        val supervisor = mockedSupervisor(started = false)
+        whenever(supervisor.awaitStartInProgress(any())).thenReturn(StartWait.TIMEOUT)
+
+        assertFalse(scanner(supervisor).ensureBackendRunning(settings))
+
+        assertEquals(listOf("[PassiveAiScanner] Backend startup in progress did not finish in time"), errors.toList())
+    }
+
+    @Test
+    fun anUnloadingOrInterruptedWaitWritesNothing() {
+        listOf(StartWait.UNLOADING, StartWait.INTERRUPTED).forEach { answer ->
+            errors.clear()
+            val supervisor = mockedSupervisor(started = false)
+            whenever(supervisor.awaitStartInProgress(any())).thenReturn(answer)
+
+            assertFalse(scanner(supervisor).ensureBackendRunning(settings), "$answer drops the item")
+
+            assertEquals(emptyList<String>(), errors.toList(), "$answer writes no Error line")
+        }
+    }
+
+    @Test
+    fun aFailedOrAbsentStartKeepsTodaysLine() {
+        listOf(StartWait.FAILED, null).forEach { answer ->
+            errors.clear()
+            val supervisor = mockedSupervisor(started = false)
+            whenever(supervisor.lastStartError()).thenReturn("boom")
+            // null is the unstubbed answer of a plain mock: "no start in progress".
+            if (answer != null) whenever(supervisor.awaitStartInProgress(any())).thenReturn(answer)
+
+            assertFalse(scanner(supervisor).ensureBackendRunning(settings), "$answer drops the item")
+
+            assertEquals(listOf("[PassiveAiScanner] Failed to start backend: boom"), errors.toList(), "answer $answer")
+        }
+    }
+
     // --- Helpers --------------------------------------------------------------------------------
+
+    /** A plain mock (an unstubbed enum answer is null) with no session and the given start answer. */
+    private fun mockedSupervisor(started: Boolean): AgentSupervisor =
+        mock<AgentSupervisor>().also {
+            whenever(it.status()).thenReturn(AgentSupervisor.Status("Idle", null))
+            whenever(it.startOrAttach(any())).thenReturn(started)
+        }
 
     /**
      * A real supervisor whose fake backend blocks in launch until [releaseLaunch]; a background thread
