@@ -59,6 +59,32 @@ private const val OAST_POLL_INTERVAL_SECONDS = 60L
 /** Phase 33 / D-04: the one local wait an OFF toggle gives the worker and scheduler pools, together. */
 private const val TOGGLE_STOP_BUDGET_MS = 5_000L
 
+// Phase 34 / D-08 (PERF-01): ActiveAiScanner's constant patterns, compiled once per extension load
+// instead of per instance or per call. Text and options are unchanged (D-10). The ACTIVE_ prefix keeps
+// the cookie hint apart from PassiveAiScannerHeuristics' package-level authCookieHint (same package).
+private val ACTIVE_AUTH_COOKIE_HINT_REGEX = Regex("(session|auth|token|sid|jwt|remember)", RegexOption.IGNORE_CASE)
+private val ACTIVE_AUTH_ERROR_REGEX =
+    Regex(
+        "(unauthorized|forbidden|access denied|not authorized|login|sign\\s?in|signin)",
+        RegexOption.IGNORE_CASE,
+    )
+private val ACTIVE_SENSITIVE_DATA_REGEX =
+    Regex(
+        "email.*@|password|credit.*card|ssn|api.*key",
+        RegexOption.IGNORE_CASE,
+    )
+private val ACTIVE_STATIC_ASSET_REGEX =
+    Regex(
+        "\\.(css|js|png|jpg|jpeg|gif|svg|woff2?|ico|map)(\\?|$)",
+        RegexOption.IGNORE_CASE,
+    )
+
+/** Phase 34 / D-08: a quoted JSON key followed by a colon; group 1 is the key (extractJsonKeys). */
+private val JSON_KEY_NAME_REGEX = Regex("\"([A-Za-z0-9_\\-]+)\"\\s*:")
+
+/** Phase 34 / D-08: an integer or decimal value, optionally negative (injectPayload's JSON_FIELD case). */
+private val NUMERIC_VALUE_REGEX = Regex("-?\\d+(?:\\.\\d+)?")
+
 /**
  * AI-powered Active Scanner that confirms vulnerabilities by sending test payloads
  */
@@ -151,22 +177,6 @@ class ActiveAiScanner(
             "x-auth-token",
             "x-access-token",
             "x-csrf-token",
-        )
-    private val authCookieHint = Regex("(session|auth|token|sid|jwt|remember)", RegexOption.IGNORE_CASE)
-    private val authErrorRegex =
-        Regex(
-            "(unauthorized|forbidden|access denied|not authorized|login|sign\\s?in|signin)",
-            RegexOption.IGNORE_CASE,
-        )
-    private val sensitiveDataRegex =
-        Regex(
-            "email.*@|password|credit.*card|ssn|api.*key",
-            RegexOption.IGNORE_CASE,
-        )
-    private val staticAssetRegex =
-        Regex(
-            "\\.(css|js|png|jpg|jpeg|gif|svg|woff2?|ico|map)(\\?|$)",
-            RegexOption.IGNORE_CASE,
         )
 
     // Written under lifecycleLock, read by the scheduler tick, the settings setters and getStatus.
@@ -1203,8 +1213,8 @@ class ActiveAiScanner(
     ): VulnConfirmation? {
         val modifiedBody = modified.response()?.bodyToString() ?: ""
         val path = modified.request().path()
-        if (!staticAssetRegex.containsMatchIn(path)) return null
-        if (!sensitiveDataRegex.containsMatchIn(modifiedBody)) return null
+        if (!ACTIVE_STATIC_ASSET_REGEX.containsMatchIn(path)) return null
+        if (!ACTIVE_SENSITIVE_DATA_REGEX.containsMatchIn(modifiedBody)) return null
         if (!isCacheable(modified)) return null
 
         val followUpResponse = sendRequestWithTimeout(target.originalRequest.request()) ?: return null
@@ -1214,7 +1224,7 @@ class ActiveAiScanner(
                 followUpResponse.response(),
             )
         val followUpBody = followUp.response()?.bodyToString() ?: ""
-        if (!sensitiveDataRegex.containsMatchIn(followUpBody)) return null
+        if (!ACTIVE_SENSITIVE_DATA_REGEX.containsMatchIn(followUpBody)) return null
         if (!isCacheHit(followUp)) return null
 
         return VulnConfirmation(
@@ -1234,7 +1244,7 @@ class ActiveAiScanner(
                 authHeaderNames.contains(header.name().lowercase())
             }
         val cookieHeader = request.headerValue("Cookie") ?: ""
-        val hasAuthCookie = authCookieHint.containsMatchIn(cookieHeader)
+        val hasAuthCookie = ACTIVE_AUTH_COOKIE_HINT_REGEX.containsMatchIn(cookieHeader)
         return hasAuthHeader || hasAuthCookie
     }
 
@@ -1257,7 +1267,7 @@ class ActiveAiScanner(
         val wwwAuth = responseHeaderValue(response, "WWW-Authenticate")
         if (!wwwAuth.isNullOrBlank()) return true
         val body = response.response()?.bodyToString() ?: ""
-        return authErrorRegex.containsMatchIn(body)
+        return ACTIVE_AUTH_ERROR_REGEX.containsMatchIn(body)
     }
 
     private fun isJsonResponse(
@@ -1272,8 +1282,7 @@ class ActiveAiScanner(
 
     private fun extractJsonKeys(body: String): Set<String> {
         val keys = mutableSetOf<String>()
-        val pattern = Regex("\"([A-Za-z0-9_\\-]+)\"\\s*:")
-        pattern.findAll(body).forEach { match ->
+        JSON_KEY_NAME_REGEX.findAll(body).forEach { match ->
             keys.add(match.groupValues[1])
         }
         return keys
@@ -1732,9 +1741,8 @@ class ActiveAiScanner(
             }
             InjectionType.JSON_FIELD -> {
                 val body = request.bodyToString()
-                val numericPattern = Regex("-?\\d+(?:\\.\\d+)?")
-                val isNumericOriginal = numericPattern.matches(point.originalValue)
-                val isNumericPayload = numericPattern.matches(payload)
+                val isNumericOriginal = NUMERIC_VALUE_REGEX.matches(point.originalValue)
+                val isNumericPayload = NUMERIC_VALUE_REGEX.matches(payload)
                 val replacementValue = if (isNumericOriginal && isNumericPayload) payload else "\"$payload\""
                 val fieldPattern =
                     Regex(
