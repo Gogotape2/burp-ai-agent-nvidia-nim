@@ -1791,6 +1791,38 @@ class RedactionTest {
         )
     }
 
+    // (LOOP-01) Phase 34 / D-05: the cookie-section scan indexes in UTF-16 code units through
+    // String.indexOf and the header length. Non-ASCII text on either side of a section must come
+    // back unchanged while the cookie value inside it is redacted. The seam bypasses
+    // Redaction.apply, so the exact-equality assertion can only hold if the scan alone did the work.
+    // The budget is generous on purpose: this case pins the completed pass, not the deadline branch.
+    @Test
+    fun cookieSectionScanKeepsNonAsciiTextAroundTheSection() {
+        val before = "Ünïcödé → before\n"
+        val after = "after ✓"
+        val text = before + Redaction.COOKIE_SECTION_HEADER + "\nsid=SECRETVALUE\n\n" + after
+
+        val output = Redaction.testRedactCookieSections(text, budgetMs = 60_000L)
+
+        assertFalse(output.contains("SECRETVALUE"), "The cookie value inside the section must be redacted")
+        assertEquals(
+            before + Redaction.COOKIE_SECTION_HEADER + "\nsid=[REDACTED]\n\n" + after,
+            output,
+            "Non-ASCII text around the cookie section must survive byte for byte",
+        )
+    }
+
+    // (LOOP-01) Phase 34 / D-05: an empty prompt and a prompt with no cookie section pass the cookie
+    // rule unchanged (the scan's first search finds nothing, so the loop body never runs).
+    @Test
+    fun cookieRuleLeavesAnEmptyOrCookieFreePromptUnchanged() {
+        assertEquals("", Redaction.testRedactCookieSections("", budgetMs = 60_000L))
+
+        val cookieFree = "GET /index.html HTTP/1.1\nHost: example.com\n\nname=value\n"
+        assertFalse(cookieFree.contains(Redaction.COOKIE_SECTION_HEADER), "The fixture must hold no cookie section")
+        assertEquals(cookieFree, Redaction.testRedactCookieSections(cookieFree, budgetMs = 60_000L))
+    }
+
     // (PRIV-05) W-03 / T-21-47: a DIRECT unit test on Redaction.sanitizeCookieSectionEntries.
     //
     // WHY A DIRECT TEST IS REQUIRED RATHER THAN REDUNDANT. The function has three limbs and its own
