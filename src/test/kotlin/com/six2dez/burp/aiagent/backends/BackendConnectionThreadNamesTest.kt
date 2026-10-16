@@ -29,9 +29,11 @@ import javax.swing.SwingUtilities
 
 /**
  * Phase 33 / LIFE-03 / D-11 — every HTTP and AI backend runs its connection work on one daemon thread
- * named `burp-ai-agent-<backendId>-connection` (`burp-ai-agent-burp-ai-connection` for Burp AI), built
- * by `ExtensionThreads.singleThread`, so a Burp thread dump attributes every backend worker to this
- * extension and none of them holds extension unload open.
+ * named `burp-ai-agent-<backendId>-connection` (`burp-ai-agent-burp-ai-connection` for Burp AI), so a
+ * Burp thread dump attributes every backend worker to this extension and none of them holds extension
+ * unload open. The four HTTP backends (Ollama, Anthropic, LM Studio, OpenAI-compatible) build their
+ * worker with `ExtensionThreads.scheduled` (Phase 34: their retries are scheduled on it); Burp AI builds
+ * its worker with `ExtensionThreads.singleThread`.
  *
  * The worker is observed where the work really runs: [RecordingMontoya]'s responder runs on the thread
  * that called `Http.sendRequest`, and the Burp AI prompt stub runs on the thread that called
