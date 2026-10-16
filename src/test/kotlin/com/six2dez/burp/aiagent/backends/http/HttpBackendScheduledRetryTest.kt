@@ -4,6 +4,8 @@ import com.six2dez.burp.aiagent.backends.AgentConnection
 import com.six2dez.burp.aiagent.backends.AiBackend
 import com.six2dez.burp.aiagent.backends.BackendDiagnostics
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
+import com.six2dez.burp.aiagent.backends.anthropic.AnthropicBackend
+import com.six2dez.burp.aiagent.backends.lmstudio.LmStudioBackend
 import com.six2dez.burp.aiagent.backends.ollama.OllamaBackend
 import com.six2dez.burp.aiagent.backends.openai.OpenAiCompatibleBackend
 import org.junit.jupiter.api.AfterEach
@@ -136,6 +138,26 @@ class HttpBackendScheduledRetryTest {
         assertTrue(recording.requests.all { it.url == "$OLLAMA_URL/api/chat" }, "only /api/chat was requested")
     }
 
+    @Test
+    fun anthropicSchedulesItsRetryAndStopCancelsIt() {
+        val connection =
+            launchOn(
+                AnthropicBackend(),
+                "anthropic",
+                model = "claude-sonnet-4-6",
+                headers = mapOf("x-api-key" to "k", "anthropic-version" to "2023-06-01"),
+            )
+
+        assertAStopAtTheFirstRetryCancelsIt(connection, "anthropic")
+    }
+
+    @Test
+    fun lmStudioSchedulesItsRetryAndStopCancelsIt() {
+        val connection = launchOn(LmStudioBackend(), "lmstudio", baseUrl = LMSTUDIO_URL, model = "local-model")
+
+        assertAStopAtTheFirstRetryCancelsIt(connection, "lmstudio")
+    }
+
     // --- Helpers ---------------------------------------------------------------------------------
 
     private fun launch(): AgentConnection =
@@ -259,6 +281,7 @@ class HttpBackendScheduledRetryTest {
         const val OPENAI_URL = "http://127.0.0.1:8000/v1"
         const val OLLAMA_URL = "http://127.0.0.1:11434"
         const val OLLAMA_WINDOW = 4096
+        const val LMSTUDIO_URL = "http://127.0.0.1:1234"
         const val MARKER_A = "turn-A-marker"
         const val MARKER_B = "turn-B-marker"
         const val AWAIT_SECONDS = 10L
