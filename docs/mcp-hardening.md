@@ -5,7 +5,7 @@ Use this checklist before exposing MCP beyond loopback.
 ## Baseline
 
 1. Keep bind host at `127.0.0.1` unless external access is required.
-2. Keep **Unsafe Tools** disabled by default.
+2. Keep **Unsafe mode** disabled by default. This applies to the GitHub full build; the BApp Store build has no unsafe tools, so its Unsafe mode switch is shown disabled with "No unsafe tools in this build".
 3. Enable only the minimum MCP tools needed for current workflow.
 
 ## External Access
@@ -21,7 +21,7 @@ Use this checklist before exposing MCP beyond loopback.
 ## Operational Controls
 
 1. Set conservative MCP request concurrency.
-2. Set `Max Body Bytes` to avoid oversized payload exfiltration.
+2. Set **Max body size (KB)** to avoid oversized payload exfiltration.
 3. Keep privacy mode at `STRICT` or `BALANCED` for cloud clients.
 4. Keep audit logging enabled for traceability.
 
@@ -47,7 +47,7 @@ Why the takeover works this way, and which residual risks are accepted, is recor
 2. Test denied requests return the expected bare status: in external mode `POST /message` and `GET /sse` without `Authorization` return `401` with an empty body while `GET /__mcp/health` returns `200`, and in local mode a request carrying a foreign `Origin`, a foreign `Host`, a foreign `Referer`, or a browser `User-Agent` with no `Origin` returns `403` with an empty body. The responses are bare statuses with no diagnostic body by design. Where the denial reason shows up depends on the vector, so check the right evidence for the case you are testing:
    - For the external-mode `401`s, and for the local-mode foreign `Host`, foreign `Referer` and browser `User-Agent`-with-no-`Origin` cases, the reason is recorded in Burp's Output tab and, when audit logging is enabled, in the audit log.
    - A foreign `Origin` is the exception: that denial is **not recorded** in the Output tab or in the audit log, and its absence there is expected. Ktor's own CORS plugin answers a disallowed origin with `403` and commits the response before the extension's access-control gate evaluates the request, so the gate never sees the request and emits nothing for it. The `403` status is therefore the only observable for this vector — a missing Output-tab line or audit entry here is not evidence of a broken audit trail. To confirm the recording path itself is healthy, exercise one of the other three local-mode vectors instead.
-3. Confirm unsafe tools are blocked when master switch is off.
+3. Confirm unsafe tools are blocked when the **Unsafe mode** switch is off (full build). In the BApp Store build, confirm the switch is shown disabled with "No unsafe tools in this build".
 4. Confirm responses from routes the server resolves — not only its `404` responses — carry `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin` and `Content-Security-Policy: default-src 'none'`.
 
 ## Incident Response

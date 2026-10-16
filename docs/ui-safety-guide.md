@@ -14,7 +14,7 @@ This runbook covers safe operation of scanner and backend controls from the UI.
 
 ## Passive Scanner Cost/Safety
 
-1. Keep **Scope Only** enabled.
+1. Keep **In-scope only** enabled.
 2. Tune body/header/parameter caps for cloud backends.
 3. Use dedup and prompt cache controls to reduce repeated analysis.
 4. Review findings before promotion into reports.
@@ -23,11 +23,11 @@ This runbook covers safe operation of scanner and backend controls from the UI.
 
 1. Use **Test connection** after changing backend settings.
 2. Treat `AI: Degraded` as actionable diagnostics state.
-3. Inspect extension output/errors for CLI exit codes and HTTP failures.
+3. Inspect extension output/errors for HTTP failures and, in the GitHub full build only (CLI backends), CLI exit codes.
 
 ## MCP Safety
 
-1. Keep unsafe tools disabled unless required.
+1. Keep unsafe tools disabled unless required. The BApp Store build has no unsafe tools, so its **Unsafe mode** switch is shown disabled with "No unsafe tools in this build".
 2. Disable MCP when not actively using external clients.
 3. Restrict tool exposure per workflow.
 
@@ -40,10 +40,10 @@ When the AI wants to run a Burp tool, a **tool-approval card** appears inline in
 3. **Deny** — do not run this call. The AI is told the call was not authorised, is instructed not to retry, and continues with what it already has. It does not receive an error, so a denial does not look like a malfunction it should work around.
 4. **Deny for session** — deny this call and every later call to this tool for the rest of this chat session.
 5. Read the arguments before approving. The card truncates long arguments for display only — **the full arguments are sent to the tool if you approve**.
-6. Only some tools offer the two session actions. A tool classified as confirm-every-time (this includes any tool name the catalog does not recognise, and every external `ext:`-namespaced tool) asks on every single call, and offers **Approve once** / **Deny** only. That is deliberate: an unrecognised name must never inherit a silent tier.
+6. Only some tools offer the two session actions. A tool classified as confirm-every-time (this includes any tool name the catalog does not recognise, and every external `ext:`-namespaced tool, which exists only in the GitHub full build) asks on every single call, and offers **Approve once** / **Deny** only. That is deliberate: an unrecognised name must never inherit a silent tier.
 7. **Approve for session** is scoped to one chat session. **Clear Chat** discards it, as does starting a new session — an approval you granted while reviewing one target must not run silently against the next.
 8. Approvals never persist. They are held in memory only, so restarting Burp, reloading the extension or switching Burp project all clear them and the AI must ask again.
-9. Read-only tools with bounded output run with no card at all. Tools that return bulk attacker-controlled traffic (`proxy_http_history`, `site_map`, `scanner_issues`) are *not* in that group even though they are read-only — what they return goes into model context, so they ask.
+9. Read-only tools with bounded output run with no card at all. Tools that return bulk attacker-controlled traffic (`proxy_http_history`, `site_map`, `scanner_issues`, full-build tools) are *not* in that group even though they are read-only — what they return goes into model context, so they ask.
 10. Every decision, including automatic runs and denials, is written to the audit log and to Burp's **Output** tab. Audit logging is off by default, so the Output line is the record most users will see; enable audit logging in **Settings** if you need the durable JSONL trail.
 11. This is independent of **Unsafe Mode**. Unsafe Mode decides whether a tool may ever run at all; the confirmation tier decides whether the AI may run it *without asking you*. Leaving Unsafe Mode off does not remove the need to read these cards, and approving a card does not enable an unsafe tool.
 
