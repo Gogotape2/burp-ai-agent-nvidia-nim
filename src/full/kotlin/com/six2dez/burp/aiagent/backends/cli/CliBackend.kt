@@ -909,6 +909,21 @@ private fun resolveCommand(
  */
 private val isWindowsOs: Boolean = System.getProperty("os.name").lowercase(Locale.ROOT).contains("win")
 
+// Phase 34 / D-08: the terminal-escape patterns [stripAnsiCodes] applies, compiled once instead of on
+// every call. Text unchanged from the per-call versions.
+
+/** CSI sequences: ESC [ ... letter (e.g., \u001B[0m, \u001B[1;31m). */
+private val ANSI_CSI_REGEX = Regex("\\u001B\\[[0-9;]*[a-zA-Z]")
+
+/** OSC sequences: ESC ] ... BEL (e.g., \u001B]0;title\u0007). */
+private val ANSI_OSC_REGEX = Regex("\\u001B\\][^\\u0007]*\\u0007")
+
+/** Other escape sequences (e.g., \u001B>, \u001B=). */
+private val ANSI_OTHER_ESCAPE_REGEX = Regex("\\u001B[><=][^\\u0007\\u001B\\\\]*[\\u0007\\u001B\\\\]")
+
+/** Remaining literal ANSI-like patterns (e.g., "[0m", "[1m"). */
+private val ANSI_BRACKET_SGR_REGEX = Regex("\\[\\d+m")
+
 /**
  * The directories npm installs its `.cmd` shims into on Windows, in resolution order.
  *
@@ -937,16 +952,16 @@ internal fun stripAnsiCodes(text: String): String {
 
     // Strip all ANSI escape sequences
     // CSI sequences: ESC [ ... letter (e.g., \u001B[0m, \u001B[1;31m)
-    result = result.replace(Regex("\\u001B\\[[0-9;]*[a-zA-Z]"), "")
+    result = result.replace(ANSI_CSI_REGEX, "")
 
     // OSC sequences: ESC ] ... BEL (e.g., \u001B]0;title\u0007)
-    result = result.replace(Regex("\\u001B\\][^\\u0007]*\\u0007"), "")
+    result = result.replace(ANSI_OSC_REGEX, "")
 
     // Other escape sequences (e.g., \u001B>, \u001B=)
-    result = result.replace(Regex("\\u001B[><=][^\\u0007\\u001B\\\\]*[\\u0007\\u001B\\\\]"), "")
+    result = result.replace(ANSI_OTHER_ESCAPE_REGEX, "")
 
     // Strip any remaining literal ANSI-like patterns (e.g., "[0m", "[1m")
-    result = result.replace(Regex("\\[\\d+m"), "")
+    result = result.replace(ANSI_BRACKET_SGR_REGEX, "")
 
     return result
 }
