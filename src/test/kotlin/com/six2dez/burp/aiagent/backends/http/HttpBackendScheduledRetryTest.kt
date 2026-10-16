@@ -1,8 +1,10 @@
 package com.six2dez.burp.aiagent.backends.http
 
 import com.six2dez.burp.aiagent.backends.AgentConnection
+import com.six2dez.burp.aiagent.backends.AiBackend
 import com.six2dez.burp.aiagent.backends.BackendDiagnostics
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
+import com.six2dez.burp.aiagent.backends.ollama.OllamaBackend
 import com.six2dez.burp.aiagent.backends.openai.OpenAiCompatibleBackend
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
@@ -25,6 +27,9 @@ import java.util.concurrent.atomic.AtomicReference
  * Written before the backoff moved from a sleeping connection worker to a scheduled task, and green
  * on both: the attempt count, the delays, the retry events, the stop-during-backoff outcome and the
  * FIFO order of turns on one connection must not change when the mechanism does.
+ *
+ * Plan 34-07 adds one case per remaining HTTP backend (Ollama, Anthropic, LM Studio): each keeps its
+ * own retry label on the first retry event, and a stop at that event cancels the retry.
  */
 class HttpBackendScheduledRetryTest {
     private val recording = RecordingMontoya()
@@ -121,22 +126,87 @@ class HttpBackendScheduledRetryTest {
         }
     }
 
+    @Test
+    fun ollamaSchedulesItsRetryAndStopCancelsIt() {
+        // A non-default context window, so the connection sends no /api/show before the chat request.
+        val connection =
+            launchOn(OllamaBackend(), "ollama", baseUrl = OLLAMA_URL, model = "llama3.1", contextWindow = OLLAMA_WINDOW)
+
+        assertAStopAtTheFirstRetryCancelsIt(connection, "ollama")
+        assertTrue(recording.requests.all { it.url == "$OLLAMA_URL/api/chat" }, "only /api/chat was requested")
+    }
+
     // --- Helpers ---------------------------------------------------------------------------------
 
-    private fun launch(): AgentConnection {
+    private fun launch(): AgentConnection =
+        launchOn(
+            OpenAiCompatibleBackend(id = BACKEND_ID, displayName = DISPLAY_NAME),
+            BACKEND_ID,
+            baseUrl = OPENAI_URL,
+            model = "test-model",
+            displayName = DISPLAY_NAME,
+        )
+
+    @Suppress("LongParameterList") // test launcher: every argument is a BackendLaunchConfig field
+    private fun launchOn(
+        backend: AiBackend,
+        backendId: String,
+        baseUrl: String? = null,
+        model: String,
+        displayName: String = backendId,
+        headers: Map<String, String> = emptyMap(),
+        contextWindow: Int? = null,
+    ): AgentConnection {
         val connection =
-            OpenAiCompatibleBackend(id = BACKEND_ID, displayName = DISPLAY_NAME).launch(
+            backend.launch(
                 BackendLaunchConfig(
-                    backendId = BACKEND_ID,
-                    displayName = DISPLAY_NAME,
-                    baseUrl = OPENAI_URL,
-                    model = "test-model",
+                    backendId = backendId,
+                    displayName = displayName,
+                    baseUrl = baseUrl,
+                    model = model,
+                    headers = headers,
                     requestTimeoutSeconds = 30L,
-                    transport = TestTransports.open(recording.api, BACKEND_ID),
+                    contextWindow = contextWindow,
+                    transport = TestTransports.open(recording.api, backendId),
                 ),
             )
         connections += connection
         return connection
+    }
+
+    /**
+     * Every request is refused; the first retry event must carry [retryLabel], attempt 1 and 500 ms. A
+     * stop at that event completes the turn once with the refusal, and no retry is sent after it.
+     */
+    private fun assertAStopAtTheFirstRetryCancelsIt(
+        connection: AgentConnection,
+        retryLabel: String,
+    ) {
+        recording.responder = { error("connection refused") }
+        val firstEvent = AtomicReference<BackendDiagnostics.RetryEvent?>(null)
+        val firstRetry = CountDownLatch(1)
+        try {
+            BackendDiagnostics.retry = { event ->
+                if (event.backendId == retryLabel && firstEvent.compareAndSet(null, event)) {
+                    firstRetry.countDown()
+                }
+            }
+
+            val outcome = Turn().also { it.sendOn(connection, "$retryLabel-stop-marker") }
+            assertTrue(firstRetry.await(AWAIT_SECONDS, TimeUnit.SECONDS), "the first $retryLabel retry was never scheduled")
+            connection.stop()
+
+            val event = firstEvent.get()
+            assertEquals(Triple(retryLabel, 1, 500L), Triple(event?.backendId, event?.attempt, event?.delayMs), "the first retry event")
+            val error = outcome.await(AWAIT_SECONDS)
+            assertNotNull(error, "a stopped turn ends with its last error")
+            assertTrue(error!!.message.orEmpty().contains("connection refused"), "the last error is delivered: ${error.message}")
+            assertFalse(outcome.quietFor(QUIET_MS), "onComplete runs exactly once")
+            assertEquals(1, outcome.completions.get(), "onComplete runs exactly once")
+            assertEquals(1, recording.sendCount(), "no retry reaches the provider after the stop")
+        } finally {
+            BackendDiagnostics.retry = savedRetryHook
+        }
     }
 
     /** Which turn a request body belongs to; turn B's body also carries turn A as history. */
@@ -187,6 +257,8 @@ class HttpBackendScheduledRetryTest {
         const val BACKEND_ID = "openai-compatible"
         const val DISPLAY_NAME = "OpenAI-compatible"
         const val OPENAI_URL = "http://127.0.0.1:8000/v1"
+        const val OLLAMA_URL = "http://127.0.0.1:11434"
+        const val OLLAMA_WINDOW = 4096
         const val MARKER_A = "turn-A-marker"
         const val MARKER_B = "turn-B-marker"
         const val AWAIT_SECONDS = 10L
