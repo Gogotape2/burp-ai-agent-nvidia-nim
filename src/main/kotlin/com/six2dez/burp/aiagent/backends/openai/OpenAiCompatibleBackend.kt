@@ -15,6 +15,7 @@ import com.six2dez.burp.aiagent.backends.http.CircuitBreaker
 import com.six2dez.burp.aiagent.backends.http.ConversationHistory
 import com.six2dez.burp.aiagent.backends.http.HttpBackendSupport
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
+import com.six2dez.burp.aiagent.backends.http.RetryingTurnRunner
 import com.six2dez.burp.aiagent.backends.http.recordHttpFailureIfRetryable
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.util.ExtensionThreads
@@ -146,8 +147,13 @@ class OpenAiCompatibleBackend(
         UsageAwareConnection,
         JsonModeCapable {
         private val alive = AtomicBoolean(true)
-        private val exec =
-            ExtensionThreads.singleThread("$backendId-connection")
+
+        // Phase 34 / D-06: a scheduler, so a retry backoff is a one-shot task on this worker instead of
+        // a blocked worker. Same worker name as before (`burp-ai-agent-<backendId>-connection`).
+        private val exec = ExtensionThreads.scheduled("$backendId-connection")
+        private val runner =
+            RetryingTurnRunner(exec, backendId, backendDisplayName, circuitBreaker, ::isAlive, debugLog, errorLog)
+
         private val conversationHistory = ConversationHistory(20)
         private val lastTokenUsageRef = AtomicReference<TokenUsage?>(null)
 
@@ -169,158 +175,115 @@ class OpenAiCompatibleBackend(
                 return
             }
 
-            exec.submit {
-                try {
+            runner.submit(
+                prologue = {
                     lastTokenUsageRef.set(null)
                     if (history != null) {
                         conversationHistory.setHistory(history)
                     }
                     conversationHistory.setSystemPrompt(systemPrompt)
-                    val maxAttempts = 6
-                    var attempt = 0
-                    var lastError: Exception? = null
-                    while (attempt < maxAttempts) {
-                        val permission = circuitBreaker.tryAcquire()
-                        if (!permission.allowed) {
-                            val failFastError = HttpBackendSupport.openCircuitError(backendDisplayName, permission.retryAfterMs)
-                            debugLog("circuit open: ${failFastError.message}")
-                            onComplete(failFastError)
-                            return@submit
-                        }
-                        if (!isAlive()) {
-                            onComplete(IllegalStateException("Connection closed"))
-                            return@submit
-                        }
-                        try {
-                            // BUG-69-01 / NET-01: AI HTTP backends go through MontoyaHttpTransport in
-                            // production and in tests, so Burp's upstream proxy / SOCKS / cert store
-                            // and the egress gate participate. Reaching this branch with transport ==
-                            // null means the supervisor's wiring is broken: fail fast, never send directly.
-                            if (transport == null) {
-                                throw IllegalStateException(MontoyaHttpTransport.TRANSPORT_UNAVAILABLE)
-                            }
-                            conversationHistory.addUser(text)
-                            val messages = conversationHistory.snapshot()
-                            val payload =
-                                mutableMapOf<String, Any?>(
-                                    "model" to model,
-                                    "messages" to messages,
-                                    "stream" to streaming,
-                                    "temperature" to if (determinismMode) 0.0 else 0.7,
-                                )
-                            payloadCustomizer?.invoke(payload)
-                            if (maxOutputTokens != null) {
-                                payload["max_tokens"] = maxOutputTokens
-                            }
-                            if (jsonMode && supportsJsonObjectResponseFormat) {
-                                payload["response_format"] = mapOf("type" to "json_object")
-                            }
+                },
+                attempt = attempt@{ complete ->
+                    // BUG-69-01 / NET-01: AI HTTP backends go through MontoyaHttpTransport in
+                    // production and in tests, so Burp's upstream proxy / SOCKS / cert store
+                    // and the egress gate participate. Reaching this branch with transport ==
+                    // null means the supervisor's wiring is broken: fail fast, never send directly.
+                    if (transport == null) {
+                        throw IllegalStateException(MontoyaHttpTransport.TRANSPORT_UNAVAILABLE)
+                    }
+                    conversationHistory.addUser(text)
+                    val messages = conversationHistory.snapshot()
+                    val payload =
+                        mutableMapOf<String, Any?>(
+                            "model" to model,
+                            "messages" to messages,
+                            "stream" to streaming,
+                            "temperature" to if (determinismMode) 0.0 else 0.7,
+                        )
+                    payloadCustomizer?.invoke(payload)
+                    if (maxOutputTokens != null) {
+                        payload["max_tokens"] = maxOutputTokens
+                    }
+                    if (jsonMode && supportsJsonObjectResponseFormat) {
+                        payload["response_format"] = mapOf("type" to "json_object")
+                    }
 
-                            val json = mapper.writeValueAsString(payload)
-                            val endpointUrl = buildChatCompletionsUrl(baseUrl)
+                    val json = mapper.writeValueAsString(payload)
+                    val endpointUrl = buildChatCompletionsUrl(baseUrl)
 
-                            val allHeaders =
-                                buildMap {
-                                    putAll(headers)
-                                    if (!sessionId.isNullOrBlank()) {
-                                        put("X-Session-Id", sessionId)
+                    val allHeaders =
+                        buildMap {
+                            putAll(headers)
+                            if (!sessionId.isNullOrBlank()) {
+                                put("X-Session-Id", sessionId)
+                            }
+                        }
+
+                    // Bug #66: pre-flight log shows the body SHAPE only — never the JSON itself
+                    // and never the message content. This preserves the privacy guarantee
+                    // (STRIDE T-quick-03) while giving operators enough to debug a 4xx.
+                    val safeBodyPreview =
+                        buildString {
+                            append("model=").append(model)
+                            append(" messages=").append(messages.size)
+                            append(" json_bytes=").append(json.length)
+                            if (jsonMode) append(" json_mode=true")
+                            if (maxOutputTokens != null) append(" max_tokens=").append(maxOutputTokens)
+                        }
+                    debugLog("request -> POST $endpointUrl ($safeBodyPreview)")
+
+                    val resp = transport.post(endpointUrl, allHeaders, json, timeoutSeconds * 1000)
+                    if (!resp.isSuccessful) {
+                        errorLog("HTTP ${resp.statusCode}: ${resp.body.take(500)}")
+                        val message =
+                            when (resp.statusCode) {
+                                429 -> "$backendDisplayName rate limited (HTTP 429). Check quota/capacity or retry later."
+                                // Bug #66: diagnosable 4xx — include the endpoint URL, a bounded
+                                // body excerpt (T-quick-04: accepted up to 800 chars), and the
+                                // standard remediation hint pointing at the three common causes.
+                                else ->
+                                    buildString {
+                                        append("$backendDisplayName HTTP ${resp.statusCode} from POST ").append(endpointUrl)
+                                        append("\nResponse: ").append(resp.body.take(800))
+                                        append(
+                                            "\nHints: verify the URL ends in /v1 (or /chat/completions), " +
+                                                "the model name matches the provider's catalog, " +
+                                                "and the API key is valid for this endpoint.",
+                                        )
                                     }
-                                }
-
-                            // Bug #66: pre-flight log shows the body SHAPE only — never the JSON itself
-                            // and never the message content. This preserves the privacy guarantee
-                            // (STRIDE T-quick-03) while giving operators enough to debug a 4xx.
-                            val safeBodyPreview =
-                                buildString {
-                                    append("model=").append(model)
-                                    append(" messages=").append(messages.size)
-                                    append(" json_bytes=").append(json.length)
-                                    if (jsonMode) append(" json_mode=true")
-                                    if (maxOutputTokens != null) append(" max_tokens=").append(maxOutputTokens)
-                                }
-                            debugLog("request -> POST $endpointUrl ($safeBodyPreview)")
-
-                            val resp = transport.post(endpointUrl, allHeaders, json, timeoutSeconds * 1000)
-                            if (!resp.isSuccessful) {
-                                errorLog("HTTP ${resp.statusCode}: ${resp.body.take(500)}")
-                                val message =
-                                    when (resp.statusCode) {
-                                        429 -> "$backendDisplayName rate limited (HTTP 429). Check quota/capacity or retry later."
-                                        // Bug #66: diagnosable 4xx — include the endpoint URL, a bounded
-                                        // body excerpt (T-quick-04: accepted up to 800 chars), and the
-                                        // standard remediation hint pointing at the three common causes.
-                                        else ->
-                                            buildString {
-                                                append("$backendDisplayName HTTP ${resp.statusCode} from POST ").append(endpointUrl)
-                                                append("\nResponse: ").append(resp.body.take(800))
-                                                append(
-                                                    "\nHints: verify the URL ends in /v1 (or /chat/completions), " +
-                                                        "the model name matches the provider's catalog, " +
-                                                        "and the API key is valid for this endpoint.",
-                                                )
-                                            }
-                                    }
-                                circuitBreaker.recordHttpFailureIfRetryable(resp.statusCode)
-                                onComplete(IllegalStateException(message))
-                                return@submit
                             }
-                            val body = resp.body
-                            if (body.isBlank()) {
-                                onComplete(IllegalStateException("$backendDisplayName response body was empty"))
-                                return@submit
-                            }
-                            // Single JSON document or (defensively) an SSE body from a server that
-                            // streams regardless of "stream":false; see OpenAiResponseParser.
-                            val parsed = OpenAiResponseParser.parse(mapper, body)
-                            val content = parsed.content
-                            parsed.usage?.let { lastTokenUsageRef.set(it) }
-                            if (content.isBlank()) {
-                                onComplete(IllegalStateException("$backendDisplayName response content was empty"))
-                                return@submit
-                            }
-                            debugLog("response <- ${content.take(200)}")
-                            conversationHistory.addAssistant(content)
-                            circuitBreaker.recordSuccess()
-                            onChunk(content)
-                            onComplete(null)
-                            return@submit
-                        } catch (e: Exception) {
-                            lastError = e
-                            val retryable = HttpBackendSupport.isRetryableConnectionError(e)
-                            if (retryable) {
-                                circuitBreaker.recordFailure()
-                            }
-                            if (!retryable || attempt == maxAttempts - 1) {
-                                throw e
-                            }
-                            val delayMs = HttpBackendSupport.retryDelayMs(attempt)
-                            BackendDiagnostics.logRetry(backendId, attempt + 1, delayMs, e.message)
-                            debugLog("retrying in ${delayMs}ms after: ${e.message}")
-                            try {
-                                Thread.sleep(delayMs)
-                            } catch (_: InterruptedException) {
-                                Thread.currentThread().interrupt()
-                                throw e
-                            }
-                            attempt++
-                        }
+                        circuitBreaker.recordHttpFailureIfRetryable(resp.statusCode)
+                        complete(IllegalStateException(message))
+                        return@attempt
                     }
-                    if (lastError != null) {
-                        throw lastError
+                    val body = resp.body
+                    if (body.isBlank()) {
+                        complete(IllegalStateException("$backendDisplayName response body was empty"))
+                        return@attempt
                     }
-                } catch (e: Exception) {
-                    errorLog("exception: ${e.message}")
-                    onComplete(e)
-                } finally {
-                    if (!isAlive()) {
-                        exec.shutdownNow()
+                    // Single JSON document or (defensively) an SSE body from a server that
+                    // streams regardless of "stream":false; see OpenAiResponseParser.
+                    val parsed = OpenAiResponseParser.parse(mapper, body)
+                    val content = parsed.content
+                    parsed.usage?.let { lastTokenUsageRef.set(it) }
+                    if (content.isBlank()) {
+                        complete(IllegalStateException("$backendDisplayName response content was empty"))
+                        return@attempt
                     }
-                }
-            }
+                    debugLog("response <- ${content.take(200)}")
+                    conversationHistory.addAssistant(content)
+                    circuitBreaker.recordSuccess()
+                    onChunk(content)
+                    complete(null)
+                },
+                onComplete = onComplete,
+            )
         }
 
         override fun stop() {
             alive.set(false)
+            // Cancels a pending retry and completes its turn before the worker goes away.
+            runner.stop()
             exec.shutdownNow()
         }
 
