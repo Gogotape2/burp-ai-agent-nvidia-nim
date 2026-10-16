@@ -110,7 +110,7 @@ class HttpBackendScheduledRetryTest {
             val bodies = recording.requests.map { it.body }
             assertEquals(
                 listOf("A", "A", "B"),
-                bodies.map { if (it.contains(MARKER_B)) "B" else if (it.contains(MARKER_A)) "A" else "?" },
+                bodies.map(::turnOf),
                 "turn B's request is sent only after turn A completed",
             )
             assertFalse(bodies[1].contains(MARKER_B), "turn A's retried request carries none of turn B's text")
@@ -138,6 +138,14 @@ class HttpBackendScheduledRetryTest {
         connections += connection
         return connection
     }
+
+    /** Which turn a request body belongs to; turn B's body also carries turn A as history. */
+    private fun turnOf(body: String): String =
+        when {
+            body.contains(MARKER_B) -> "B"
+            body.contains(MARKER_A) -> "A"
+            else -> "?"
+        }
 
     /** One turn's outcome: every onComplete call is counted, the first error is kept. */
     private class Turn {
