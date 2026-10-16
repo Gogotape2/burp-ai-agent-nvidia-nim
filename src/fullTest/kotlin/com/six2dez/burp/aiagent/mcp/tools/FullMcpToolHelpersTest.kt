@@ -1169,6 +1169,26 @@ class FullMcpToolHelpersTest {
         fun anEmptyNeedleCountsZeroRatherThanLoopingForever() {
             assertEquals(0, countOccurrences("abcdef", ""))
         }
+
+        @Test
+        fun anEmptyHaystackCountsZero() {
+            assertEquals(0, countOccurrences("", "a"))
+        }
+
+        @Test
+        fun aSurrogatePairNeedleIsCountedInUtf16CodeUnits() {
+            assertEquals(2, countOccurrences("🔑a🔑a", "🔑"))
+        }
+
+        @Test
+        fun aNonAsciiNeedleIsCountedEveryTime() {
+            assertEquals(3, countOccurrences("ééé", "é"))
+        }
+
+        @Test
+        fun aNeedleLongerThanTheHaystackCountsZero() {
+            assertEquals(0, countOccurrences("ab", "abc"))
+        }
     }
 
     // ── parseHighlightColor ──────────────────────────────────────────────────────────────

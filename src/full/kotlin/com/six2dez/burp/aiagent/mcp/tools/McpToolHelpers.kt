@@ -154,13 +154,13 @@ internal fun countOccurrences(
 ): Int {
     if (needle.isEmpty()) return 0
     var count = 0
-    var idx = 0
-    while (true) {
-        val found = haystack.indexOf(needle, idx)
-        if (found == -1) return count
+    var idx = haystack.indexOf(needle)
+    // Non-overlapping scan: the next search starts past the current match (Phase 34 / D-05).
+    while (idx >= 0) {
         count++
-        idx = found + needle.length
+        idx = haystack.indexOf(needle, idx + needle.length)
     }
+    return count
 }
 
 internal fun parseHighlightColor(raw: String?): HighlightColor? {
