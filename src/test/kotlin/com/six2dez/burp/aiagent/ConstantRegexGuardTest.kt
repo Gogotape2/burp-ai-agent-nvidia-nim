@@ -172,56 +172,88 @@ class ConstantRegexGuardTest {
 
     /**
      * Step 2: the single, non-interpolated string literal [match] compiles, or null when the pattern is
-     * dynamic. `.toRegex` reads its receiver; the other tokens read the argument after the parenthesis,
-     * across the next lines so a multi-line call or raw string is seen whole.
+     * dynamic. `.toRegex` reads its receiver; the other tokens read the argument after the parenthesis.
      */
     private fun literalArgument(
         lines: List<String>,
         index: Int,
         match: MatchResult,
     ): Literal? {
-        val line = lines[index]
-        if (match.value.startsWith(".")) {
-            val receiver = literalsIn(line.substring(0, match.range.first)).lastOrNull()
-            return receiver?.takeIf { it.end == match.range.first && !it.interpolates() }
-        }
+        val literal =
+            if (match.value.startsWith(".")) {
+                receiverLiteral(lines[index], match.range.first)
+            } else {
+                argumentLiteral(lines, index, match.range.last + 1)
+            }
+        return literal?.takeIf { !it.interpolates() }
+    }
+
+    /** The literal that ends right before the `.toRegex` call starting at [callStart], if any. */
+    private fun receiverLiteral(
+        line: String,
+        callStart: Int,
+    ): Literal? = literalsIn(line.substring(0, callStart)).lastOrNull()?.takeIf { it.end == callStart }
+
+    /**
+     * The literal that opens the argument list at [from] on line [index], read across the next lines so a
+     * multi-line call or raw string is seen whole, after an optional `pattern =` / `regex =`. It must be
+     * followed by `,` or `)`; anything else (a `+` concatenation, a method call) makes it dynamic.
+     */
+    private fun argumentLiteral(
+        lines: List<String>,
+        index: Int,
+        from: Int,
+    ): Literal? {
         val following = lines.subList(index + 1, minOf(lines.size, index + 1 + LOOKAHEAD_LINES)).map { it.trimStart() }
-        val text = (listOf(line.substring(match.range.last + 1)) + following).joinToString("\n").trimStart()
+        val text = (listOf(lines[index].substring(from)) + following).joinToString("\n").trimStart()
         val argument = text.replaceFirst(NAMED_ARGUMENT, "")
-        val literal = literalAt(argument, 0) ?: return null
-        val next = argument.substring(literal.end).trimStart().firstOrNull()
-        return literal.takeIf { (next == ',' || next == ')') && !it.interpolates() }
+        val literal = literalAt(argument, 0)
+        val next = literal?.let { argument.substring(it.end).trimStart().firstOrNull() }
+        return literal?.takeIf { next == ',' || next == ')' }
     }
 
     /**
      * The string literal that opens at [start] of [text] (a raw string or a normal string), or null when
-     * none opens there or it does not close. A raw string closes at the last quote of its closing run,
-     * so `""""a""""` has body `"a"`; a normal string honours backslash escapes, skips `${..}` templates
-     * and cannot span a line.
+     * none opens there or it does not close.
      */
     private fun literalAt(
         text: String,
         start: Int,
-    ): Literal? {
-        if (text.startsWith(RAW_QUOTE, start)) {
-            val close = text.indexOf(RAW_QUOTE, start + RAW_QUOTE.length)
-            if (close < 0) return null
-            var end = close + RAW_QUOTE.length
-            while (end < text.length && text[end] == '"') end++
-            return Literal(text.substring(start + RAW_QUOTE.length, end - RAW_QUOTE.length), end, raw = true)
+    ): Literal? =
+        when {
+            text.startsWith(RAW_QUOTE, start) -> rawLiteralAt(text, start)
+            start < text.length && text[start] == '"' -> normalLiteralAt(text, start)
+            else -> null
         }
-        if (start >= text.length || text[start] != '"') return null
+
+    /** A raw string closes at the last quote of its closing run, so `""""a""""` has body `"a"`. */
+    private fun rawLiteralAt(
+        text: String,
+        start: Int,
+    ): Literal? {
+        val close = text.indexOf(RAW_QUOTE, start + RAW_QUOTE.length)
+        if (close < 0) return null
+        var end = close + RAW_QUOTE.length
+        while (end < text.length && text[end] == '"') end++
+        return Literal(text.substring(start + RAW_QUOTE.length, end - RAW_QUOTE.length), end, raw = true)
+    }
+
+    /** A normal string honours backslash escapes, skips `${..}` templates and cannot span a line. */
+    private fun normalLiteralAt(
+        text: String,
+        start: Int,
+    ): Literal? {
         var i = start + 1
-        while (i < text.length) {
+        var close = -1
+        while (i < text.length && close < 0 && text[i] != '\n') {
             when {
                 text[i] == '\\' -> i += 2
                 text.startsWith("\${", i) -> i = skipTemplate(text, i + 2)
-                text[i] == '"' -> return Literal(text.substring(start + 1, i), i + 1, raw = false)
-                text[i] == '\n' -> return null
+                text[i] == '"' -> close = i
                 else -> i++
             }
         }
-        return null
+        return if (close < 0) null else Literal(text.substring(start + 1, close), close + 1, raw = false)
     }
 
     /** The index after the `}` that closes a template whose body starts at [bodyStart]. */
@@ -246,19 +278,25 @@ class ConstantRegexGuardTest {
     private fun literalsIn(code: String): List<Literal> {
         val found = mutableListOf<Literal>()
         var i = 0
-        while (i < code.length) {
-            when {
-                code.startsWith("//", i) -> return found
-                code[i] == '\'' -> i = (code.indexOf('\'', i + if (code.startsWith("'\\", i)) 3 else 2) + 1).takeIf { it > 0 } ?: return found
-                code[i] == '"' -> {
-                    val literal = literalAt(code, i) ?: return found
-                    found += literal
-                    i = literal.end
+        while (i in code.indices) {
+            i =
+                when {
+                    code.startsWith("//", i) -> code.length
+                    code[i] == '\'' -> charLiteralEnd(code, i)
+                    code[i] == '"' -> literalAt(code, i)?.also { found += it }?.end ?: code.length
+                    else -> i + 1
                 }
-                else -> i++
-            }
         }
         return found
+    }
+
+    /** The index after the char literal (`'a'` or `'\n'`) that opens at [start]; the line's end when it does not close. */
+    private fun charLiteralEnd(
+        code: String,
+        start: Int,
+    ): Int {
+        val close = code.indexOf('\'', start + if (code.startsWith("'\\", start)) 3 else 2)
+        return if (close < 0) code.length else close + 1
     }
 
     /** True when the body reads a template: `$` + a name or `{`, unescaped (raw strings have no escapes). */
@@ -285,11 +323,13 @@ class ConstantRegexGuardTest {
         index: Int,
     ): Boolean {
         val chain = declarationChain(lines, index)
-        val innermost = chain.firstOrNull() ?: return false
-        if (innermost.kind != "val" && innermost.kind != "var") return false
-        if (GETTER.containsMatchIn(innermost.line)) return false
-        val topLevel = chain.size == 1 && innermost.indent == 0
-        return topLevel || chain.getOrNull(1)?.kind in CONSTANT_HOLDERS
+        val innermost = chain.firstOrNull()
+        val plainProperty =
+            innermost != null &&
+                (innermost.kind == "val" || innermost.kind == "var") &&
+                !GETTER.containsMatchIn(innermost.line)
+        val topLevel = chain.size == 1 && innermost?.indent == 0
+        return plainProperty && (topLevel || chain.getOrNull(1)?.kind in CONSTANT_HOLDERS)
     }
 
     /** Innermost first: the site line when it declares, then each earlier code line with smaller indentation that declares. */
@@ -300,13 +340,16 @@ class ConstantRegexGuardTest {
         val chain = mutableListOf<Declaration>()
         declarationOf(lines[index])?.let { chain += it }
         var indent = lines[index].indentation()
-        for (j in index - 1 downTo 0) {
-            if (indent == 0) break
+        var j = index - 1
+        while (j >= 0 && indent > 0) {
             val line = lines[j]
-            if (line.isBlank() || line.isCommentLine() || line.indentation() >= indent) continue
-            val declaration = declarationOf(line) ?: continue
-            chain += declaration
-            indent = declaration.indent
+            val enclosing = !line.isBlank() && !line.isCommentLine() && line.indentation() < indent
+            val declaration = if (enclosing) declarationOf(line) else null
+            if (declaration != null) {
+                chain += declaration
+                indent = declaration.indent
+            }
+            j--
         }
         return chain
     }
