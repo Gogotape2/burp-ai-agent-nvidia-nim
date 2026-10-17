@@ -73,7 +73,7 @@ plus the wider class of issues the same review surfaced. Full detail in [CHANGEL
 - **59 MCP Tools** — Let Claude Desktop (or any MCP client) drive Burp autonomously (8 extension-native AI tools in the store build, all 59 in the full build).
 - **Scoped MCP Access** — Optionally confine every MCP tool to your in-scope hosts, so external AI clients can't reach out-of-scope targets through Burp.
 - **62 Vulnerability Classes** — Passive and Active AI scanners across injection, auth, crypto, and more. The passive scanner runs as a Burp `PassiveScanCheck` (Burp Pro).
-- **Install from Releases** — Download the JAR from [Releases](https://github.com/six2dez/burp-ai-agent/releases). Not on the BApp Store: the [submission](https://github.com/PortSwigger/extension-portal/issues/231) has been open since January 2026.
+- **Install from Releases** — Download either build from [Releases](https://github.com/six2dez/burp-ai-agent/releases); [Which Build?](https://burp-ai-agent.six2dez.com/getting-started/which-build) explains how they differ. Custom AI Agent is not listed in the BApp Store yet: the BApp Store build is going through PortSwigger's review in [extension-portal#231](https://github.com/PortSwigger/extension-portal/issues/231).
 - **Theme-Aware UI** — An internal design system styles the settings panel and re-themes automatically with Burp's light/dark switch.
 - **Burp Scan Skill** — Use your preferred AI coding assistant (Claude Code, Gemini CLI, Codex, etc.) as a scanner via MCP.
 - **Tool-Call Confirmation** — Tool calls the AI emits are gated: read-only bounded tools run silently, everything else asks first with an approval card in the chat. Unknown tools fail closed.
@@ -109,6 +109,8 @@ JAVA_HOME=/path/to/jdk-21 ./gradlew clean bappJar
 The extension registers in Burp as **Custom AI Agent** (the name in the Extensions list and the Suite tab) to distinguish it from Burp's built-in **Burp AI** provider.
 
 **Load only one build.** The full build and the BApp Store build both register as **Custom AI Agent**, so they look identical in Burp's Extensions list. Loading both at once gives you two Custom AI Agent tabs, two MCP servers competing for the same port, and two copies writing the shared `~/.burp-ai-agent` directory. Unload one before you load the other.
+
+**Burp edition and "Use AI".** The BApp Store build is listed for Burp Community and Burp Professional; it sends AI requests only while Burp's "Use AI" setting is enabled for the extension, and with it off it loads and refuses every AI request. PortSwigger documents "Use AI" as a per-extension checkbox, off by default: **Extensions > Installed > Custom AI Agent > Use AI**.
 
 <!-- screenshot: Burp Extensions > Add dialog with the JAR loaded -->
 ![Load Extension](screenshots/burp-extensions-add.png)
@@ -269,7 +271,8 @@ Settings are schema-versioned internally (`settings.schema.version`) and migrate
 
 ## Requirements
 
-- **Burp Suite** Community or Professional (2023.12+)
+- **Burp Suite** Community or Professional, 2026.2 or newer
+- **AI features in the BApp Store build** — The BApp Store build is listed for Burp Community and Burp Professional; it sends AI requests only while Burp's "Use AI" setting is enabled for the extension, and with it off it loads and refuses every AI request. The GitHub full build's HTTP and CLI backends do not depend on Burp's "Use AI" (Burp AI and the MCP `ai_*` tools still do); see [Which Build?](https://burp-ai-agent.six2dez.com/getting-started/which-build).
 - **Java 21** (bundled with modern Burp for runtime; required separately for building from source)
 - At least one AI backend configured (see table above)
 
