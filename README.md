@@ -26,7 +26,7 @@ Two builds from one repository, built for the BApp Store resubmission. Full deta
   [Releases](https://github.com/six2dez/burp-ai-agent/releases), each with a `.sha256`. Load only
   one at a time; [Which Build?](https://burp-ai-agent.six2dez.com/getting-started/which-build)
   compares them.
-- **The BApp Store build's AI gate.** The BApp Store build is listed for Burp Community and Burp Professional; it sends AI requests only while Burp's "Use AI" setting is enabled for the extension, and with it off it loads and refuses every AI request.
+- **The BApp Store build's AI gate.** The BApp Store build runs on Burp Community and Burp Professional; it sends AI requests only while Burp's "Use AI" setting is enabled for the extension, and with it off it loads and refuses every AI request.
 - **Passive scans send nothing to the target.** Passive findings the AI Active Scanner can test are
   listed as suggested targets in its queue dialog, in both builds, and you queue them by hand:
   nothing is sent to a target before you confirm.
@@ -132,7 +132,7 @@ The extension registers in Burp as **Custom AI Agent** (the name in the Extensio
 
 **Load only one build.** The full build and the BApp Store build both register as **Custom AI Agent**, so they look identical in Burp's Extensions list. Loading both at once gives you two Custom AI Agent tabs, two MCP servers competing for the same port, and two copies writing the shared `~/.burp-ai-agent` directory. Unload one before you load the other.
 
-**Burp edition and "Use AI".** The BApp Store build is listed for Burp Community and Burp Professional; it sends AI requests only while Burp's "Use AI" setting is enabled for the extension, and with it off it loads and refuses every AI request. PortSwigger documents "Use AI" as a per-extension checkbox, off by default: **Extensions > Installed > Custom AI Agent > Use AI**.
+**Burp edition and "Use AI".** The BApp Store build runs on Burp Community and Burp Professional; it sends AI requests only while Burp's "Use AI" setting is enabled for the extension, and with it off it loads and refuses every AI request. PortSwigger documents "Use AI" as a per-extension checkbox, off by default: **Extensions > Installed > Custom AI Agent > Use AI**.
 
 <!-- screenshot: Burp Extensions > Add dialog with the JAR loaded -->
 ![Load Extension](screenshots/burp-extensions-add.png)
@@ -295,7 +295,7 @@ Settings are schema-versioned internally (`settings.schema.version`) and migrate
 ## Requirements
 
 - **Burp Suite** Community or Professional, 2026.2 or newer
-- **AI features in the BApp Store build** — The BApp Store build is listed for Burp Community and Burp Professional; it sends AI requests only while Burp's "Use AI" setting is enabled for the extension, and with it off it loads and refuses every AI request. The GitHub full build's HTTP and CLI backends do not depend on Burp's "Use AI" (Burp AI and the MCP `ai_*` tools still do); see [Which Build?](https://burp-ai-agent.six2dez.com/getting-started/which-build).
+- **AI features in the BApp Store build** — The BApp Store build runs on Burp Community and Burp Professional; it sends AI requests only while Burp's "Use AI" setting is enabled for the extension, and with it off it loads and refuses every AI request. The GitHub full build's HTTP and CLI backends do not depend on Burp's "Use AI" (Burp AI and the MCP `ai_*` tools still do); see [Which Build?](https://burp-ai-agent.six2dez.com/getting-started/which-build).
 - **Java 21** (bundled with modern Burp for runtime; required separately for building from source)
 - At least one AI backend configured (see table above)
 

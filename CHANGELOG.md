@@ -49,7 +49,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   card has neither. The Ollama required-field message for a blank base URL is gone from both builds.
 - **The BApp Store build requires Burp's "Use AI" for every provider** - with "Use AI" off, every
   AI backend is refused, not only Burp AI. The full build keeps the 1.0.1 rule.
-- **Burp edition requirements** - The BApp Store build is listed for Burp Community and Burp
+- **Burp edition requirements** - The BApp Store build runs on Burp Community and Burp
   Professional; it sends AI requests only while Burp's "Use AI" setting is enabled for the
   extension, and with it off it loads and refuses every AI request. For local or CLI AI that does
   not depend on "Use AI", use the GitHub full build: its HTTP and CLI backends do not depend on that
