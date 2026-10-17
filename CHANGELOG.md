@@ -54,6 +54,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   extension, and with it off it loads and refuses every AI request. For local or CLI AI that does
   not depend on "Use AI", use the GitHub full build: its HTTP and CLI backends do not depend on that
   setting, while Burp AI and the MCP tools `ai_analyze` and `ai_passive_scan` still do.
+- **The Burp AI settings card names the real setting** - it now says AI requests need Burp's
+  "Use AI" setting enabled for this extension, and where to turn it on: Extensions > Installed >
+  Custom AI Agent > Use AI. It no longer names a Burp edition or points at Extensions > Settings.
 - **Releases carry both builds** - each GitHub release attaches `Custom-AI-Agent-full-<version>.jar`
   (the GitHub full build) and `Custom-AI-Agent-bapp-<version>.jar` (the BApp Store build,
   `./gradlew bappJar`), each with a `.sha256` in `sha256sum` format, and the release notes open with
