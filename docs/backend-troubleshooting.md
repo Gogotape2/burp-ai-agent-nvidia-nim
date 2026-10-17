@@ -8,7 +8,7 @@
    * `AI: Offline` — the backend did not answer or returned an error; the tooltip carries the error.
    * `AI: ?` — full build, before the first check (the startup check replaces it).
    * `Not checked · click to test` — BApp Store build: no check has run yet. Click the pill or use **Test connection**.
-   * `AI disabled in Burp` — Burp's "Use AI" is off and the selected backend was refused. In the BApp Store build that refuses every backend; in the full build, only Burp AI. See the [README Requirements section](../README.md#requirements) for what each Burp edition supports.
+   * `AI disabled in Burp` — Burp's "Use AI" is off and the selected backend was refused. In the BApp Store build that refuses every backend; in the full build, only Burp AI. See the [README Requirements section](../README.md#requirements) for what "Use AI" gates in each build.
 2. Run **Test connection** for selected backend.
 3. Check Burp extension output/errors tab.
 

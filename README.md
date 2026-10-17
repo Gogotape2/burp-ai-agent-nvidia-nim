@@ -207,7 +207,7 @@ Enable the MCP server in **Settings > MCP Server** and add this to your Claude D
 
 > Requires Node.js 18+. If you enable **External Access**, the MCP client must send `Authorization: Bearer <token>` on every request.
 
-**Full build only.** You can also register external or custom MCP servers in **Settings > MCP > External Servers** (SSE or stdio transports). External server auth tokens are stored encrypted at rest, with the caveat described in [Privacy and Security Notes](#privacy-and-security-notes). See [docs/external-mcp-servers.md](docs/external-mcp-servers.md) for setup details and security notes.
+**Full build only.** You can also register external or custom MCP servers in **Settings > MCP Server > External MCP Servers** (SSE or stdio transports). External server auth tokens are stored encrypted at rest, with the caveat described in [Privacy and Security Notes](#privacy-and-security-notes). See [docs/external-mcp-servers.md](docs/external-mcp-servers.md) for setup details and security notes.
 
 ## Burp Scan Skill (Terminal AI Scanning)
 
@@ -295,7 +295,7 @@ Settings are schema-versioned internally (`settings.schema.version`) and migrate
 ## Requirements
 
 - **Burp Suite** Community or Professional, 2026.2 or newer
-- **AI features in the BApp Store build** — The BApp Store build runs on Burp Community and Burp Professional; it sends AI requests only while Burp's "Use AI" setting is enabled for the extension, and with it off it loads and refuses every AI request. The GitHub full build's HTTP and CLI backends do not depend on Burp's "Use AI" (Burp AI and the MCP `ai_*` tools still do); see [Which Build?](https://burp-ai-agent.six2dez.com/getting-started/which-build).
+- **AI features in the BApp Store build** — The BApp Store build runs on Burp Community and Burp Professional; it sends AI requests only while Burp's "Use AI" setting is enabled for the extension, and with it off it loads and refuses every AI request. The GitHub full build's HTTP and CLI backends do not depend on Burp's "Use AI" (Burp AI and the MCP tools `ai_analyze` and `ai_passive_scan` still do); see [Which Build?](https://burp-ai-agent.six2dez.com/getting-started/which-build).
 - **Java 21** (bundled with modern Burp for runtime; required separately for building from source)
 - At least one AI backend configured (see table above)
 
