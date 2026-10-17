@@ -398,8 +398,8 @@ class BackendConfigPanel(
         val info =
             JTextArea(
                 "Burp AI uses the built-in AI provider. No configuration needed.\n\n" +
-                    "Requires Burp Suite Professional with AI features enabled.\n" +
-                    "Go to Extensions > Settings and enable 'Use AI'.",
+                    "AI requests need Burp's 'Use AI' setting enabled for this extension.\n" +
+                    "Turn it on in Extensions > Installed > Custom AI Agent > Use AI.",
             ).apply {
                 isEditable = false
                 isOpaque = false
