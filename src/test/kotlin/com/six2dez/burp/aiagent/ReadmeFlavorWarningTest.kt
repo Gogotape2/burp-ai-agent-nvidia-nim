@@ -20,7 +20,8 @@ class ReadmeFlavorWarningTest {
     private fun readme(): String {
         val file = File("README.md")
         assertTrue(file.isFile, "README.md not found from ${System.getProperty("user.dir")}")
-        return file.readText()
+        // The blank-line paragraph bound is LF-based; a Windows CRLF checkout would otherwise widen the paragraph to the end of README.md.
+        return file.readText().replace("\r\n", "\n")
     }
 
     @Test

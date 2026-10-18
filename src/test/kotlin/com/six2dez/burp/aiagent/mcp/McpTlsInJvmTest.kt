@@ -17,8 +17,11 @@ import java.util.Date
  * environment (KS_PASS) using -storepass:env / -keypass:env, never as a literal argv token.
  */
 class McpTlsInJvmTest {
-    /** Resolved through SourceRoots.file, which fails naming both production roots when the file is in neither or both. */
-    private fun mcpTlsSource(): String = SourceRoots.file("com/six2dez/burp/aiagent/mcp/McpTls.kt").readText()
+    /**
+     * Resolved through SourceRoots.file, which fails naming both production roots when the file is in neither or both.
+     * CRLF is normalized because the multi-line argv guard below is LF-based and would otherwise never match on a Windows checkout.
+     */
+    private fun mcpTlsSource(): String = SourceRoots.file("com/six2dez/burp/aiagent/mcp/McpTls.kt").readText().replace("\r\n", "\n")
 
     @Test
     fun generateSelfSigned_writesKeystoreFile() {
