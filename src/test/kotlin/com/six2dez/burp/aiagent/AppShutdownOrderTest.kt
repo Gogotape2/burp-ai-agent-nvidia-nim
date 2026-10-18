@@ -55,7 +55,8 @@ class AppShutdownOrderTest {
 
     /** The comment-stripped body of `fun shutdown(` in App.kt: from its signature to its closing brace. */
     private fun shutdownBody(): String {
-        val source = SourceRoots.file("com/six2dez/burp/aiagent/App.kt").readText()
+        // A Windows checkout is CRLF (core.autocrlf; .gitattributes pins only BappManifest.bmf to LF) and the markers below are LF-based.
+        val source = SourceRoots.file("com/six2dez/burp/aiagent/App.kt").readText().replace("\r\n", "\n")
         val start = source.indexOf("\n    fun shutdown(")
         assertTrue(start >= 0, "fun shutdown( not found in App.kt")
         val end = source.indexOf("\n    }\n", start)
