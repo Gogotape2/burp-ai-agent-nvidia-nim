@@ -12,6 +12,10 @@ import com.six2dez.burp.aiagent.audit.Hashing
  *  PassiveAiScannerPrompts.kt (same package) can reference it without a second instance. */
 internal val jsonMapper = ObjectMapper().registerKotlinModule()
 
+// Phase 34 / PERF-01: PREVIEW_WHITESPACE_REGEX and CODE_FENCE_START_REGEX compiled once per extension
+// load, not per call.
+private val PREVIEW_WHITESPACE_REGEX = Regex("\\s+")
+private val CODE_FENCE_START_REGEX = Regex("^```(?:json)?\\s*", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE))
 private val CODE_FENCE_END_REGEX = Regex("\\s*```$", RegexOption.MULTILINE)
 
 internal fun parseIssuesJson(json: String): List<AiIssueItem> {
@@ -29,7 +33,7 @@ internal fun parseIssuesFromAiResponse(
     return try {
         parseIssuesJson(cleaned)
     } catch (e: Exception) {
-        val preview = text.replace(Regex("\\s+"), " ").take(160)
+        val preview = text.replace(PREVIEW_WHITESPACE_REGEX, " ").take(160)
         api.logging().logToError("[PassiveAiScanner] Failed to parse AI response after cleanup: ${e.message} | preview=$preview")
         emptyList()
     }
@@ -85,7 +89,7 @@ private fun parseNodeIfValid(candidate: String): JsonNode? = runCatching { jsonM
 
 private fun stripCodeFences(text: String): String =
     text
-        .replace(Regex("^```(?:json)?\\s*", setOf(RegexOption.IGNORE_CASE, RegexOption.MULTILINE)), "")
+        .replace(CODE_FENCE_START_REGEX, "")
         .replace(CODE_FENCE_END_REGEX, "")
         .trim()
 

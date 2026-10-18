@@ -1,4 +1,8 @@
 import com.github.jengelman.gradle.plugins.shadow.tasks.ShadowJar
+import org.gradle.api.artifacts.component.ModuleComponentIdentifier
+import org.gradle.api.artifacts.result.ResolvedComponentResult
+import org.gradle.api.artifacts.result.ResolvedDependencyResult
+import org.gradle.api.artifacts.result.UnresolvedDependencyResult
 import org.gradle.api.tasks.PathSensitivity
 import org.gradle.api.tasks.testing.Test
 import org.gradle.api.tasks.testing.logging.TestExceptionFormat
@@ -16,7 +20,7 @@ plugins {
 }
 
 group = "com.six2dez.burp"
-version = "1.0.1"
+version = "1.1.0"
 
 repositories {
     mavenCentral()
@@ -33,9 +37,6 @@ dependencies {
     implementation("com.fasterxml.jackson.core:jackson-databind:2.22.3")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.22.3")
 
-    // HTTP client (Ollama + webhooks)
-    implementation("com.squareup.okhttp3:okhttp:5.4.0")
-
     // MCP Server (Ktor + MCP SDK)
     // Phase 29 / NET-02 (RESEARCH Pitfall 2, OQ6): the SDK pulls both CIO engines transitively. The store
     // MCP server runs on Netty and opens no client connection of its own, so neither CIO engine is on the
@@ -43,6 +44,16 @@ dependencies {
     implementation("io.modelcontextprotocol:kotlin-sdk:0.5.0") {
         exclude(group = "io.ktor", module = "ktor-client-cio")
         exclude(group = "io.ktor", module = "ktor-server-cio")
+    }
+    // Phase 30 / CI-02 (review finding CR-01): the SDK's ktor-server-websockets 3.0.2 requests
+    // ktor-websocket-serialization 3.0.2. In the full build ktor-client-core 3.1.3 lifts it to 3.1.3, but the
+    // store classpath, which has had no Ktor client since NET-02, kept 3.0.2, so bom.json named a version the
+    // BApp Store JAR did not ship. These constraints give both classpaths 3.1.3, the version 1.0.1 shipped.
+    // storeJarContentTest fails, naming the module, if any store module resolves differently in
+    // sbomSourceConfiguration.
+    constraints {
+        implementation("io.ktor:ktor-websocket-serialization:3.1.3")
+        implementation("io.ktor:ktor-websocket-serialization-jvm:3.1.3")
     }
     implementation("io.ktor:ktor-server-core:3.1.3")
     implementation("io.ktor:ktor-server-netty:3.1.3")
@@ -67,6 +78,9 @@ dependencies {
     testImplementation("org.junit.jupiter:junit-jupiter:6.0.3")
     testImplementation("net.portswigger.burp.extensions:montoya-api:2026.2")
     testImplementation("org.mockito.kotlin:mockito-kotlin:5.4.0")
+    // MCP server tests use OkHttp as an HTTP client; production provider traffic goes only through Burp's
+    // networking (Phase 31 / NET-01)
+    testImplementation("com.squareup.okhttp3:okhttp:5.4.0")
     testImplementation("com.squareup.okhttp3:mockwebserver:5.4.0")
 }
 
@@ -118,11 +132,67 @@ abstract class StoreJarInspectionArgs : CommandLineArgumentProvider {
     @get:PathSensitive(PathSensitivity.RELATIVE)
     abstract val fullClassDirs: ConfigurableFileCollection
 
+    // Phase 31 / NET-01: the full JAR, read only for the OkHttp check. An @InputFile like storeJar, so a
+    // rebuilt full JAR re-runs the inspection and the task always runs after fullJar has written it.
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val fullBuildJar: RegularFileProperty
+
     override fun asArguments(): Iterable<String> =
         listOf(
             "-Dburp.aiagent.storeJar=${storeJar.get().asFile.absolutePath}",
             "-Dburp.aiagent.fullClassDirs=" + fullClassDirs.files.joinToString(File.pathSeparator) { it.absolutePath },
+            "-Dburp.aiagent.fullJar=${fullBuildJar.get().asFile.absolutePath}",
         )
+}
+
+// Phase 30 / CI-02 (review finding CR-01): the resolved module lists storeJarContentTest compares, handed to
+// its JVM as system properties. The release publishes one bom.json for both JARs, generated from the full
+// runtime classpath. Gradle resolves each configuration's conflicts on its own, so extendsFrom never made the
+// two classpaths agree: the store classpath kept ktor-websocket-serialization 3.0.2 while the SBOM listed
+// 3.1.3. The check therefore compares the store classpath with the SBOM source classpath module by module.
+// Both resolution results are @Input values, so a dependency change re-runs the check instead of being
+// served from cache, and they are configuration-cache safe (the planner's spike stored and reused the entry).
+abstract class StoreSbomAlignmentArgs : CommandLineArgumentProvider {
+    @get:Input
+    abstract val storeClasspath: Property<ResolvedComponentResult>
+
+    @get:Input
+    abstract val sbomClasspath: Property<ResolvedComponentResult>
+
+    @get:Input
+    abstract val sbomConfiguration: Property<String>
+
+    override fun asArguments(): Iterable<String> =
+        listOf(
+            "-Dburp.aiagent.storeModules=" + modules(storeClasspath.get()),
+            "-Dburp.aiagent.sbomModules=" + modules(sbomClasspath.get()),
+            "-Dburp.aiagent.sbomConfiguration=" + sbomConfiguration.get(),
+        )
+
+    // Walks the whole graph breadth-first, transitive modules and platforms included, visiting each component
+    // once. A dependency that does not resolve fails the build: it must never vanish from the list.
+    private fun modules(root: ResolvedComponentResult): String {
+        val seen = mutableSetOf(root.id)
+        val queue = ArrayDeque(listOf(root))
+        val found = mutableListOf<String>()
+        while (queue.isNotEmpty()) {
+            val component = queue.removeFirst()
+            val id = component.id
+            if (id is ModuleComponentIdentifier) found += "${id.group}:${id.module}:${id.version}"
+            component.dependencies.forEach { dependency ->
+                when (dependency) {
+                    is ResolvedDependencyResult -> {
+                        val selected = dependency.selected
+                        if (seen.add(selected.id)) queue.addLast(selected)
+                    }
+                    is UnresolvedDependencyResult ->
+                        throw GradleException("Unresolved dependency ${dependency.requested.displayName}")
+                }
+            }
+        }
+        return found.distinct().sorted().joinToString(",")
+    }
 }
 
 val generateBuildFlags by tasks.registering(GenerateBuildFlagsTask::class) {
@@ -454,7 +524,11 @@ tasks.test {
     declareStructuralInputs()
     excludeHeavyTestsIfRequested()
     // Phase 30 / CI-01: StoreJarContentTest needs the store JAR property and runs only in storeJarContentTest.
-    filter { excludeTestsMatching("*StoreJarContentTest") }
+    // Phase 33 / LIFE-02: the App-level lifecycle tests run only in unloadLeakTest (see that task).
+    filter {
+        excludeTestsMatching("*StoreJarContentTest")
+        excludeTestsMatching("com.six2dez.burp.aiagent.lifecycle.*")
+    }
 }
 
 // REL-05 / SC1 / S-10: `tasks.test` above enables `-ea`, so a green McpToolExecutorEdtGuardTest there
@@ -485,6 +559,34 @@ tasks.register<Test>("edtGuardWithoutAssertionsTest") {
     }
 }
 
+// Phase 33 / LIFE-01, LIFE-02 (D-07, D-12): the App-level load and unload tests, package
+// com.six2dez.burp.aiagent.lifecycle, run here and nowhere else (tasks.test excludes that package).
+// Each test class gets its own JVM (forkEvery = 1) because:
+// - App is a process-wide object, so one class's load or unload would leak into the next class;
+// - the unload's final sweep (ExtensionThreads.terminateAll) stops every pool tracked in the JVM,
+//   including pools other suites' tests are still using;
+// - the production unload path runs Dispatchers.shutdown(), which is irreversible: kotlinx.coroutines
+//   stays unusable for the rest of that JVM. Inside a class, the case that goes through
+//   BurpAiAgentExtension (the path that does this) is ordered last.
+// `check` depends on it; plan 33-11 adds the CI invocations.
+// Run it locally with: ./gradlew unloadLeakTest
+val unloadLeakTest =
+    tasks.register<Test>("unloadLeakTest") {
+        description = "Runs the App-level load/unload lifecycle tests, one JVM per class (LIFE-01, LIFE-02)."
+        group = "verification"
+        useJUnitPlatform()
+        val testSourceSet = sourceSets.test.get()
+        testClassesDirs = testSourceSet.output.classesDirs
+        classpath = testSourceSet.runtimeClasspath
+        jvmArgs("-ea", "-Djava.awt.headless=true")
+        forkEvery = 1
+        filter { includeTestsMatching("com.six2dez.burp.aiagent.lifecycle.*") }
+        testLogging {
+            events("failed")
+            exceptionFormat = TestExceptionFormat.FULL
+        }
+    }
+
 // Phase 29 / D-16: the full flavor's own suite. It runs on the fullTest classpath (main + full + test
 // outputs) and never shares a Test task with `test`, whose classpath must stay store-only.
 val fullTest =
@@ -500,8 +602,8 @@ val fullTest =
     }
 
 // Phase 30 / CI-01 (ADR-18: "checked by content, not by intent"): opens the JAR bappJar writes and fails,
-// naming each entry and its rule, on any full-only class, CLI backend, Ktor client / CIO or MCP SDK client
-// class, plug-in services file or CLI factory line. It automates the manual 29-17 check.
+// naming each entry and its rule, on any full-only class, CLI backend, Ktor client / CIO, MCP SDK client or
+// OkHttp / Okio class, plug-in services file or CLI factory line. It automates the manual 29-17 check.
 //
 // It is its own task rather than a class in `test` on purpose: inside plain `test`, every unit run would
 // have to build the store JAR first, and the coverage job's dry-run guard would find a packaging check in
@@ -514,10 +616,30 @@ val fullTest =
 //
 // The store JAR is referenced only through bappJar's archiveFile provider: BappManifestTest pins the store
 // file name to a single occurrence in this script, the archive-name setter inside bappJar.
-// Run it locally with: ./gradlew bappJar storeJarContentTest
+//
+// Phase 31 / NET-01: the full JAR is read only for the OkHttp check; the store rules cannot apply to it
+// because it legitimately holds full classes. The task depends on fullJar as well as bappJar, and both JARs
+// are @InputFile inputs of StoreJarInspectionArgs, so it never reads a JAR still being written, under
+// --parallel too. The full JAR is referenced only through fullJar's archiveFile provider.
+//
+// Phase 30 / CI-02 (CR-01): the same task also checks that sbomSourceConfiguration, the classpath bom.json is
+// generated from, resolves every module runtimeClasspath (what bappJar packages) holds at the same version.
+// It fails naming each module whose version differs or that the SBOM source lacks, so the release gate
+// catches a drift before cyclonedxBom runs. It compares Gradle's resolution results, never bom.json, because
+// cyclonedxBom is not configuration-cache compatible.
+// Run it locally with: ./gradlew bappJar fullJar storeJarContentTest
+
+// The one place that names the configuration bom.json is generated from: cyclonedxBom and the alignment
+// check in storeJarContentTest both read it, so the check always compares against the classpath bom.json
+// describes.
+val sbomSourceConfiguration = "fullRuntimeClasspath"
+
 val storeJarContentTest =
     tasks.register<Test>("storeJarContentTest") {
-        description = "Inspects the BApp Store JAR for full-only and CLI content (CI-01)."
+        description =
+            "Inspects the BApp Store JAR for full-only and CLI content and checks that bom.json's source " +
+            "classpath resolves every store module at the store JAR's version (CI-01, CI-02); checks both " +
+            "the store JAR and the full JAR hold no OkHttp or Okio (NET-01)."
         group = "verification"
         useJUnitPlatform()
         val testSourceSet = sourceSets.test.get()
@@ -525,10 +647,19 @@ val storeJarContentTest =
         classpath = testSourceSet.runtimeClasspath
         jvmArgs("-ea", "-Djava.awt.headless=true")
         dependsOn(bappJar)
+        dependsOn(fullJar)
         jvmArgumentProviders.add(
             objects.newInstance<StoreJarInspectionArgs>().apply {
                 storeJar.set(bappJar.flatMap { it.archiveFile })
                 fullClassDirs.from(fullSourceSet.output.classesDirs)
+                fullBuildJar.set(fullJar.flatMap { it.archiveFile })
+            },
+        )
+        jvmArgumentProviders.add(
+            objects.newInstance<StoreSbomAlignmentArgs>().apply {
+                storeClasspath.set(configurations.runtimeClasspath.flatMap { it.incoming.resolutionResult.rootComponent })
+                sbomClasspath.set(configurations.named(sbomSourceConfiguration).flatMap { it.incoming.resolutionResult.rootComponent })
+                sbomConfiguration.set(sbomSourceConfiguration)
             },
         )
         filter { includeTestsMatching("*StoreJarContentTest") }
@@ -814,16 +945,21 @@ val jacocoMcpTreeCoverageVerification =
 
 tasks.named("check") {
     dependsOn(fullTest)
+    dependsOn(unloadLeakTest)
     dependsOn(storeJarContentTest)
     dependsOn(tasks.named("jacocoTestCoverageVerification"))
     dependsOn(jacocoMcpTreeCoverageVerification)
 }
 
 tasks.named<org.cyclonedx.gradle.CycloneDxTask>("cyclonedxBom") {
-    // The release publishes both JARs with one SBOM (Phase 30 / CI-02, SBOM decision):
-    // fullRuntimeClasspath extends the store runtime classpath (fullImplementation and fullRuntimeOnly
-    // extend implementation and runtimeOnly), so this bom.json lists every dependency of both assets.
-    includeConfigs.set(listOf("fullRuntimeClasspath"))
+    // The release publishes both JARs with one SBOM (Phase 30 / CI-02, SBOM decision), generated from
+    // sbomSourceConfiguration. That classpath holds every module bappJar packages plus the full-only ones.
+    // Inheritance alone does not make the versions match: each configuration resolves its conflicts on its
+    // own, which is how CR-01 found ktor-websocket-serialization at 3.0.2 in the BApp Store JAR and 3.1.3
+    // here. The claim that bom.json lists every BApp Store dependency at the version that JAR packages
+    // therefore rests on the ktor-websocket-serialization constraints in the dependencies block and on
+    // storeJarContentTest's alignment check, which fails on any difference.
+    includeConfigs.set(listOf(sbomSourceConfiguration))
     outputFormat.set("json")
     outputName.set("bom")
     destination.set(

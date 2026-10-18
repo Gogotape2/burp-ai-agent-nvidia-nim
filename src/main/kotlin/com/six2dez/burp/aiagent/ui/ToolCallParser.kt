@@ -15,6 +15,9 @@ internal data class ParsedToolCall(
 )
 
 internal object ToolCallParser {
+    // Compiled once; declared first so no object initializer can read it before it exists.
+    private val FENCED_TOOL_JSON_REGEX = Regex("```(?:tool|json)\\s*([\\s\\S]*?)\\s*```", RegexOption.IGNORE_CASE)
+
     private const val MAX_JSON_CANDIDATES = 12
 
     fun extractFirst(text: String): ParsedToolCall? {
@@ -136,9 +139,8 @@ internal object ToolCallParser {
         return value.toString()
     }
 
-    private fun extractFencedJsonCandidates(text: String): List<String> {
-        val regex = Regex("```(?:tool|json)\\s*([\\s\\S]*?)\\s*```", RegexOption.IGNORE_CASE)
-        return regex
+    private fun extractFencedJsonCandidates(text: String): List<String> =
+        FENCED_TOOL_JSON_REGEX
             .findAll(text)
             .mapNotNull { match ->
                 val payload =
@@ -149,7 +151,6 @@ internal object ToolCallParser {
                 if (payload.startsWith("{") && payload.endsWith("}")) payload else null
             }.take(MAX_JSON_CANDIDATES)
             .toList()
-    }
 
     private fun extractJsonObjectCandidates(text: String): List<String> {
         val out = mutableListOf<String>()

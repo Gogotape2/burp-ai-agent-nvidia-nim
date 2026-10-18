@@ -6,7 +6,9 @@ import com.six2dez.burp.aiagent.audit.ActivityType
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.backends.AgentConnection
 import com.six2dez.burp.aiagent.backends.ChatMessage
+import com.six2dez.burp.aiagent.backends.HealthCheckResult
 import com.six2dez.burp.aiagent.backends.UsageAwareConnection
+import com.six2dez.burp.aiagent.backends.http.AiAccessRefusedException
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.context.ContextCapture
@@ -34,6 +36,7 @@ import com.six2dez.burp.aiagent.ui.components.ToolInvocationDialog
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
 import com.six2dez.burp.aiagent.util.BudgetGuard
 import com.six2dez.burp.aiagent.util.GuardedBy
+import com.six2dez.burp.aiagent.util.ShutdownDeadline
 import com.six2dez.burp.aiagent.util.TokenTracker
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.contentOrNull
@@ -118,10 +121,19 @@ class ChatPanel(
      */
     private val getSettings: () -> AgentSettings,
     private val validateBackend: (AgentSettings) -> String?,
-    private val ensureBackendReady: (AgentSettings) -> Boolean,
+    /**
+     * Phase 33 / EDT-01: the pre-send readiness check. Its probe runs off the EDT on
+     * `burp-ai-agent-chat-readiness`; its confirm step (the "start it now?" prompt) runs on the EDT.
+     */
+    private val readiness: ChatBackendReadiness = ChatBackendReadiness.ALWAYS_READY,
     private val showError: (String) -> Unit,
     private val onStatusChanged: () -> Unit,
-    private val onResponseReady: () -> Unit,
+    /**
+     * Phase 31 / D-09: called on the EDT once per settled chat turn with the turn's backend id and its
+     * outcome (null when the backend answered, the error otherwise, an [AiAccessRefusedException] when
+     * the policy refused the send). MainTab paints the status pill from it, so no extra request is made.
+     */
+    private val onTurnSettled: (backendId: String, error: Throwable?) -> Unit,
     // CAP-04: injected to call setBudgetPaused(true) when hard cap is reached
     private val passiveScanner: PassiveAiScanner? = null,
 ) {
@@ -138,6 +150,23 @@ class ChatPanel(
     private val runningTool = RunningToolTracker()
 
     @Volatile private var isSending = false
+
+    /**
+     * The readiness probes in flight (Phase 33 / EDT-01), one opaque token each, same idea as
+     * [runningTool]: a probe's EDT tail acts only while its token is still here, so a Cancel (or the
+     * unload path's cancel) that cleared the set makes the probe's answer a no-op. A set rather than one
+     * slot because a context-menu send can start a second probe, which must not silently drop the first.
+     */
+    @GuardedBy("EDT")
+    private val readinessProbes = mutableSetOf<Any>()
+
+    /**
+     * Trace ids whose readiness probe already confirmed, mapped to the probed backend. One-shot: the
+     * re-entered [sendMessage] consumes its entry, so it skips the probe exactly once. A marker rather
+     * than a parameter because `sendMessage`'s signature is detekt-baseline-keyed and cannot take a flag.
+     */
+    @GuardedBy("EDT")
+    private val readinessCleared = mutableMapOf<String, String>()
     private val inputArea = JTextArea(3, 24)
     private val newSessionBtn = JButton("New Session")
     private val privacyPill = PrivacyPill()
@@ -581,6 +610,9 @@ class ChatPanel(
     }
 
     private fun sendFromInput() {
+        // Phase 33 / EDT-01: while the readiness probe runs, Send is hidden and the input disabled, but a
+        // hidden button still answers doClick and a key binding can still be invoked. One probe, one turn.
+        if (readinessProbes.isNotEmpty()) return
         val text = inputArea.text.trim()
         if (text.isBlank()) return
         val session = sessionsList.selectedValue ?: createSession("Chat ${sessionsModel.size + 1}")
@@ -623,10 +655,21 @@ class ChatPanel(
         updatePrivacyPill()
         val accessRefusal = supervisor.aiAccessRefusal(settings.preferredBackendId)
         if (accessRefusal != null) {
-            showError(accessRefusal)
+            // Phase 31 / D-01 (b): the refusal is explained inline with the policy's own text, not in a dialog.
+            sessionPanels[sessionId]?.addMessage("AI", accessRefusal)
+            onTurnSettled(settings.preferredBackendId, AiAccessRefusedException(accessRefusal))
             return
         }
-        if (!ensureBackendReady(settings)) return
+        if (readiness.needsProbe(settings) && readinessCleared.remove(traceId) != settings.preferredBackendId) {
+            // Phase 33 / EDT-01: the probe reaches MontoyaHttpTransport, which on the EDT would offload the
+            // request and then block the EDT on it. So the probe runs on a named worker, and this call
+            // re-enters from the EDT tail once confirm() said yes, skipping the probe once through the
+            // one-shot readinessCleared marker. The turn is never sent before the answer, nor after a decline.
+            probeThenSend(settings, traceId) {
+                sendMessage(sessionId, userText, contextJson, allowToolCalls, actionName, onCompleted, toolIterationsLeft, traceId)
+            }
+            return
+        }
         val error = validateBackend(settings)
         if (error != null) {
             showError(error)
@@ -799,7 +842,10 @@ class ChatPanel(
                         session.totalTokensOut += tokOut
                     }
                     if (err != null) {
-                        SwingUtilities.invokeLater { assistant.finish("\n[Error] ${err.message}") }
+                        SwingUtilities.invokeLater {
+                            assistant.finish("\n[Error] ${err.message}")
+                            onTurnSettled(backendId, err)
+                        }
                         onCompleted?.invoke(responseBuffer.toString(), err)
                     } else {
                         val finalResp = responseBuffer.toString()
@@ -810,7 +856,7 @@ class ChatPanel(
                         SwingUtilities.invokeLater {
                             assistant.append("\n")
                             refreshSessionList()
-                            onResponseReady()
+                            onTurnSettled(backendId, null)
                         }
                         // REL-01: maybeExecuteToolCall reads sessionPanels/sessionsById and calls
                         // panel.addMessage — all EDT-confined map/Swing operations.  This callback
@@ -873,8 +919,9 @@ class ChatPanel(
      * around it used to suggest otherwise.
      *
      * **What actually holds REL-01 is the callers.** Every entry point reachable off the EDT marshals
-     * before it touches a guarded map — the unload path is the documented example, wrapping its whole
-     * teardown block in `invokeAndWait` because Burp's unload handler runs on a Montoya thread. The
+     * before it touches a guarded map, with `invokeAndWait` or a posted block — the unload path is the
+     * documented example, handing its whole teardown block to the EDT through `EdtTeardown` (bounded by
+     * the unload deadline, WR-03) because Burp's unload handler runs on a Montoya thread. The
      * evidence that the discipline holds is `ChatPanelEdtConfinementTest`, not this function. If you
      * meet a violation, fix the CALLER by marshalling onto the EDT; do not expect this to have caught
      * it in the field.
@@ -893,7 +940,7 @@ class ChatPanel(
         }
     }
 
-    private fun sanitizeTitle(raw: String): String = raw.replace(Regex("[\\t\\n\\r\\u0000-\\u001F]"), " ").trim()
+    private fun sanitizeTitle(raw: String): String = raw.replace(TITLE_CONTROL_CHARS_REGEX, " ").trim()
 
     private fun createSession(title: String): ChatSession {
         val id = "chat-" + UUID.randomUUID().toString()
@@ -1066,7 +1113,7 @@ class ChatPanel(
                 }
             }
         val chooser = javax.swing.JFileChooser()
-        chooser.selectedFile = java.io.File("${session.title.replace(Regex("[^a-zA-Z0-9_\\-]"), "_")}.md")
+        chooser.selectedFile = java.io.File("${session.title.replace(EXPORT_FILENAME_UNSAFE_REGEX, "_")}.md")
         if (chooser.showSaveDialog(root) == javax.swing.JFileChooser.APPROVE_OPTION) {
             try {
                 chooser.selectedFile.writeText(md)
@@ -1111,13 +1158,63 @@ class ChatPanel(
     }
 
     /**
+     * Phase 33 / EDT-01: runs [readiness]'s probe for [settings] on `burp-ai-agent-chat-readiness` and,
+     * back on the EDT, calls [resend] only when `confirm` says the turn may go.
+     *
+     * The busy state is entered BEFORE the dispatch, so Send is hidden and the input disabled for the
+     * whole probe. The label is not the trace id: `ChatPanelTestHarness.chainTraceId` reads trace-id
+     * labels as chain tool workers.
+     */
+    private fun probeThenSend(
+        settings: AgentSettings,
+        traceId: String,
+        resend: () -> Unit,
+    ) {
+        val probe = Any()
+        readinessProbes.add(probe)
+        setSendingState(true)
+        OffEdtDispatch.run(
+            threadName = "burp-ai-agent-chat-readiness",
+            label = "chat readiness $traceId",
+            logError = { message -> api.logging().logToError(message) },
+            work = { readiness.probe(settings) },
+            onEdt = { result -> finishReadinessProbe(settings, traceId, probe, result, resend) },
+        )
+    }
+
+    /**
+     * The EDT tail of [probeThenSend]. A Cancel (or the unload path's cancel) that cleared
+     * [readinessProbes] makes the answer a no-op; a failed probe counts as unreachable.
+     */
+    private fun finishReadinessProbe(
+        settings: AgentSettings,
+        traceId: String,
+        probe: Any,
+        result: Result<HealthCheckResult>,
+        resend: () -> Unit,
+    ) {
+        if (!readinessProbes.remove(probe)) return
+        if (readinessProbes.isEmpty()) setSendingState(false)
+        val health = result.getOrElse { HealthCheckResult.Unavailable(it.message ?: "Health check failed") }
+        if (!readiness.confirm(settings, health)) return
+        readinessCleared[traceId] = settings.preferredBackendId
+        try {
+            resend()
+        } finally {
+            // Consumed by the re-entered call unless it returned before the readiness check.
+            readinessCleared.remove(traceId)
+        }
+    }
+
+    /**
      * Cancel the current in-flight AI request.
      *
      * REL-01: reads `sessionsList.selectedValue` / `sessionPanels` (both `@GuardedBy("EDT")`)
      * and mutates Swing (`setSendingState`, `panel.addMessage`), so it MUST run on the EDT.
-     * Callers reachable off the EDT must marshal with `invokeAndWait` before calling it — the unload
-     * path is the worked example, and it is the one that matters most, because Burp's unload handler
-     * runs on a Montoya thread rather than the EDT.
+     * Callers reachable off the EDT must marshal with `invokeAndWait` before calling it. The unload
+     * path, the one that matters most because Burp's unload handler runs on a Montoya thread rather
+     * than the EDT, marshals through `EdtTeardown` instead, so its wait is bounded by the unload
+     * deadline (WR-03).
      *
      * That marshalling is the whole of the guarantee. The check on the first line is a development-time
      * aid the JVM disables without `-ea`, so it catches nothing in a shipped Burp; see its KDoc.
@@ -1131,7 +1228,10 @@ class ChatPanel(
         // nothing, which is the worst possible affordance on a security tool.
         val toolToken = runningTool.take() as? RunningToolToken
         val conn = inFlightConnection.take()
-        if (toolToken == null && conn == null) return false
+        // Phase 33 / EDT-01: a readiness probe in flight is cancelled too; its EDT tail then sends nothing.
+        val probeCancelled = readinessProbes.isNotEmpty()
+        readinessProbes.clear()
+        if (toolToken == null && conn == null && !probeCancelled) return false
         // S0 immediately. The user does not wait for the worker: Montoya's sendRequest takes no
         // cancellation token, so the worker runs to completion and its return lands in S4 instead
         // (finishApprovedToolCall's supersede branch — the token it holds no longer matches).
@@ -1149,7 +1249,8 @@ class ChatPanel(
         // existing line stays byte-identical; a tool call was NOT cancelled, so it gets a sibling that
         // says so. Telling a penetration tester their request was cancelled when it was actually sent to
         // the target is the kind of wrong that ends up in someone's report.
-        val line = if (conn != null) "Request cancelled." else toolCancelLine(requireNotNull(toolToken).tool)
+        // A cancelled readiness probe sent nothing anywhere, so it gets the backend-turn line.
+        val line = if (conn == null && toolToken != null) toolCancelLine(toolToken.tool) else "Request cancelled."
         panel.addMessage("System", line)
         return true
     }
@@ -1184,14 +1285,7 @@ class ChatPanel(
         val state = sessionStates.getOrPut(session.id) { ToolSessionState() }
         val settings = getSettings()
         val context = buildToolContext(settings, session.id)
-        val availableTools =
-            McpToolCatalog
-                .all()
-                .filter { descriptor ->
-                    val enabled = context.isToolEnabled(descriptor.id) && context.isUnsafeToolAllowed(descriptor.id)
-                    val proAllowed = !descriptor.proOnly || context.edition == burp.api.montoya.core.BurpSuiteEdition.PROFESSIONAL
-                    enabled && proAllowed
-                }
+        val availableTools = ChatToolSurface.offeredChatTools(context)
 
         if (availableTools.isEmpty()) {
             showError("No enabled MCP tools are available with current settings.")
@@ -1222,7 +1316,7 @@ class ChatPanel(
         runningTool.set(token)
         val sessionId = session.id
         OffEdtDispatch.run(
-            threadName = "burp-ai-tool-exec",
+            threadName = "burp-ai-agent-tool-exec",
             label = "chat-tool-dialog-" + UUID.randomUUID().toString(),
             logError = { message -> api.logging().logToError(message) },
             // SC5: user-originated. The user picked the tool and typed the args in ToolInvocationDialog, so
@@ -1310,7 +1404,7 @@ class ChatPanel(
 
     private fun showToolsMenu() {
         val menu = javax.swing.JPopupMenu()
-        val tools = McpToolCatalog.all()
+        val tools = ChatToolSurface.menuTools()
         val settings = getSettings()
         val sessionId = sessionsList.selectedValue?.id ?: activeSessionId ?: "preview"
         val context = buildToolContext(settings, sessionId)
@@ -1318,13 +1412,8 @@ class ChatPanel(
         tools.groupBy { it.category }.forEach { (category, categoryTools) ->
             val submenu = javax.swing.JMenu(category)
             categoryTools.sortedBy { it.title }.forEach { tool ->
-                val canRun =
-                    context.isToolEnabled(tool.id) &&
-                        context.isUnsafeToolAllowed(tool.id) &&
-                        (!tool.proOnly || context.edition == burp.api.montoya.core.BurpSuiteEdition.PROFESSIONAL)
-
                 val item = javax.swing.JMenuItem(tool.title)
-                item.isEnabled = canRun
+                item.isEnabled = ChatToolSurface.canRun(tool, context)
                 item.toolTipText = tool.description
                 item.addActionListener {
                     inputArea.text = "/tool ${tool.id} {}"
@@ -1599,6 +1688,10 @@ class ChatPanel(
     }
 
     companion object {
+        // Compiled once; declared first so no companion initializer can read them before they exist.
+        private val TITLE_CONTROL_CHARS_REGEX = Regex("[\\t\\n\\r\\u0000-\\u001F]")
+        private val EXPORT_FILENAME_UNSAFE_REGEX = Regex("[^a-zA-Z0-9_\\-]")
+
         // `internal`, not `private`, so the module's test compilation can READ it. The one reason is
         // ChatPanelToolGateTest.eightConsecutiveDenialsTerminateTheChainWithNoNinthTurn, which derives
         // its expected turn count from this budget instead of hardcoding 8 — a stale literal silently
@@ -1745,39 +1838,51 @@ class ChatPanel(
     /** Project-scoped storage: extensionData() is saved inside the .burp project file. */
     private fun projectData(): burp.api.montoya.persistence.PersistedObject = api.persistence().extensionData()
 
-    fun shutdown() {
-        // REL-01: shutdown() is wired to Burp's unload handler, which runs on a Montoya/Burp
-        // thread, NOT the EDT. cancelInFlightRequest() + stopAllTimers() touch @GuardedBy("EDT")
-        // maps and Swing, so marshal onto the EDT. Use invokeAndWait so unload is synchronous
-        // (Burp may tear down the classloader right after), guarded against EDT re-entrancy.
-        val work = {
-            // Teardown path 5 of 5. Inside the marshalled block because pendingDecisions is
-            // @GuardedBy("EDT") like every other session map here. No backend turn is started from
-            // this path: dispatching a request while Burp tears down the extension classloader is how
-            // a safety control turns into an unload hang (T-22-33).
-            //
-            // A RUNNING tool worker is superseded through the in-flight cancel below, which takes the
-            // running-tool token — this path needs no second take() of its own (D-08). And it
-            // deliberately does not WAIT for that worker: a bounded join here would put the same
-            // ten-second blocking wait back on the EDT that plan 23-03 removed from the Settings save
-            // path. What makes that safe is the daemon flag OffEdtDispatch sets explicitly — a daemon
-            // thread never holds JVM exit open — plus the supersede, which is what stops the worker's
-            // tail writing into a panel whose classloader is being torn down.
-            resolveAllPending(ImplicitDenyReason.UNLOAD)
-            cancelInFlightRequest()
-            sessionPanels.values.forEach { it.stopAllTimers() }
-        }
-        if (SwingUtilities.isEventDispatchThread()) {
-            work()
-        } else {
-            try {
-                SwingUtilities.invokeAndWait(work)
-            } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-            } catch (_: java.lang.reflect.InvocationTargetException) {
-                // Swallow: shutdown must not throw out of the unload handler.
-            }
-        }
+    /**
+     * Unload step 4 (`MainTab.dispose`). REL-01: Burp's unload handler runs on a Montoya/Burp thread,
+     * NOT the EDT, and [unloadTeardown] touches @GuardedBy("EDT") maps and Swing, so it is still
+     * marshalled onto the EDT. WR-03 / D-05: the wait for the EDT is bounded by what is left of the
+     * shared unload [deadline] instead of an unbounded block; when the EDT does not run the teardown in
+     * time this writes one Error line naming the chat panel (D-09) and returns, and the teardown still
+     * runs once the EDT is free. Called on the EDT it runs inline.
+     */
+    fun shutdown(deadline: ShutdownDeadline = ShutdownDeadline.unload()) {
+        EdtTeardown.runWithin("Chat panel", deadline, { api.logging().logToError(it) }) { unloadTeardown() }
+    }
+
+    /**
+     * Phase 33 / CR-01 (UI half), LIFE-02 — unload step 0 (`MainTab.quiesce`). Cancels the readiness
+     * probes, the turn in flight and every pending tool card in every session, and sends no turn. It
+     * posts [unloadTeardown] to the EDT and returns at once, never waiting: step 0 waits for nothing,
+     * so a busy EDT cannot spend the unload budget before MCP stops (D-06). The synchronous guarantee
+     * that no provider request leaves after unload began is AgentSupervisor's unload latch, set before
+     * this step. [shutdown] at step 4 runs the same teardown again, bounded by the deadline; it is
+     * idempotent.
+     */
+    fun cancelForUnload() {
+        EdtTeardown.post("Chat panel", { api.logging().logToError(it) }) { unloadTeardown() }
+    }
+
+    /**
+     * EDT only. The unload teardown both [shutdown] (step 4, bounded) and [cancelForUnload] (step 0) run. It is
+     * idempotent: a second run finds no pending card, no turn in flight and no running timer.
+     */
+    private fun unloadTeardown() {
+        // Teardown path 5 of 5. Inside the marshalled block because pendingDecisions is
+        // @GuardedBy("EDT") like every other session map here. No backend turn is started from
+        // this path: dispatching a request while Burp tears down the extension classloader is how
+        // a safety control turns into an unload hang (T-22-33).
+        //
+        // A RUNNING tool worker is superseded through the in-flight cancel below, which takes the
+        // running-tool token — this path needs no second take() of its own (D-08). And it
+        // deliberately does not WAIT for that worker: a bounded join here would put the same
+        // ten-second blocking wait back on the EDT that plan 23-03 removed from the Settings save
+        // path. What makes that safe is the daemon flag OffEdtDispatch sets explicitly — a daemon
+        // thread never holds JVM exit open — plus the supersede, which is what stops the worker's
+        // tail writing into a panel whose classloader is being torn down.
+        resolveAllPending(ImplicitDenyReason.UNLOAD)
+        cancelInFlightRequest()
+        sessionPanels.values.forEach { it.stopAllTimers() }
     }
 
     /**
@@ -2652,7 +2757,7 @@ class ChatPanel(
             val token = RunningToolToken(toolName)
             runningTool.set(token)
             OffEdtDispatch.run(
-                threadName = "burp-ai-tool-exec",
+                threadName = "burp-ai-agent-tool-exec",
                 label = "chat-tool-slash-" + UUID.randomUUID().toString(),
                 logError = { message -> api.logging().logToError(message) },
                 // SC5: user-originated. The user typed `/tool <name> <json>` themselves, so this call is
@@ -2763,7 +2868,7 @@ class ChatPanel(
     }
 
     /** `null` means the model named a tool with no catalog entry; the card renders its unknown-tool line. */
-    private fun catalogTitleFor(canonicalId: String): String? = McpToolCatalog.all().firstOrNull { it.id == canonicalId }?.title
+    private fun catalogTitleFor(canonicalId: String): String? = McpToolCatalog.available().firstOrNull { it.id == canonicalId }?.title
 
     /**
      * Whether the canonical ID names something this extension recognises — SC3's `knownTool`.
@@ -3221,7 +3326,7 @@ class ChatPanel(
         val token = RunningToolToken(call.tool)
         runningTool.set(token)
         OffEdtDispatch.run(
-            threadName = "burp-ai-tool-exec",
+            threadName = "burp-ai-agent-tool-exec",
             // WR-11 / Phase 22 commit ab55ff5: the label is the trace id so an ordering assertion can
             // select by identity. Keyed on list position it would hide a reordering bug; keyed on
             // identity it reports one.

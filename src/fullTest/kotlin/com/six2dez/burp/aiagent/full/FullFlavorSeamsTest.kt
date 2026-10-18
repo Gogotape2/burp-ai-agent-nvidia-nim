@@ -25,6 +25,7 @@ import com.six2dez.burp.aiagent.scanner.VulnHint
 import com.six2dez.burp.aiagent.spi.AiAccessPolicy
 import com.six2dez.burp.aiagent.spi.BackendModelHint
 import com.six2dez.burp.aiagent.spi.ExtensionPlugin
+import com.six2dez.burp.aiagent.spi.ExternalBackendSource
 import com.six2dez.burp.aiagent.spi.FlavorProfile
 import com.six2dez.burp.aiagent.spi.Plugins
 import com.six2dez.burp.aiagent.spi.SettingsContribution
@@ -253,6 +254,8 @@ class FullFlavorSeamsTest {
                 AiAccessPolicy::class.java to listOf("$PKG.full.FullAiAccessPolicy"),
                 FlavorProfile::class.java to listOf("$PKG.full.FullFlavorProfile"),
                 BackendModelHint::class.java to listOf("$PKG.full.cli.OllamaCliModelHint"),
+                // Phase 31 / D-14: the drop-in backend JAR loader, moved out of core.
+                ExternalBackendSource::class.java to listOf("$PKG.full.dropin.DropInBackendJars"),
             )
 
         val EXPECTED_SPI_TYPES =
@@ -261,6 +264,7 @@ class FullFlavorSeamsTest {
                 "com.six2dez.burp.aiagent.spi.AiAccessPolicy",
                 "com.six2dez.burp.aiagent.spi.BackendModelHint",
                 "com.six2dez.burp.aiagent.spi.ExtensionPlugin",
+                "com.six2dez.burp.aiagent.spi.ExternalBackendSource",
                 "com.six2dez.burp.aiagent.spi.FlavorProfile",
                 "com.six2dez.burp.aiagent.spi.SettingsContribution",
                 "com.six2dez.burp.aiagent.spi.ToolProvider",

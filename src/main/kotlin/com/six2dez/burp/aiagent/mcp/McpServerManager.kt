@@ -7,6 +7,7 @@ import com.six2dez.burp.aiagent.mcp.tools.ResponsePreprocessorSettings
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
+import com.six2dez.burp.aiagent.util.ShutdownDeadline
 
 interface McpServerManager {
     fun setAiRequestLogger(logger: AiRequestLogger)
@@ -28,4 +29,13 @@ interface McpServerManager {
     fun stop(callback: (McpServerState) -> Unit)
 
     fun shutdown()
+
+    /**
+     * Phase 33 / D-05 — the terminal shutdown, waiting only for what is left of the shared unload
+     * [deadline]. The default delegates to [shutdown] so test fakes need no change; the real manager
+     * overrides it.
+     */
+    fun shutdown(deadline: ShutdownDeadline) {
+        shutdown()
+    }
 }

@@ -102,8 +102,9 @@ class AiScanCheck(
      * BOTH COOKIE CONTROLS DECIDE ONCE, AT WRITE TIME. Route 1
      * (`ScannerIssueSupport.sanitizeInjectionPointValue`) and route 2 ([buildDetail] through
      * [sanitizeCookiePointText]) both run at issue CONSTRUCTION and bake their result into
-     * `AuditIssue.detail()` — an immutable string Burp stores and the `scanner_issues` MCP tool
-     * replays verbatim.
+     * `AuditIssue.detail()` — an immutable string Burp stores. The `scanner_issues` MCP tool decodes
+     * the extension's escaped format (`IssueUtils.issueDetailHtmlToText`) before `redactIfNeeded`
+     * (32-REVIEW CR-01), but the string itself never changes after construction.
      *
      * A READ-TIME REDACTION PASS DOES RUN OVER IT — WHAT IS MISSING IS A TYPE-KEYED ONE.
      * `mcp/tools/McpTool.kt:45` and `:78` wrap every tool result in
@@ -115,8 +116,10 @@ class AiScanCheck(
      * is gone by serialization time — and the redactor's three cookie rules each key on framing a
      * detail line does not carry: `cookieHeaderRegex`/`setCookieHeaderRegex` need a logical-line
      * `Cookie:`-style header name, `redactCookieSections` needs a `=== COOKIES ===` span, and
-     * `cookieTypedParamRegex` needs a trailing ` (COOKIE)` marker. [buildDetail] emits a bare
-     * `**Original Value:** <value>` markdown line, which carries none of the three. An issue built
+     * `cookieTypedParamRegex` needs a trailing ` (COOKIE)` marker. [buildDetail] emits an
+     * `Original Value: <value>` entry inside an HTML-escaped, `<br>`-joined blob (Phase 32 D-10),
+     * which still carries none of the three — and neither does the decoded `Original Value: <value>`
+     * line the read paths now redact. An issue built
      * while `privacyMode` was `OFF` therefore still emits that cookie value on a later STRICT read
      * UNLESS one of the generic, non-cookie rules happens to match the value's own shape. That
      * conditional is the honest form of this residual, and the width of the condition is unmeasured
@@ -200,8 +203,8 @@ class AiScanCheck(
                 name.contains("uid") ||
                 name.contains("user") ||
                 name.endsWith("_id") ||
-                baseValue.matches(Regex("^\\d+$")) ||
-                baseValue.matches(Regex("^[a-f0-9-]{36}$", RegexOption.IGNORE_CASE)) -> {
+                baseValue.matches(IDOR_NUMERIC_VALUE_REGEX) ||
+                baseValue.matches(IDOR_UUID_VALUE_REGEX) -> {
                 classes.add(VulnClass.IDOR)
             }
 
@@ -369,18 +372,8 @@ class AiScanCheck(
     ): String {
         val patterns =
             when (vulnClass) {
-                VulnClass.SQLI ->
-                    listOf(
-                        Regex("SQL syntax.*MySQL", RegexOption.IGNORE_CASE),
-                        Regex("ORA-[0-9]+", RegexOption.IGNORE_CASE),
-                        Regex("PostgreSQL.*ERROR", RegexOption.IGNORE_CASE),
-                        Regex("SQLServer", RegexOption.IGNORE_CASE),
-                    )
-                VulnClass.LFI ->
-                    listOf(
-                        Regex("root:.*:0:0:"),
-                        Regex("\\[fonts\\]", RegexOption.IGNORE_CASE),
-                    )
+                VulnClass.SQLI -> SQLI_ERROR_PATTERNS
+                VulnClass.LFI -> LFI_ERROR_PATTERNS
                 else -> emptyList()
             }
 
@@ -401,9 +394,9 @@ class AiScanCheck(
      * identically under STRICT, BALANCED and OFF.
      *
      * THE TWO CONTROLLED LINES ARE NOT SYMMETRIC, and recording that is the point of this
-     * paragraph. The `**Original Value:**` line IS a measured carrier: `baseValue()` on a
+     * paragraph. The `Original Value:` line IS a measured carrier: `baseValue()` on a
      * `PARAM_COOKIE` insertion point is the operator's raw cookie value, taken by Burp from proxied
-     * traffic. The `**Payload Used:**` line is NOT a carrier at HEAD: this class sources payloads
+     * traffic. The `Payload Used:` line is NOT a carrier at HEAD: this class sources payloads
      * from `payloadGenerator.getQuickPayloads(...)`, which returns entries from a STATIC table and
      * interpolates no value (`PayloadGenerator.kt:633-639`) — unlike `ActiveAiScanner`'s
      * context-aware route, which is what made route 1's payload line a real leak. It is controlled
@@ -422,6 +415,18 @@ class AiScanCheck(
      * deliberately UNTOUCHED by this control: the operator keeps the raw attack request
      * byte-for-byte in the same issue's Burp evidence pane, which Burp renders directly and never
      * passes through `Redaction.apply`. That is the same accepted trade route 1 records.
+     *
+     * Phase 32 SCAN-02 / D-10 — ONE ESCAPING PATH. Both controlled values pass the cookie gate RAW,
+     * then the whole line list goes through `IssueUtils.formatIssueDetailHtml`, the formatter route 1
+     * already uses (escape `&`, `<`, `>`, join with `<br>`), so a payload, a target-derived value or
+     * the evidence renders as literal text in Burp's issue view. Escaping never runs before the gate
+     * decides. The escaped form DOES defeat two kinds of read-time rule (32-REVIEW CR-01): `&amp;`
+     * removes the `[?&]` anchor of `urlTokenParamRegex` and `formBodyParamRegex`, and the `<br>` join
+     * removes the line starts `logicalLineHeaderRule` needs for the auth, API-key and cookie header
+     * rules. So both read paths decode the stored text with `IssueUtils.issueDetailHtmlToText` before
+     * `Redaction.apply`: `ContextCollector.fromAuditIssues` in both builds, and
+     * `AuditIssue.toSerializableForm` for `scanner_issues` in the full build. The escaping itself is
+     * unchanged.
      */
     internal fun buildDetail(
         insertionPoint: AuditInsertionPoint,
@@ -431,46 +436,33 @@ class AiScanCheck(
         val settings = getSettings()
         val policy = RedactionPolicy.fromMode(settings.privacyMode)
         val backendId = settings.preferredBackendId
-        val metadataSection =
-            buildString {
-                appendLine("---")
-                appendLine()
-                appendLine("### AI Analysis Metadata")
-                appendLine()
-                appendLine("**Backend:** $backendId (via Burp Scanner)")
-                appendLine("**Scan Type:** Active (Burp Scanner Integration)")
-                appendLine("**Detection:** ${payload.detectionMethod}")
-                val timestamp =
-                    java.time.Instant
-                        .now()
-                        .toString()
-                        .replace('T', ' ')
-                        .substringBefore('.')
-                appendLine("**Scan Date:** $timestamp UTC")
-                appendLine()
-                appendLine("---")
-            }
-
-        return """
-**AI-Confirmed Vulnerability via Burp Scanner**
-
-**Insertion Point:** ${insertionPoint.name()} (${insertionPoint.type()})
-**Original Value:** ${sanitizeCookiePointText(insertionPoint, policy, insertionPoint.baseValue(), ScannerIssueSupport.ORIGINAL_VALUE_MAX_CHARS)}
-
-**Payload Used:**
-```
-${sanitizeCookiePointText(insertionPoint, policy, payload.value, ScannerIssueSupport.PAYLOAD_VALUE_MAX_CHARS)}
-```
-
-**Detection Method:** ${payload.detectionMethod}
-**Evidence:** $evidence
-
-**Risk Level:** ${payload.risk}
-
-$metadataSection
-
-_(Confirmed via active exploitation testing integrated with Burp Scanner)_
-        """.trim()
+        val timestamp =
+            java.time.Instant
+                .now()
+                .toString()
+                .replace('T', ' ')
+                .substringBefore('.')
+        // Both controlled values pass the cookie gate RAW; escaping happens once, on the whole list.
+        val lines =
+            listOf(
+                "AI-confirmed vulnerability via Burp Scanner",
+                "",
+                "Insertion Point: ${insertionPoint.name()} (${insertionPoint.type()})",
+                "Original Value: ${sanitizeCookiePointText(insertionPoint, policy, insertionPoint.baseValue(), ScannerIssueSupport.ORIGINAL_VALUE_MAX_CHARS)}",
+                "Payload Used: ${sanitizeCookiePointText(insertionPoint, policy, payload.value, ScannerIssueSupport.PAYLOAD_VALUE_MAX_CHARS)}",
+                "Detection Method: ${payload.detectionMethod}",
+                "Evidence: $evidence",
+                "Risk Level: ${payload.risk}",
+                "",
+                "AI Analysis Metadata",
+                "  Backend: $backendId (via Burp Scanner)",
+                "  Scan Type: Active (Burp Scanner Integration)",
+                "  Detection: ${payload.detectionMethod}",
+                "  Scan Date: $timestamp UTC",
+                "",
+                "Confirmed via active exploitation testing integrated with Burp Scanner",
+            )
+        return IssueUtils.formatIssueDetailHtml(lines)
     }
 
     private fun mapConfidence(payload: Payload): AuditIssueConfidence =
@@ -499,6 +491,23 @@ _(Confirmed via active exploitation testing integrated with Burp Scanner)_
      * asserts, and both remain `internal`.
      */
     companion object {
+        // Phase 34 / PERF-01: compiled once per class load, not per call. Declared in the order the
+        // IDOR heuristic and findErrorPattern read them; the list order is the match order.
+        private val IDOR_NUMERIC_VALUE_REGEX = Regex("^\\d+$")
+        private val IDOR_UUID_VALUE_REGEX = Regex("^[a-f0-9-]{36}$", RegexOption.IGNORE_CASE)
+        private val SQLI_ERROR_PATTERNS =
+            listOf(
+                Regex("SQL syntax.*MySQL", RegexOption.IGNORE_CASE),
+                Regex("ORA-[0-9]+", RegexOption.IGNORE_CASE),
+                Regex("PostgreSQL.*ERROR", RegexOption.IGNORE_CASE),
+                Regex("SQLServer", RegexOption.IGNORE_CASE),
+            )
+        private val LFI_ERROR_PATTERNS =
+            listOf(
+                Regex("root:.*:0:0:"),
+                Regex("\\[fonts\\]", RegexOption.IGNORE_CASE),
+            )
+
         /**
          * (PRIV-05) 28-05 / `CR-02` / `AR-27-08` route 2 — is this insertion point the cookie carrier?
          *
@@ -545,7 +554,7 @@ _(Confirmed via active exploitation testing integrated with Burp Scanner)_
          *
          * THE DECISION: NAME THE RESIDUAL, DO NOT WIDEN THE PREDICATE. Four reasons, written down so
          * the choice is not silently re-taken by inference:
-         *  1. Widening would strip `**Original Value:**` on EVERY header-typed, user-provided,
+         *  1. Widening would strip `Original Value:` on EVERY header-typed, user-provided,
          *     extension-provided and unknown insertion point — removing the operator's own value from
          *     every non-cookie header finding. That is a product behaviour change nobody asked for.
          *  2. It contradicts D-28-01's deliberate pass-through discipline for non-cookie types, which

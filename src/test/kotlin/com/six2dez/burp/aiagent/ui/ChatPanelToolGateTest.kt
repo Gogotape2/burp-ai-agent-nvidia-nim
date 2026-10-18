@@ -728,6 +728,55 @@ class ChatPanelToolGateTest {
         )
     }
 
+    /**
+     * Phase 33 / CR-01 (UI half), LIFE-02, D-06 — unload step 0 cancels the chat without waiting for
+     * the EDT: the cancel is posted, so a busy EDT cannot spend the unload budget before MCP stops, and
+     * once the EDT runs it every pending card in every session is retired and no turn is sent.
+     */
+    @Test
+    fun cancelForUnloadRetiresEveryPendingDecisionWithoutWaitingAndSendsNoTurn() {
+        val h = ChatPanelTestHarness.create(modelResponse = toolCall("issue_create", ISSUE_CREATE_ARGS))
+        ChatPanelTestHarness.sendUserMessage(h, "summarise the proxy history")
+        ChatPanelTestHarness.drainEdt()
+        SwingUtilities.invokeAndWait { h.panel.createNewSession() }
+        ChatPanelTestHarness.sendUserMessage(h, "and check this other one")
+        ChatPanelTestHarness.drainEdt()
+        assertEquals(
+            DECISION_LABELS.size * 2,
+            decisionButtons(h.panel.root).size,
+            "Setup: one live CONFIRM card in each of two sessions.",
+        )
+        val turnsBeforeUnload = 2
+
+        val release = CountDownLatch(1)
+        try {
+            val entered = CountDownLatch(1)
+            SwingUtilities.invokeLater {
+                entered.countDown()
+                release.await(EDT_HOLD_SECONDS, TimeUnit.SECONDS)
+            }
+            assertTrue(entered.await(EDT_ENTER_SECONDS, TimeUnit.SECONDS), "Setup: the EDT is held busy.")
+
+            assertTimeoutPreemptively(Duration.ofSeconds(1), "cancelForUnload must not wait for a busy EDT") {
+                h.panel.cancelForUnload()
+            }
+            assertEquals(
+                DECISION_LABELS.size * 2,
+                decisionButtons(h.panel.root).size,
+                "The cancel is posted to the EDT, not run on the caller's thread.",
+            )
+        } finally {
+            release.countDown()
+        }
+        ChatPanelTestHarness.drainEdt()
+
+        assertTrue(
+            decisionButtons(h.panel.root).isEmpty(),
+            "Unload step 0 must retire EVERY pending decision once the EDT runs the cancel.",
+        )
+        verifySendChatCount(h, turnsBeforeUnload)
+    }
+
     // ── SC3: every decision leaves a durable record ──────────────────────────────────────
 
     @Test
@@ -913,6 +962,12 @@ private const val LONG_DRAIN = 24
  * same number, as `ChatPanelTestHarness.awaitToolSettled`'s own failsafe.
  */
 private const val SUPERSEDE_FAILSAFE_SECONDS = 10L
+
+/** How long the step-0 cancel case holds the EDT at most; released in `finally` long before that. */
+private const val EDT_HOLD_SECONDS = 30L
+
+/** How long the step-0 cancel case waits for the EDT to pick up its holding runnable. */
+private const val EDT_ENTER_SECONDS = 5L
 
 /** The panel's real Cancel button — the affordance a supersede variant has to press. */
 private fun cancelButton(h: ChatPanelTestHarness.Harness): JButton =

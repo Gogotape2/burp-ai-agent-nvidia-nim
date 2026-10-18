@@ -13,6 +13,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -24,6 +25,9 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.spy
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
+import java.net.InetAddress
+import java.net.ServerSocket
+import java.net.SocketTimeoutException
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -33,10 +37,14 @@ import java.util.concurrent.atomic.AtomicReference
  *   (a) healthCheck() for OpenAi-compatible, LmStudio, Ollama backends invokes transport.get();
  *   (b) healthCheck() for NVIDIA NIM (and Perplexity, see PerplexityBackendFactoryTest) invokes
  *       transport.get() on /v1/models — never post(), never a billable chat completion;
- *   (c) send() with transport == null in OpenAi-compatible / LmStudio fails fast with
- *       IllegalStateException containing "MontoyaHttpTransport unavailable";
- *   (d) HttpBackendSupport.buildClient KDoc declares the unit-test-only fact and removes the
- *       misleading "respects Burp/JVM proxy config" claim — source-string guard.
+ *   (c) send() with transport == null in OpenAi-compatible / LmStudio / Ollama fails fast with
+ *       IllegalStateException carrying [MontoyaHttpTransport.TRANSPORT_UNAVAILABLE];
+ *   (d) Phase 31 / NET-01: healthCheck() with no transport in OpenAi-compatible / LmStudio / Ollama
+ *       returns Unavailable([MontoyaHttpTransport.TRANSPORT_UNAVAILABLE]) and opens no socket: there is
+ *       no direct-client fallback, so tests go through MontoyaHttpTransport like production does;
+ *   (e) Phase 31 / NET-01: HttpBackendSupport holds no HTTP client: it declares no healthCheckGet and
+ *       imports no OkHttp, so MontoyaHttpTransport is the only way a backend reaches the network —
+ *       source-string guard.
  */
 class HttpBackendTransportRoutingTest {
     @Test
@@ -116,6 +124,7 @@ class HttpBackendTransportRoutingTest {
             err!!.message!!.contains("MontoyaHttpTransport unavailable"),
             "Expected message to contain 'MontoyaHttpTransport unavailable', got: ${err.message}",
         )
+        assertEquals(MontoyaHttpTransport.TRANSPORT_UNAVAILABLE, err.message)
     }
 
     @Test
@@ -153,22 +162,81 @@ class HttpBackendTransportRoutingTest {
             err!!.message!!.contains("MontoyaHttpTransport unavailable"),
             "Expected message to contain 'MontoyaHttpTransport unavailable', got: ${err.message}",
         )
+        assertEquals(MontoyaHttpTransport.TRANSPORT_UNAVAILABLE, err.message)
     }
 
     @Test
-    fun `buildClient KDoc declares test-only and does not claim proxy honoring`() {
-        // Source-string guard: read the .kt file directly from the project tree. This is the
-        // simplest, most direct way to enforce the comment fix per the plan's behavior block.
-        // SourceRoots.file walks up from user.dir to the project and fails naming both production roots
-        // when the file is in neither or in both.
+    fun `send fails fast when transport is null on Ollama`() {
+        val connection =
+            OllamaBackend().launch(
+                BackendLaunchConfig(
+                    backendId = "ollama",
+                    displayName = "Ollama",
+                    baseUrl = "http://127.0.0.1:11434",
+                    model = "llama3.1",
+                    headers = emptyMap(),
+                    requestTimeoutSeconds = 30L,
+                    transport = null,
+                ),
+            )
+
+        val errorRef = AtomicReference<Throwable?>(null)
+        val done = CountDownLatch(1)
+        connection.send(
+            text = "hello",
+            onChunk = {},
+            onComplete = { err ->
+                errorRef.set(err)
+                done.countDown()
+            },
+            jsonMode = false,
+        )
+        assertTrue(done.await(5, TimeUnit.SECONDS), "send() did not complete within 5s")
+        val err = errorRef.get()
+        assertTrue(err is IllegalStateException, "Expected IllegalStateException, got ${err?.javaClass?.name}")
+        assertEquals(MontoyaHttpTransport.TRANSPORT_UNAVAILABLE, err?.message)
+    }
+
+    @Test
+    fun `healthCheck without a transport is Unavailable and opens no socket on OpenAi-compatible`() {
+        assertHealthWithoutTransportOpensNoSocket { url ->
+            OpenAiCompatibleBackend(id = "openai-compatible", displayName = "OpenAI-compatible").healthCheck(
+                TestSettings.baselineSettings().copy(openAiCompatibleUrl = "$url/v1", openAiCompatibleApiKey = "sk-test"),
+            )
+        }
+    }
+
+    @Test
+    fun `healthCheck without a transport is Unavailable and opens no socket on LmStudio`() {
+        assertHealthWithoutTransportOpensNoSocket { url ->
+            LmStudioBackend().healthCheck(TestSettings.baselineSettings().copy(lmStudioUrl = url))
+        }
+    }
+
+    @Test
+    fun `healthCheck without a transport is Unavailable and opens no socket on Ollama`() {
+        assertHealthWithoutTransportOpensNoSocket { url ->
+            OllamaBackend().healthCheck(TestSettings.baselineSettings().copy(ollamaUrl = url))
+        }
+    }
+
+    @Test
+    fun httpBackendSupportHoldsNoHttpClient() {
+        // Source-string guard: read the .kt file directly from the project tree. SourceRoots.file walks up
+        // from user.dir to the project and fails naming both production roots when the file is in neither
+        // or in both.
         val source = SourceRoots.file("com/six2dez/burp/aiagent/backends/http/HttpBackendSupport.kt").readText()
         assertTrue(
-            source.contains("OkHttp client for unit tests only"),
-            "Expected truthful KDoc 'OkHttp client for unit tests only' in HttpBackendSupport.kt",
+            source.contains("object HttpBackendSupport"),
+            "Expected HttpBackendSupport.kt to declare object HttpBackendSupport; the guard would read the wrong file",
         )
         assertFalse(
-            source.contains("respects Burp/JVM proxy config"),
-            "Expected misleading KDoc 'respects Burp/JVM proxy config' to be removed",
+            Regex("""\bfun\s+healthCheckGet\b""").containsMatchIn(source),
+            "HttpBackendSupport must not declare healthCheckGet: health checks go through MontoyaHttpTransport",
+        )
+        assertFalse(
+            Regex("""^\s*import\s+(okhttp3|okio)\.""", RegexOption.MULTILINE).containsMatchIn(source),
+            "HttpBackendSupport must not import OkHttp or Okio (Phase 31 / NET-01)",
         )
     }
 
@@ -250,6 +318,21 @@ class HttpBackendTransportRoutingTest {
 
     // --- Helpers ---------------------------------------------------------------------------------
 
+    /**
+     * Points [healthCheck] at a loopback listener and proves the result is the shared
+     * transport-unavailable refusal and that nothing connected to the listener (Pitfall 4: never
+     * Unknown, which the registry could map to Healthy).
+     */
+    private fun assertHealthWithoutTransportOpensNoSocket(healthCheck: (String) -> HealthCheckResult) {
+        ServerSocket(0, 1, InetAddress.getLoopbackAddress()).use { listener ->
+            val result = healthCheck("http://127.0.0.1:${listener.localPort}")
+
+            assertEquals(HealthCheckResult.Unavailable(MontoyaHttpTransport.TRANSPORT_UNAVAILABLE), result)
+            listener.soTimeout = NO_CONNECTION_WAIT_MS
+            assertThrows(SocketTimeoutException::class.java, { listener.accept().close() }, "The health check opened a socket")
+        }
+    }
+
     /** Builds a spy MontoyaHttpTransport whose `get()` and `healthCheckGet()` return Healthy. */
     private fun stubTransportGet(): MontoyaHttpTransport {
         val api = mock<MontoyaApi>(defaultAnswer = Mockito.RETURNS_DEEP_STUBS)
@@ -286,5 +369,9 @@ class HttpBackendTransportRoutingTest {
             .whenever(spy)
             .post(any(), any(), any(), any())
         return spy
+    }
+
+    private companion object {
+        const val NO_CONNECTION_WAIT_MS = 300
     }
 }

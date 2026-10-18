@@ -62,6 +62,32 @@ object IssueUtils {
             }
         }
 
+    /**
+     * The exact inverse of [formatIssueDetailHtml]: `issueDetailHtmlToText(formatIssueDetailHtml(lines))`
+     * equals `lines.joinToString("\n")` for every line list.
+     *
+     * The order makes it exact. The formatter's output holds no `<` other than the `<br>` joiner and
+     * no `&` that does not start `&amp;`, `&lt;`, `&gt;` or `&nbsp;`. So `<br>` is turned back first,
+     * then `&nbsp;`, `&lt;` and `&gt;`, and `&amp;` LAST, which keeps an escaped literal such as
+     * `&amp;lt;` from being decoded twice.
+     *
+     * Why it exists (32-REVIEW CR-01): the read-time redaction rules key on a literal `&` before a
+     * query or form key and on real line starts for header lines (auth, API key, cookie). The escaped
+     * form has neither, so tokens and header values in stored issue text survived STRICT and BALANCED.
+     *
+     * Only the read paths that feed issue text to the AI backend or to an MCP client may call it
+     * (`ContextCollector.fromAuditIssues`, `AuditIssue.toSerializableForm`). Never call it on a path
+     * whose output Burp renders as HTML. Burp-native issue HTML passes through with only these five
+     * plain substitutions.
+     */
+    fun issueDetailHtmlToText(html: String): String =
+        html
+            .replace("<br>", "\n")
+            .replace("&nbsp;", " ")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">")
+            .replace("&amp;", "&")
+
     fun hasEquivalentIssue(
         name: String,
         baseUrl: String,

@@ -100,6 +100,13 @@ object ChatPanelTestHarness {
          * records nothing here and must record the trace id itself.
          */
         val sentTraceIds: CopyOnWriteArrayList<String>,
+        /**
+         * Every settled chat turn the panel reported (backend id, error or null), in call order.
+         *
+         * Phase 31 / D-09: MainTab paints the status pill from exactly these reports, so a test reads
+         * the real call the real code made. A refused send reports an `AiAccessRefusedException`.
+         */
+        val turnOutcomes: CopyOnWriteArrayList<Pair<String, Throwable?>> = CopyOnWriteArrayList(),
     )
 
     /**
@@ -116,6 +123,11 @@ object ChatPanelTestHarness {
         settings: AgentSettings = TestSettings.baselineSettings(),
         // Quick 261008-n0c: a test that composes the chat the way MainTab does passes MainTab's provider.
         getSettings: (() -> AgentSettings)? = null,
+        // Phase 31 / D-09: what the stubbed backend completes each turn with; null is a delivered turn.
+        completionError: Throwable? = null,
+        // Phase 33 / EDT-01: the pre-send readiness check. The default never probes, which keeps every
+        // existing test on its pre-Phase-33 path; ChatSendOffEdtTest passes a LocalServiceReadiness.
+        readiness: ChatBackendReadiness = ChatBackendReadiness.ALWAYS_READY,
     ): Harness {
         val api: MontoyaApi = mock(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
         whenever(api.burpSuite().version().edition()).thenReturn(BurpSuiteEdition.COMMUNITY_EDITION)
@@ -149,25 +161,26 @@ object ChatPanelTestHarness {
             val onComplete = invocation.arguments[ON_COMPLETE_INDEX] as (Throwable?) -> Unit
             (invocation.arguments[TRACE_ID_INDEX] as String?)?.let { sentTraceIds.add(it) }
             onChunk(modelResponse)
-            onComplete(null)
+            onComplete(completionError)
             null
         }
 
         val shownErrors = CopyOnWriteArrayList<String>()
+        val turnOutcomes = CopyOnWriteArrayList<Pair<String, Throwable?>>()
         val panel =
             ChatPanel(
                 api = api,
                 supervisor = supervisor,
                 getSettings = getSettings ?: { settings },
                 validateBackend = { null },
-                ensureBackendReady = { true },
+                readiness = readiness,
                 showError = { message -> shownErrors.add(message) },
                 onStatusChanged = { },
-                onResponseReady = { },
+                onTurnSettled = { backendId, error -> turnOutcomes.add(backendId to error) },
                 passiveScanner = null,
             )
         panel.createNewSession()
-        return Harness(panel, api, supervisor, shownErrors, sentTraceIds)
+        return Harness(panel, api, supervisor, shownErrors, sentTraceIds, turnOutcomes)
     }
 
     /**

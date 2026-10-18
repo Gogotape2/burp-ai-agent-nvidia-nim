@@ -816,19 +816,21 @@ object Redaction {
         val sb = StringBuilder(text.length)
         val deadline = System.nanoTime() + budgetMs * NANOS_PER_MS
         var cursor = 0
-        while (true) {
-            // (PRIV-06) W-05: the search runs BEFORE the deadline check, deliberately. With the
-            // check first, an expired budget replaced the ENTIRE remaining prompt — up to the MCP
-            // default maxBodyBytes of 2 MiB — with one drop marker even when no further cookie
-            // section existed anywhere in it. That fails closed, so it was never a leak; it was a
-            // silent total loss of analytic context on a well-behaved input, triggered by nothing
-            // the user did. The fail-closed price is now paid only when a section is genuinely
-            // pending. D-10 is unchanged: this is still indexOf(COOKIE_SECTION_HEADER, cursor) in a
-            // while loop with a monotonically advancing cursor, so EVERY occurrence is still
-            // iterated. Guard: RedactionTest.cookieSectionBudgetExpiryWithNoSectionRemainingPreservesTheText,
-            // with cookieSectionDeadlineFailsClosed pinning the opposite half of the same branch.
-            val h = text.indexOf(COOKIE_SECTION_HEADER, cursor)
-            if (h < 0) break
+        // (PRIV-06) W-05: every search runs BEFORE the deadline check that guards the section it
+        // found, deliberately. With the check first, an expired budget replaced the ENTIRE remaining
+        // prompt — up to the MCP default maxBodyBytes of 2 MiB — with one drop marker even when no
+        // further cookie section existed anywhere in it. That fails closed, so it was never a leak;
+        // it was a silent total loss of analytic context on a well-behaved input, triggered by
+        // nothing the user did. The fail-closed price is now paid only when a section is genuinely
+        // pending. D-10 is unchanged: the scan is indexOf(COOKIE_SECTION_HEADER, cursor) with a
+        // monotonically advancing cursor, so EVERY occurrence is still iterated. Phase 34 / D-05:
+        // the loop is conditional on the search result. The first search runs before the loop and
+        // each later one runs as the last step of an iteration, so the loop condition is checked on
+        // a fresh search result before every deadline check, and the scan ends when a search finds
+        // no further header. Guard: RedactionTest.cookieSectionBudgetExpiryWithNoSectionRemainingPreservesTheText,
+        // with cookieSectionDeadlineFailsClosed pinning the opposite half of the same branch.
+        var idx = text.indexOf(COOKIE_SECTION_HEADER, cursor)
+        while (idx >= 0) {
             // Subtraction rather than a direct comparison, so the check is immune to nanoTime
             // wraparound; ">= 0" rather than "> 0" so an injected budget of 0 ms is deterministically
             // expired on the first iteration even on a coarse clock. That determinism is what makes
@@ -840,13 +842,14 @@ object Redaction {
                 // Returns WITHOUT the remainder: the tail is dropped, never passed through.
                 return sb.toString()
             }
-            val bodyStart = h + COOKIE_SECTION_HEADER.length
+            val bodyStart = idx + COOKIE_SECTION_HEADER.length
             val end = cookieSectionEnd(text, bodyStart)
             sb.append(text, cursor, bodyStart)
             sb.append(
                 text.substring(bodyStart, end).replace(cookieSectionPairRegex) { "${it.groupValues[1]}=[REDACTED]" },
             )
             cursor = end
+            idx = text.indexOf(COOKIE_SECTION_HEADER, cursor)
         }
         sb.append(text, cursor, text.length)
         return sb.toString()

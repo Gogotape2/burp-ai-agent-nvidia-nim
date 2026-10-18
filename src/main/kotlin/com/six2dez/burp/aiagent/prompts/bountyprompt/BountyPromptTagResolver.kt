@@ -9,11 +9,6 @@ import com.six2dez.burp.aiagent.redact.UrlRedaction
 class BountyPromptTagResolver {
     private val defaultMaxChunkChars = 3_000
     private val defaultMaxTagChars = 12_000
-    private val sensitiveParamName =
-        Regex(
-            "(token|key|auth|session|jwt|cookie|password|secret|api_key|apikey)",
-            RegexOption.IGNORE_CASE,
-        )
 
     fun resolve(
         definition: BountyPromptDefinition,
@@ -39,7 +34,7 @@ class BountyPromptTagResolver {
             resolved = resolved.replace(tag.token, value)
         }
         // Remove any unknown HTTP_* tokens left in the prompt.
-        resolved = resolved.replace(Regex("\\[HTTP_[^\\]]+\\]"), "").trim()
+        resolved = resolved.replace(UNKNOWN_HTTP_TAG_REGEX, "").trim()
 
         val preview =
             buildString {
@@ -232,6 +227,16 @@ class BountyPromptTagResolver {
         }
 
     private companion object {
+        // Compiled once, shared by every resolver instance; declared before the other companion members.
+        private val sensitiveParamName =
+            Regex(
+                "(token|key|auth|session|jwt|cookie|password|secret|api_key|apikey)",
+                RegexOption.IGNORE_CASE,
+            )
+
+        // Kept separate from BountyPromptModels' similar HTTP-tag pattern on purpose.
+        private val UNKNOWN_HTTP_TAG_REGEX = Regex("\\[HTTP_[^\\]]+\\]")
+
         // Upper bound on a rendered parameter value, applied AFTER redaction.
         const val PARAM_VALUE_MAX_CHARS = 500
     }

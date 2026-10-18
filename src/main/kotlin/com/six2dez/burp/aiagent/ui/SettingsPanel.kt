@@ -16,6 +16,7 @@ import com.six2dez.burp.aiagent.ui.components.CustomPromptLibraryEditor
 import com.six2dez.burp.aiagent.ui.components.ToggleSwitch
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
 import com.six2dez.burp.aiagent.ui.design.applyAreaStyle
+import com.six2dez.burp.aiagent.ui.design.helpLabel
 import com.six2dez.burp.aiagent.ui.panels.BackendConfigPanel
 import com.six2dez.burp.aiagent.ui.panels.BackendConfigState
 import java.util.concurrent.atomic.AtomicLong
@@ -31,6 +32,12 @@ import javax.swing.JTextField
 import javax.swing.SpinnerNumberModel
 import javax.swing.SwingUtilities
 import javax.swing.Timer
+
+/**
+ * Phase 31 / D-13: why the MCP Unsafe switch is disabled in a build whose catalog has no unsafe tool.
+ * Shown beside the switch and as its tooltip.
+ */
+internal const val NO_UNSAFE_TOOLS_NOTE = "No unsafe tools in this build"
 
 // Ten parameters since phase 29 added buildIdentity and contributions (UI-SPEC PC-15, D-07): the
 // services MainTab hands down plus the two values App resolves once (ADR-17: no re-baseline).
@@ -353,6 +360,12 @@ class SettingsPanel(
             settings.mcpSettings.allowUnpreprocessedProxyHistory,
         )
     internal val mcpUnsafe = JCheckBox("Unsafe mode (allow write/mutation tools)", settings.mcpSettings.unsafeEnabled)
+
+    /**
+     * Phase 31 / D-13: shown beside [mcpUnsafe] only when the loaded catalog has no unsafe tool (the
+     * store build). Visibility is set from catalog data in `initUiWiring`, never from the flavor.
+     */
+    internal val mcpUnsafeNote = helpLabel(NO_UNSAFE_TOOLS_NOTE).apply { isVisible = false }
 
     // 07-03 D-03: global "Restrict MCP tools to in-scope hosts" toggle. Mirrors the JCheckBox
     // pattern used by mcpExternal / mcpUnsafe / passiveAiScopeOnly / activeAiScopeOnly so it stays

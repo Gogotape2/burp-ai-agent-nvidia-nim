@@ -3,7 +3,6 @@ package com.six2dez.burp.aiagent.backends
 import burp.api.montoya.MontoyaApi
 import com.six2dez.burp.aiagent.backends.anthropic.AnthropicBackendFactory
 import com.six2dez.burp.aiagent.backends.burpai.BurpAiBackend
-import com.six2dez.burp.aiagent.backends.http.HttpBackendSupport
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
 import com.six2dez.burp.aiagent.backends.lmstudio.LmStudioBackendFactory
 import com.six2dez.burp.aiagent.backends.nvidia.NvidiaNimBackendFactory
@@ -12,28 +11,29 @@ import com.six2dez.burp.aiagent.backends.openai.OpenAiCompatibleBackendFactory
 import com.six2dez.burp.aiagent.backends.perplexity.PerplexityBackendFactory
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.AgentSettingsRepository
+import com.six2dez.burp.aiagent.spi.ExternalBackendSource
 import com.six2dez.burp.aiagent.spi.PluginSettingsStore
+import com.six2dez.burp.aiagent.spi.Plugins
 import com.six2dez.burp.aiagent.util.TokenTracker
-import java.io.File
-import java.net.URLClassLoader
 import java.util.ServiceLoader
 import java.util.concurrent.ConcurrentHashMap
 
-// TooManyFunctions: Phase 29 / D-08 added isRegistered and resolve, the registry's lookup API, which
-// took it from 10 to 12 functions; splitting the lookup off the class that owns the map would not
-// make either part simpler. Suppressed locally because ADR-17 forbids new baseline entries.
+// TooManyFunctions: Phase 29 / D-08 added isRegistered and resolve, the registry's lookup API; splitting
+// the lookup off the class that owns the map would not make either part simpler. Phase 31 / D-14 moved
+// the drop-in loader's two functions to src/full and added guardedSource, so detekt counts 14 (was 15)
+// against its threshold of 11. Suppressed locally because ADR-17 forbids new baseline entries.
 @Suppress("TooManyFunctions")
-class BackendRegistry(
+class BackendRegistry internal constructor(
     private val api: MontoyaApi,
+    private val externalSources: List<ExternalBackendSource>,
 ) {
     private val backends = ConcurrentHashMap<String, AiBackend>()
     private val availabilityCache = ConcurrentHashMap<Pair<String, Int>, Boolean>()
-    private var externalClassLoader: URLClassLoader? = null
-
-    private val externalBackendDir = File(System.getProperty("user.home"), ".burp-ai-agent/backends").also { it.mkdirs() }
 
     // BUG-69-01: Burp's HTTP transport for HTTP backends' health checks. The registry owns it so
-    // reload() (the Settings save path) re-applies it to the freshly created instances. Declared
+    // reload() (the Settings save path) re-applies it to the freshly created instances. Phase 31 /
+    // GATE-01: each HttpTransportAware backend receives a view bound to its own id (forBackend), so the
+    // egress gate judges the id core assigned, never one a backend reports. Declared
     // above `init` on purpose: Kotlin runs initializers in declaration order, so a property placed
     // after `init { reload() }` would be initialized after the first reload.
     @Volatile
@@ -48,6 +48,12 @@ class BackendRegistry(
     init {
         reload()
     }
+
+    // Phase 31 / D-14 (WR-05, ADR-18 OQ8): sources of backends loaded from outside the extension JAR.
+    // Only the full build registers one, the drop-in loader (src/full); the store classpath has no
+    // provider, so the store build never creates, lists or loads a drop-in directory. The internal
+    // constructor exists so tests can pass their own sources (Phase 31 gap closure WR-06).
+    constructor(api: MontoyaApi) : this(api, Plugins.load(ExternalBackendSource::class.java))
 
     /** Remembers [transport] and injects it into every current and future [HttpTransportAware] backend. */
     @Synchronized
@@ -67,7 +73,6 @@ class BackendRegistry(
     fun reload() {
         backends.clear()
         availabilityCache.clear()
-        closeExternalClassLoader()
 
         // Built-ins (same extension JAR). Pass the extension's classloader explicitly — Burp loads
         // each extension under its own classloader, so the default `Thread.currentThread()
@@ -108,8 +113,20 @@ class BackendRegistry(
             api.logging().logToOutput("Burp AI backend not available: ${e.message}")
         }
 
-        // Optional drop-in backend JARs
-        loadExternalBackendJars()
+        // Phase 31 / D-14: backends from outside the extension JAR, after the built-ins and Burp AI as in
+        // 1.0.1. Each source first releases what its previous load opened, so repeated Settings saves do
+        // not leak class loaders. None is registered in the store build.
+        externalSources.forEach { source ->
+            guardedSource(source) {
+                source.close()
+                source
+                    .load(
+                        parent = this::class.java.classLoader,
+                        log = { api.logging().logToOutput(it) },
+                        logError = { api.logging().logToError(it) },
+                    ).forEach { b -> backends[b.id] = b }
+            }
+        }
 
         applyHttpTransport()
         applyPluginSettings()
@@ -162,17 +179,30 @@ class BackendRegistry(
                 ?: return HealthCheckResult.Unavailable("Backend not found: $backendId")
         return try {
             val result = backend.healthCheck(settings)
-            if (result is HealthCheckResult.Unknown) {
-                if (backend.isAvailable(settings)) {
-                    HealthCheckResult.Healthy
-                } else {
-                    HealthCheckResult.Unavailable("Backend is not available with current configuration.")
-                }
-            } else {
-                result
-            }
+            if (result is HealthCheckResult.Unknown) unknownHealth(backend, settings) else result
         } catch (e: Exception) {
+            // An AiAccessRefusedException from the egress gate lands here as Unavailable(refusal).
             HealthCheckResult.Unavailable(e.message ?: "Health check failed")
+        }
+    }
+
+    /**
+     * Maps a backend's `Unknown` health (it sent no request, e.g. Anthropic) to a result. Phase 31 /
+     * GATE-01 (Pitfall 4): the egress gate is asked first, so a backend the gate refuses never reads
+     * "Connection OK."; with no transport ever set, the check cannot be trusted and reports Unavailable.
+     */
+    private fun unknownHealth(
+        backend: AiBackend,
+        settings: AgentSettings,
+    ): HealthCheckResult {
+        val transport =
+            httpTransport
+                ?: return HealthCheckResult.Unavailable("MontoyaHttpTransport unavailable; health checks require Burp's HTTP stack.")
+        transport.forBackend(backend.id).requireEgress()
+        return if (backend.isAvailable(settings)) {
+            HealthCheckResult.Healthy
+        } else {
+            HealthCheckResult.Unavailable("Backend is not available with current configuration.")
         }
     }
 
@@ -195,15 +225,14 @@ class BackendRegistry(
         }
         backends.clear()
         availabilityCache.clear()
-        closeExternalClassLoader()
-        HttpBackendSupport.shutdownSharedClients()
+        externalSources.forEach { source -> guardedSource(source) { source.close() } }
     }
 
     private fun applyHttpTransport() {
         val transport = httpTransport ?: return
         backends.values.forEach { backend ->
             if (backend is HttpTransportAware) {
-                backend.setHealthCheckTransport(transport)
+                backend.setHealthCheckTransport(transport.forBackend(backend.id))
             }
         }
     }
@@ -217,34 +246,22 @@ class BackendRegistry(
         }
     }
 
-    private fun loadExternalBackendJars() {
-        val jars = externalBackendDir.listFiles { f -> f.isFile && f.extension.lowercase() == "jar" }?.toList().orEmpty()
-        if (jars.isEmpty()) return
-
-        val cl = URLClassLoader(jars.map { it.toURI().toURL() }.toTypedArray(), this::class.java.classLoader)
+    // TooGenericExceptionCaught: an external source is plug-in code and may throw anything; one broken
+    // source must not abort a reload or an unload, and the built-in backends stay registered. Plug-in
+    // code may also fail to link (a stale drop-in compiled against classes or methods the extension
+    // removed, Phase 31 gap closure WR-06), so LinkageError is caught too. Only LinkageError is added
+    // among the Errors: a VirtualMachineError (OutOfMemoryError) still propagates.
+    @Suppress("TooGenericExceptionCaught")
+    private fun guardedSource(
+        source: ExternalBackendSource,
+        action: () -> Unit,
+    ) {
         try {
-            ServiceLoader.load(AiBackendFactory::class.java, cl).forEach { f ->
-                val b = f.create()
-                backends[b.id] = b
-            }
-            externalClassLoader = cl
-            api.logging().logToOutput("Loaded external backend JARs: ${jars.joinToString { it.name }}")
+            action()
         } catch (e: Exception) {
-            try {
-                cl.close()
-            } catch (_: Exception) {
-            }
-            api.logging().logToError("Failed loading external backend JARs: ${e.message}")
-        }
-    }
-
-    private fun closeExternalClassLoader() {
-        val cl = externalClassLoader ?: return
-        externalClassLoader = null
-        try {
-            cl.close()
-        } catch (e: Exception) {
-            api.logging().logToError("Failed closing backend classloader: ${e.message}")
+            api.logging().logToError("External backend source ${source.javaClass.name} failed: ${e.message}")
+        } catch (e: LinkageError) {
+            api.logging().logToError("External backend source ${source.javaClass.name} failed: ${e.message}")
         }
     }
 }

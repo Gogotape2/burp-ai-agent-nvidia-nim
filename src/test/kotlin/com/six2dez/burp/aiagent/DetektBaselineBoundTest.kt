@@ -32,7 +32,12 @@ private const val BASELINE_FILE = "detekt-baseline.xml"
  * constructor's LongParameterList entry, replaced by a local suppression), then, after later plans
  * brought the baseline to 973, to 972 in the commit that replaced the passive scanner's direct
  * active-scanner queueing with the suggested-target sink (plan 29-16: the old function's ReturnCount
- * entry; the new offerSuggestedTargets passes on its own).
+ * entry; the new offerSuggestedTargets passes on its own), then to 965 in phase 31 plan 31-07, which
+ * moved Ollama's context-window detection into its connection and dropped its OkHttp client (the old
+ * detectContextWindow's CyclomaticComplexMethod, NestedBlockDepth, ReturnCount, two MagicNumber and
+ * TooGenericExceptionCaught entries, and OllamaConnection's LongParameterList entry, now a local
+ * suppression), then to 964 in phase 34 plan 34-02, which deleted the passive scanner's backend-session
+ * polling helper (its ReturnCount entry).
  *
  * This is a CEILING, not a target. ADR-17 clause 1 says the baseline may lose entries and may never
  * gain them, so the only edit this constant is ever allowed to receive is a DOWNWARD one, made in the
@@ -40,7 +45,7 @@ private const val BASELINE_FILE = "detekt-baseline.xml"
  * somebody would otherwise have had to answer into a finding nobody will ever see again — which is
  * precisely the inversion ADR-17 clause 1 exists to forbid.
  */
-private const val MAX_BASELINE_ENTRIES = 972
+private const val MAX_BASELINE_ENTRIES = 964
 
 /**
  * QUAL-07 / SC3 gate on ADR-17 clause 1 — "`detekt-baseline.xml` shrinks and is never appended to".

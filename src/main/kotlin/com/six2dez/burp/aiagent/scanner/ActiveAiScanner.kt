@@ -12,13 +12,14 @@ import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.redact.RedactionPolicy
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import com.six2dez.burp.aiagent.util.IssueUtils
+import com.six2dez.burp.aiagent.util.ShutdownDeadline
 import com.six2dez.burp.aiagent.util.scheduleGuarded
 import java.util.concurrent.Callable
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 import java.util.concurrent.Future
 import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.ScheduledExecutorService
@@ -31,6 +32,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 import kotlin.math.abs
 
 data class ActiveAiFinding(
@@ -53,6 +55,35 @@ private data class PendingOast(
 )
 
 private const val OAST_POLL_INTERVAL_SECONDS = 60L
+
+/** Phase 33 / D-04: the one local wait an OFF toggle gives the worker and scheduler pools, together. */
+private const val TOGGLE_STOP_BUDGET_MS = 5_000L
+
+// Phase 34 / D-08 (PERF-01): ActiveAiScanner's constant patterns, compiled once per extension load
+// instead of per instance or per call. Text and options are unchanged (D-10). The ACTIVE_ prefix keeps
+// the cookie hint apart from PassiveAiScannerHeuristics' package-level authCookieHint (same package).
+private val ACTIVE_AUTH_COOKIE_HINT_REGEX = Regex("(session|auth|token|sid|jwt|remember)", RegexOption.IGNORE_CASE)
+private val ACTIVE_AUTH_ERROR_REGEX =
+    Regex(
+        "(unauthorized|forbidden|access denied|not authorized|login|sign\\s?in|signin)",
+        RegexOption.IGNORE_CASE,
+    )
+private val ACTIVE_SENSITIVE_DATA_REGEX =
+    Regex(
+        "email.*@|password|credit.*card|ssn|api.*key",
+        RegexOption.IGNORE_CASE,
+    )
+private val ACTIVE_STATIC_ASSET_REGEX =
+    Regex(
+        "\\.(css|js|png|jpg|jpeg|gif|svg|woff2?|ico|map)(\\?|$)",
+        RegexOption.IGNORE_CASE,
+    )
+
+/** Phase 34 / D-08: a quoted JSON key followed by a colon; group 1 is the key (extractJsonKeys). */
+private val JSON_KEY_NAME_REGEX = Regex("\"([A-Za-z0-9_\\-]+)\"\\s*:")
+
+/** Phase 34 / D-08: an integer or decimal value, optionally negative (injectPayload's JSON_FIELD case). */
+private val NUMERIC_VALUE_REGEX = Regex("-?\\d+(?:\\.\\d+)?")
 
 /**
  * AI-powered Active Scanner that confirms vulnerabilities by sending test payloads
@@ -91,16 +122,38 @@ class ActiveAiScanner(
     //    construction, while maxConcurrent is a mutable var written later from settings.
     //  - AbortPolicy makes saturation observable. Its throw site is handled in
     //    sendRequestWithTimeout (returns null) and on the scheduler thread by scheduleGuarded.
+    //  - Phase 33 / D-11: the pool comes from the thread helper, which names its daemon threads
+    //    burp-ai-agent-scan-request-N and tracks it for the unload sweep.
     private val requestExecutor: ExecutorService =
-        ThreadPoolExecutor(
+        ExtensionThreads.boundedPool(
+            "scan-request",
             0,
             Defaults.MAX_SCAN_REQUEST_THREADS,
             Defaults.SCAN_REQUEST_THREAD_KEEPALIVE_SECONDS,
             TimeUnit.SECONDS,
             SynchronousQueue(),
-            scanRequestThreadFactory(),
             ThreadPoolExecutor.AbortPolicy(),
         )
+
+    // Phase 33 / D-04, EDT-01: every start and stop runs under this lock. UI code never takes it: it
+    // calls requestEnabled, which hands the transition to the one lifecycle thread below, so a stop that
+    // waits for busy workers never blocks the EDT and two clicks run one after the other (FIFO).
+    private val lifecycleLock = ReentrantLock()
+    private val lifecycle: ExecutorService = ExtensionThreads.singleThread("scan-lifecycle")
+
+    /** Lifecycle requests submitted and not yet finished; `stopping` is reported from this. */
+    private val pendingTransitions = AtomicInteger(0)
+
+    /** Set by [shutdown]; once true nothing starts again for the rest of the load. */
+    @Volatile
+    private var terminated = false
+
+    /** Set by a stop, cleared by the next start; read by [haltRequested] on the workers (D-02). */
+    @Volatile
+    private var stopIssued = false
+
+    /** Phase 34 / D-04: the pacing wait between payloads; released by a stop, reset by the next start. */
+    private val pacing = ScanPacing()
 
     // Finding #7 (BApp #231): SSRF out-of-band confirmation is asynchronous. A single shared
     // Collaborator client + one scheduled poller replace the old per-target client that blocked a
@@ -108,6 +161,8 @@ class ActiveAiScanner(
     private val oastLock = ReentrantLock()
     private var collaboratorClient: CollaboratorClient? = null
     private val pendingOast = ConcurrentHashMap<String, PendingOast>()
+
+    @Volatile
     private var oastPoller: ScheduledExecutorService? = null
 
     // Quick 261008-vau: one baseline per original request, shared by all of its targets (points x
@@ -123,30 +178,40 @@ class ActiveAiScanner(
             "x-access-token",
             "x-csrf-token",
         )
-    private val authCookieHint = Regex("(session|auth|token|sid|jwt|remember)", RegexOption.IGNORE_CASE)
-    private val authErrorRegex =
-        Regex(
-            "(unauthorized|forbidden|access denied|not authorized|login|sign\\s?in|signin)",
-            RegexOption.IGNORE_CASE,
-        )
-    private val sensitiveDataRegex =
-        Regex(
-            "email.*@|password|credit.*card|ssn|api.*key",
-            RegexOption.IGNORE_CASE,
-        )
-    private val staticAssetRegex =
-        Regex(
-            "\\.(css|js|png|jpg|jpeg|gif|svg|woff2?|ico|map)(\\?|$)",
-            RegexOption.IGNORE_CASE,
-        )
 
+    // Written under lifecycleLock, read by the scheduler tick, the settings setters and getStatus.
+    @Volatile
     private var executor: ExecutorService? = null
+
+    @Volatile
     private var scheduledExecutor: ScheduledExecutorService? = null
 
-    // Configurable limits
+    // Configurable limits. Written on the EDT / Save worker and read live by the scan workers and the
+    // scheduler tick, so a new value applies to the next target without a restart (Phase 33 / D-01).
+
+    /**
+     * How many targets are scanned at once, at least 1.
+     *
+     * Phase 33 / D-01: setting it on a running scanner resizes the live worker pool (core and maximum
+     * both become the new value), so the pool never exceeds it. This replaces the restart-per-change
+     * that left the old pool's workers attacking alongside the new one (review H14). Never takes the
+     * lifecycle lock: it runs on the EDT. A pool that was just shut down accepts the resize harmlessly.
+     */
+    @Volatile
     var maxConcurrent: Int = 3
+        set(value) {
+            val size = value.coerceAtLeast(1)
+            field = size
+            resizeWorkers(size)
+        }
+
+    @Volatile
     var maxPayloadsPerPoint: Int = 10
+
+    @Volatile
     var timeoutSeconds: Int = 30
+
+    @Volatile
     var requestDelayMs: Long = 100
 
     // Written on the EDT / Save worker, read by scan workers: payload filtering, the IDOR/BOLA gate
@@ -154,21 +219,142 @@ class ActiveAiScanner(
     @Volatile
     var maxRiskLevel: PayloadRisk = PayloadRisk.SAFE
 
+    @Volatile
     var scopeOnly: Boolean = true
+
+    @Volatile
     var scanMode: ScanMode = ScanMode.FULL
+
+    @Volatile
     var useCollaborator: Boolean = false
+
+    @Volatile
     var maxQueueSize: Int = Defaults.ACTIVE_SCAN_MAX_QUEUE_SIZE
 
+    /**
+     * Turns the scanner on or off and returns once the transition is done. For the load path and tests:
+     * an OFF waits (bounded) for busy workers, so NEVER call it on the EDT; UI code calls
+     * [requestEnabled].
+     *
+     * Idempotent (Phase 33 / D-01): ON while the scanner already runs keeps the running pools, the
+     * shared baselines and the pending Collaborator confirmations; OFF on a stopped scanner only drops
+     * what is left of them.
+     */
     fun setEnabled(value: Boolean) {
         enabled.set(value)
-        if (value) {
-            startProcessing()
+        lifecycleLock.withLock { applyCurrentIntent() }
+    }
+
+    /**
+     * Phase 33 / D-04, EDT-01 — the non-blocking toggle for UI callers.
+     *
+     * Records the intent at once (so [isEnabled] and [getStatus] answer it immediately) and runs the start
+     * or stop on the daemon `burp-ai-agent-scan-lifecycle` thread. While an OFF is in progress
+     * [ActiveScannerStatus.stopping] is true, so the UI can show "Stopping…". Requests run one at a time
+     * in the order they were made, and each applies the intent current when it runs, so the final state
+     * follows the latest request. [onSettled] runs on the lifecycle thread once this request's transition
+     * finished (or at once after [shutdown]); a throw from it is ignored.
+     *
+     * Never takes the lifecycle lock on the calling thread.
+     */
+    fun requestEnabled(
+        value: Boolean,
+        onSettled: (() -> Unit)? = null,
+    ) {
+        enabled.set(value)
+        pendingTransitions.incrementAndGet()
+        val transition =
+            Runnable {
+                try {
+                    lifecycleLock.withLock { applyCurrentIntent() }
+                } finally {
+                    pendingTransitions.decrementAndGet()
+                    onSettled?.let { runCatching { it() } }
+                }
+            }
+        try {
+            lifecycle.execute(transition)
+        } catch (_: RejectedExecutionException) {
+            // INTENTIONAL: the scanner was shut down (unload); there is nothing left to start or stop.
+            pendingTransitions.decrementAndGet()
+            onSettled?.let { runCatching { it() } }
+        }
+    }
+
+    /** Resizes the live worker pool, if any, to exactly [size] threads (D-01). */
+    private fun resizeWorkers(size: Int) {
+        val pool = executor as? ThreadPoolExecutor ?: return
+        // The JDK rejects a core size above the maximum, so the order depends on the direction.
+        if (size > pool.maximumPoolSize) {
+            pool.maximumPoolSize = size
+            pool.corePoolSize = size
         } else {
-            stopProcessing()
+            pool.corePoolSize = size
+            pool.maximumPoolSize = size
+        }
+    }
+
+    /**
+     * Phase 33 / D-02 — whether a payload loop must stop: OFF interrupted this worker, or the scanner
+     * was stopped since it last started (a backstop for an interrupt some callee swallowed). A scanner
+     * that was never started does not halt, so `executeScan` still runs when driven directly.
+     */
+    private fun haltRequested(): Boolean = Thread.currentThread().isInterrupted || (stopIssued && !scanning.get())
+
+    /**
+     * The payload-loop head check (D-02): the elements of this list, lazily, until [haltRequested]. The
+     * check runs before each iteration, so a loop over it ends as soon as OFF interrupts the worker.
+     * Kept out of the loop bodies so the baseline-keyed scan functions keep their signatures.
+     */
+    private fun <T> Iterable<T>.untilHalted(): Sequence<T> = asSequence().takeWhile { !haltRequested() }
+
+    /** Applies the current intent. The caller holds [lifecycleLock]. */
+    private fun applyCurrentIntent() {
+        if (enabled.get()) startIfIdle() else stopProcessing()
+    }
+
+    /** Starts the pools unless they already run or the scanner was shut down. The caller holds [lifecycleLock]. */
+    private fun startIfIdle() {
+        if (enabled.get() && !scanning.get() && !terminated) startProcessing()
+    }
+
+    /**
+     * A manual scan asks for processing without starting it inline (EDT-01): the start is handed to the
+     * lifecycle thread, so a manual scan run on the EDT while a stop is in progress does not wait for it.
+     */
+    private fun requestProcessing() {
+        try {
+            lifecycle.execute { lifecycleLock.withLock { startIfIdle() } }
+        } catch (_: RejectedExecutionException) {
+            // INTENTIONAL: the scanner was shut down (unload); nothing may start now.
         }
     }
 
     fun isEnabled(): Boolean = enabled.get()
+
+    /** Phase 31 / D-02: set by the first refusal of this extension load; never reset during the load. */
+    private val aiGateRefusalLogged = AtomicBoolean(false)
+
+    /**
+     * Phase 31 / D-02 — whether the injected AI access policy allows the backend this scanner's AI
+     * calls would really use (the saved id, resolved the way the supervisor resolves it). Asked in
+     * [tryQueueTarget] before anything is queued, so a refused target is dropped and never retried.
+     *
+     * RESEARCH Pitfall 5: [AgentSupervisor.refusalForSavedBackend] answers with no backend running;
+     * the running-backend check is false while the supervisor is idle and let refused work through.
+     *
+     * The first refusal of the load writes one Output line carrying the policy's refusal text; later
+     * refusals write nothing (the scanner panel shows the live paused state). The transport choke
+     * point (plan 31-01) still refuses any provider request that slips past this pre-check. Targets
+     * already in flight when Use AI turns off finish (D-04); nothing is cancelled here.
+     */
+    private fun aiGateOpen(settings: AgentSettings): Boolean {
+        val refusal = supervisor.refusalForSavedBackend(settings.preferredBackendId) ?: return true
+        if (aiGateRefusalLogged.compareAndSet(false, true)) {
+            api.logging().logToOutput("[ActiveAiScanner] Paused: $refusal")
+        }
+        return false
+    }
 
     fun getStatus(): ActiveScannerStatus =
         ActiveScannerStatus(
@@ -178,6 +364,10 @@ class ActiveAiScanner(
             scansCompleted = scansCompleted.get(),
             vulnsConfirmed = vulnsConfirmed.get(),
             currentTarget = currentTarget.get(),
+            // Phase 33 / D-04: an OFF request is queued or running on the lifecycle thread.
+            stopping = !enabled.get() && pendingTransitions.get() > 0,
+            // Phase 31 / D-02: computed from the live policy on every refresh (local, no request).
+            aiGatePaused = enabled.get() && supervisor.refusalForSavedBackend(getSettings().preferredBackendId) != null,
         )
 
     fun getRecentConfirmations(n: Int): List<ActiveAiFinding> {
@@ -188,24 +378,38 @@ class ActiveAiScanner(
     }
 
     /**
-     * Queue a target for active scanning
-     * Called by PassiveAiScanner when it detects a potential vulnerability
+     * Queue a target for active scanning, the same as [tryQueueTarget], for callers that ignore the
+     * outcome.
      */
     fun queueTarget(target: ActiveScanTarget) {
-        if (!enabled.get() || supervisor.isBlockedByAiAccessPolicy()) return
-        if (target.vulnHint.vulnClass in ScanPolicy.PASSIVE_ONLY_VULN_CLASSES) return
-        if (!ScanPolicy.isAllowedForMode(scanMode, target.vulnHint.vulnClass)) return
+        tryQueueTarget(target)
+    }
+
+    /**
+     * Queue a target for active scanning and say whether it really reached the queue.
+     *
+     * Returns true only when the target was added to the queue. Returns false when the scanner is
+     * off, the AI gate refuses (Phase 31 D-02), the class is passive-only or outside the scan mode,
+     * the URL is out of scope, the target repeats inside the 1-hour window, or the queue is full.
+     * Used by the full build's opt-in auto-queue to count and remove only real queues (31-REVIEW
+     * IN-06).
+     */
+    @Suppress("ReturnCount") // body moved from queueTarget (baseline-keyed on its signature); ADR-17 forbids a new entry
+    fun tryQueueTarget(target: ActiveScanTarget): Boolean {
+        if (!enabled.get() || !aiGateOpen(getSettings())) return false
+        if (target.vulnHint.vulnClass in ScanPolicy.PASSIVE_ONLY_VULN_CLASSES) return false
+        if (!ScanPolicy.isAllowedForMode(scanMode, target.vulnHint.vulnClass)) return false
 
         // Check scope
         if (scopeOnly && !api.scope().isInScope(target.originalRequest.request().url())) {
-            return
+            return false
         }
 
         // Dedup - don't scan same target twice within 1 hour (atomic putIfAbsent)
         val now = System.currentTimeMillis()
         val existing = processedTargets.putIfAbsent(target.id, now)
         if (existing != null && (now - existing) < Defaults.DEDUP_WINDOW_MS) {
-            return
+            return false
         }
         if (existing != null) {
             // Expired entry — update timestamp
@@ -220,8 +424,9 @@ class ActiveAiScanner(
                 target
             }
 
-        if (!offerIfQueueNotFull(boostedTarget)) return
+        if (!offerIfQueueNotFull(boostedTarget)) return false
         api.logging().logToOutput("[ActiveAiScanner] Queued: ${boostedTarget.vulnHint.vulnClass} in ${boostedTarget.injectionPoint.name}")
+        return true
     }
 
     /**
@@ -261,7 +466,7 @@ class ActiveAiScanner(
         if (queued > 0) {
             api.logging().logToOutput("[ActiveAiScanner] Manual active scan: $queued targets queued")
             if (!scanning.get() && enabled.get()) {
-                startProcessing()
+                requestProcessing()
             }
         }
 
@@ -314,11 +519,56 @@ class ActiveAiScanner(
                         "${insertionPoint.type}:${insertionPoint.name}",
                 )
             if (!scanning.get() && enabled.get()) {
-                startProcessing()
+                requestProcessing()
             }
         }
 
         return queued
+    }
+
+    /**
+     * Phase 32 / D-04 — the AI access policy's refusal text for the saved backend, or null when the
+     * policy allows it. The UI asks this before it switches the scanner on for a hand-queued batch of
+     * suggested targets (research A3), so a refused action never turns the scanner on. Writes no
+     * Output line: the caller shows the reason in its dialog.
+     */
+    fun suggestedQueueRefusal(): String? = supervisor.refusalForSavedBackend(getSettings().preferredBackendId)
+
+    /**
+     * Phase 32 / D-04, D-08 — queue suggested targets because the user asked for it.
+     *
+     * Returns [SuggestedQueueOutcome.Refused] with the policy's text before any target is read when
+     * the AI access policy refuses the saved backend. Otherwise keeps, in order, the targets whose
+     * class is not passive-only, is allowed for [scanMode], whose URL passes the scope check when
+     * [scopeOnly] is set, and that fit the queue, and returns them in [SuggestedQueueOutcome.Queued]
+     * with the count left out.
+     *
+     * Like [manualScan], this ignores the 1-hour `processedTargets` window of [tryQueueTarget]: the user
+     * asked explicitly, so a target the auto-queue took a moment ago is queued again (research A4).
+     * The confirmation dialog is the caller's job. The AI calls of the queued scans still go through
+     * the Phase 31 gate at the transport.
+     */
+    fun queueSuggested(targets: List<ActiveScanTarget>): SuggestedQueueOutcome {
+        val refusal = suggestedQueueRefusal()
+        if (refusal != null) return SuggestedQueueOutcome.Refused(refusal)
+
+        val queued =
+            targets.filter { target ->
+                val vulnClass = target.vulnHint.vulnClass
+                vulnClass !in ScanPolicy.PASSIVE_ONLY_VULN_CLASSES &&
+                    ScanPolicy.isAllowedForMode(scanMode, vulnClass) &&
+                    (!scopeOnly || api.scope().isInScope(target.originalRequest.request().url())) &&
+                    offerIfQueueNotFull(target.copy(queuedAtEpochMs = System.currentTimeMillis()))
+            }
+
+        if (queued.isNotEmpty()) {
+            api.logging().logToOutput("[ActiveAiScanner] Suggested targets: ${queued.size} queued by the user")
+            if (!scanning.get() && enabled.get()) {
+                requestProcessing()
+            }
+        }
+
+        return SuggestedQueueOutcome.Queued(queued, targets.size - queued.size)
     }
 
     private fun offerIfQueueNotFull(target: ActiveScanTarget): Boolean {
@@ -369,22 +619,20 @@ class ActiveAiScanner(
         processedTargets.clear()
     }
 
+    /** Builds and starts the pools. The caller holds [lifecycleLock]. */
     private fun startProcessing() {
-        stopProcessing()
+        if (executor != null || scheduledExecutor != null || oastPoller != null) stopProcessing()
+        stopIssued = false
+        pacing.reset() // Phase 34 / D-04: the new run's pauses wait the full delay again.
         scanning.set(true)
 
-        // REL-07 / SC6: naming only — sizes, intervals and every other argument are unchanged. A
-        // Burp thread dump taken mid-scan has to say which subsystem owns each thread, and an
-        // anonymous `pool-N-thread-M` says nothing.
-        val workerThreadCounter = AtomicInteger(0)
-        executor =
-            Executors.newFixedThreadPool(maxConcurrent) { runnable ->
-                Thread(runnable, "burp-ai-agent-scan-worker-${workerThreadCounter.incrementAndGet()}").apply { isDaemon = true }
-            }
-        scheduledExecutor =
-            Executors.newSingleThreadScheduledExecutor { runnable ->
-                Thread(runnable, "burp-ai-agent-scan-scheduler").apply { isDaemon = true }
-            }
+        // REL-07 / SC6, Phase 33 / D-11: every pool comes from the thread helper, so a Burp thread dump
+        // taken mid-scan names the subsystem that owns each daemon thread (burp-ai-agent-scan-worker-N,
+        // burp-ai-agent-scan-scheduler, burp-ai-agent-oast-poller).
+        executor = ExtensionThreads.fixedPool("scan-worker", maxConcurrent)
+        // A resize that landed between building the pool and publishing it is applied now.
+        resizeWorkers(maxConcurrent)
+        scheduledExecutor = ExtensionThreads.scheduled("scan-scheduler")
 
         // REL-06: routed through scheduleGuarded so a throw on one tick cannot silently cancel the
         // queue drain for the rest of the Burp session. See util/GuardedScheduling.kt for the full
@@ -400,10 +648,7 @@ class ActiveAiScanner(
 
         // Single poller for out-of-band (Collaborator) confirmations — polls every 60 s and matches
         // interactions against pending payloads, so no scanner thread blocks waiting (BApp #231).
-        oastPoller =
-            Executors.newSingleThreadScheduledExecutor { runnable ->
-                Thread(runnable, "burp-ai-agent-oast-poller").apply { isDaemon = true }
-            }
+        oastPoller = ExtensionThreads.scheduled("oast-poller")
         oastPoller?.scheduleWithFixedDelay({
             try {
                 pollOastInteractions()
@@ -413,21 +658,45 @@ class ActiveAiScanner(
         }, OAST_POLL_INTERVAL_SECONDS, OAST_POLL_INTERVAL_SECONDS, TimeUnit.SECONDS)
     }
 
-    private fun stopProcessing() {
+    /**
+     * Stops the pools (idempotent). The caller holds [lifecycleLock].
+     *
+     * `shutdownNow()` interrupts the workers, and the payload loops honour the interrupt (D-02). With
+     * [waitForWorkers] the worker and scheduler pools then get ONE shared [TOGGLE_STOP_BUDGET_MS] wait
+     * (the toggle path; it runs on the lifecycle thread or a non-EDT caller). [shutdown] passes false and
+     * waits on the unload deadline instead.
+     *
+     * D-03: pending Collaborator confirmations, the shared baselines and the Collaborator client are
+     * dropped here, on disable and unload only; a settings change no longer comes through here.
+     */
+    private fun stopProcessing(waitForWorkers: Boolean = true) {
+        stopIssued = true
+        // Phase 34 / D-04: end every pacing wait now, before the interrupt, so a worker whose
+        // interrupt is swallowed still leaves its wait and halts on haltRequested().
+        pacing.release()
         scanning.set(false)
-        executor?.shutdownNow()
-        scheduledExecutor?.shutdownNow()
-        oastPoller?.shutdownNow()
-        try {
-            executor?.awaitTermination(5, TimeUnit.SECONDS)
-            scheduledExecutor?.awaitTermination(5, TimeUnit.SECONDS)
-        } catch (_: InterruptedException) {
-            // INTENTIONAL: thread interrupt during executor shutdown; interrupt flag restored
-            Thread.currentThread().interrupt()
+        val workers = executor
+        val scheduler = scheduledExecutor
+        val poller = oastPoller
+        workers?.shutdownNow()
+        scheduler?.shutdownNow()
+        poller?.shutdownNow()
+        if (waitForWorkers) {
+            val budget = ShutdownDeadline(TOGGLE_STOP_BUDGET_MS)
+            try {
+                workers?.awaitTermination(budget.remainingMs(), TimeUnit.MILLISECONDS)
+                scheduler?.awaitTermination(budget.remainingMs(), TimeUnit.MILLISECONDS)
+            } catch (_: InterruptedException) {
+                // INTENTIONAL: thread interrupt during executor shutdown; interrupt flag restored
+                Thread.currentThread().interrupt()
+            }
         }
         executor = null
         scheduledExecutor = null
         oastPoller = null
+        // Pools that stopped leave the helper's tracking; one still running stays tracked so the
+        // unload sweep forces and reports it.
+        listOfNotNull(workers, scheduler, poller).filter { it.isTerminated }.forEach { ExtensionThreads.release(it) }
         // Abandon any pending OOB confirmations, drop the shared baselines and drop the shared
         // client for a clean restart.
         pendingOast.clear()
@@ -593,14 +862,14 @@ class ActiveAiScanner(
         }
 
         // Test Boolean-based payloads with DUAL CONFIRMATION
-        for ((truePayload, falsePayload) in booleanPayloadPairs) {
+        for ((truePayload, falsePayload) in booleanPayloadPairs.untilHalted()) {
             try {
                 // Test TRUE condition
                 val trueRequest = injectPayload(target.originalRequest.request(), target.injectionPoint, truePayload.value)
                 val trueResponse = sendRequestWithTimeout(trueRequest) ?: continue
                 val trueRequestResponse = HttpRequestResponse.httpRequestResponse(trueRequest, trueResponse.response())
 
-                Thread.sleep(requestDelayMs)
+                pacing.pause(requestDelayMs) // Phase 34 / D-04: OFF and unload end this wait at once.
 
                 // Test FALSE condition
                 val falseRequest = injectPayload(target.originalRequest.request(), target.injectionPoint, falsePayload.value)
@@ -623,7 +892,11 @@ class ActiveAiScanner(
                     return ActiveScanResult(target, allPayloads.indexOf(falsePayload) + 1, confirmation)
                 }
 
-                Thread.sleep(requestDelayMs)
+                pacing.pause(requestDelayMs) // Phase 34 / D-04: OFF and unload end this wait at once.
+            } catch (_: InterruptedException) {
+                // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
+                Thread.currentThread().interrupt()
+                break
             } catch (e: Exception) {
                 api.logging().logToError("[ActiveAiScanner] Boolean dual test error: ${e.message}")
             }
@@ -631,7 +904,7 @@ class ActiveAiScanner(
 
         // Test non-Boolean payloads normally
         val nonBooleanPayloads = allPayloads.filter { it.detectionMethod != DetectionMethod.BLIND_BOOLEAN }
-        for (payload in nonBooleanPayloads) {
+        for (payload in nonBooleanPayloads.untilHalted()) {
             try {
                 // Build modified request with payload
                 val modifiedRequest =
@@ -693,13 +966,17 @@ class ActiveAiScanner(
                 }
 
                 // Rate limiting
-                Thread.sleep(requestDelayMs)
+                pacing.pause(requestDelayMs) // Phase 34 / D-04: OFF and unload end this wait at once.
+            } catch (_: InterruptedException) {
+                // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
+                Thread.currentThread().interrupt()
+                break
             } catch (e: Exception) {
                 api.logging().logToError("[ActiveAiScanner] Payload error: ${e.message}")
             }
         }
 
-        if (vulnClass == VulnClass.SSRF) {
+        if (vulnClass == VulnClass.SSRF && !haltRequested()) {
             // OOB confirmation is asynchronous: register the Collaborator payload and let the shared
             // poller create the issue if an interaction arrives, instead of blocking this scanner
             // thread polling for up to 30 s (BApp #231, finding 7).
@@ -746,7 +1023,7 @@ class ActiveAiScanner(
             return ActiveScanResult(target, 0, null, "Baseline response not successful")
         }
 
-        for ((index, payload) in payloads.withIndex()) {
+        for ((index, payload) in payloads.withIndex().untilHalted()) {
             try {
                 val modifiedRequest =
                     injectPayload(
@@ -773,7 +1050,11 @@ class ActiveAiScanner(
                     return ActiveScanResult(target, index + 1, confirmation)
                 }
 
-                Thread.sleep(requestDelayMs)
+                pacing.pause(requestDelayMs) // Phase 34 / D-04: OFF and unload end this wait at once.
+            } catch (_: InterruptedException) {
+                // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
+                Thread.currentThread().interrupt()
+                break
             } catch (e: Exception) {
                 api.logging().logToError("[ActiveAiScanner] IDOR test error: ${e.message}")
             }
@@ -932,8 +1213,8 @@ class ActiveAiScanner(
     ): VulnConfirmation? {
         val modifiedBody = modified.response()?.bodyToString() ?: ""
         val path = modified.request().path()
-        if (!staticAssetRegex.containsMatchIn(path)) return null
-        if (!sensitiveDataRegex.containsMatchIn(modifiedBody)) return null
+        if (!ACTIVE_STATIC_ASSET_REGEX.containsMatchIn(path)) return null
+        if (!ACTIVE_SENSITIVE_DATA_REGEX.containsMatchIn(modifiedBody)) return null
         if (!isCacheable(modified)) return null
 
         val followUpResponse = sendRequestWithTimeout(target.originalRequest.request()) ?: return null
@@ -943,7 +1224,7 @@ class ActiveAiScanner(
                 followUpResponse.response(),
             )
         val followUpBody = followUp.response()?.bodyToString() ?: ""
-        if (!sensitiveDataRegex.containsMatchIn(followUpBody)) return null
+        if (!ACTIVE_SENSITIVE_DATA_REGEX.containsMatchIn(followUpBody)) return null
         if (!isCacheHit(followUp)) return null
 
         return VulnConfirmation(
@@ -963,7 +1244,7 @@ class ActiveAiScanner(
                 authHeaderNames.contains(header.name().lowercase())
             }
         val cookieHeader = request.headerValue("Cookie") ?: ""
-        val hasAuthCookie = authCookieHint.containsMatchIn(cookieHeader)
+        val hasAuthCookie = ACTIVE_AUTH_COOKIE_HINT_REGEX.containsMatchIn(cookieHeader)
         return hasAuthHeader || hasAuthCookie
     }
 
@@ -986,7 +1267,7 @@ class ActiveAiScanner(
         val wwwAuth = responseHeaderValue(response, "WWW-Authenticate")
         if (!wwwAuth.isNullOrBlank()) return true
         val body = response.response()?.bodyToString() ?: ""
-        return authErrorRegex.containsMatchIn(body)
+        return ACTIVE_AUTH_ERROR_REGEX.containsMatchIn(body)
     }
 
     private fun isJsonResponse(
@@ -1001,8 +1282,7 @@ class ActiveAiScanner(
 
     private fun extractJsonKeys(body: String): Set<String> {
         val keys = mutableSetOf<String>()
-        val pattern = Regex("\"([A-Za-z0-9_\\-]+)\"\\s*:")
-        pattern.findAll(body).forEach { match ->
+        JSON_KEY_NAME_REGEX.findAll(body).forEach { match ->
             keys.add(match.groupValues[1])
         }
         return keys
@@ -1173,6 +1453,10 @@ class ActiveAiScanner(
         // saturated pool throws right here; submitted above the try that throw would escape this
         // function, climb through executeScan into the per-target catch, and abort a whole target
         // with a message of `null` — the exception type usually carries none.
+        // Phase 33 / D-02: a worker that OFF interrupted sends nothing new to the target.
+        // Phase 34 / D-04: the full halt check, so a pacing wait that a stop released without an
+        // interrupt does not go on to send the next request of a boolean pair.
+        if (haltRequested()) return null
         var future: Future<HttpRequestResponse>? = null
         return try {
             future =
@@ -1188,6 +1472,12 @@ class ActiveAiScanner(
             null
         } catch (_: RejectedExecutionException) {
             api.logging().logToError("[ActiveAiScanner] Request rejected — scan request pool saturated for ${request.url().take(80)}")
+            null
+        } catch (_: InterruptedException) {
+            // Phase 33 / D-02: OFF interrupted the wait. A request already on the wire may still finish;
+            // the caller's `?: continue` reaches its loop head, which now leaves the loop.
+            future?.cancel(true)
+            Thread.currentThread().interrupt()
             null
         } catch (e: Exception) {
             future?.cancel(true)
@@ -1451,9 +1741,8 @@ class ActiveAiScanner(
             }
             InjectionType.JSON_FIELD -> {
                 val body = request.bodyToString()
-                val numericPattern = Regex("-?\\d+(?:\\.\\d+)?")
-                val isNumericOriginal = numericPattern.matches(point.originalValue)
-                val isNumericPayload = numericPattern.matches(payload)
+                val isNumericOriginal = NUMERIC_VALUE_REGEX.matches(point.originalValue)
+                val isNumericPayload = NUMERIC_VALUE_REGEX.matches(payload)
                 val replacementValue = if (isNumericOriginal && isNumericPayload) payload else "\"$payload\""
                 val fieldPattern =
                     Regex(
@@ -1516,7 +1805,7 @@ class ActiveAiScanner(
 
         // === Technique 1: IP spoofing headers ===
         val baselineBodyLen = baseline.response()?.body()?.length() ?: 0
-        for ((headerName, headerValue) in bypassHeaders) {
+        for ((headerName, headerValue) in bypassHeaders.untilHalted()) {
             try {
                 val modifiedRequest = request.withAddedHeader(headerName, headerValue)
                 val response = sendRequestWithTimeout(modifiedRequest) ?: continue
@@ -1555,7 +1844,11 @@ class ActiveAiScanner(
                         ),
                     )
                 }
-                Thread.sleep(requestDelayMs)
+                pacing.pause(requestDelayMs) // Phase 34 / D-04: OFF and unload end this wait at once.
+            } catch (_: InterruptedException) {
+                // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
+                Thread.currentThread().interrupt()
+                break
             } catch (e: Exception) {
                 api.logging().logToError("[ActiveAiScanner] 403 bypass header error: ${e.message}")
             }
@@ -1563,7 +1856,7 @@ class ActiveAiScanner(
 
         // === Technique 2: Path manipulation ===
         val pathVariations = buildPathVariations(path)
-        for (variation in pathVariations) {
+        for (variation in pathVariations.untilHalted()) {
             try {
                 val modifiedRequest = request.withPath(variation)
                 val response = sendRequestWithTimeout(modifiedRequest) ?: continue
@@ -1603,7 +1896,11 @@ class ActiveAiScanner(
                         ),
                     )
                 }
-                Thread.sleep(requestDelayMs)
+                pacing.pause(requestDelayMs) // Phase 34 / D-04: OFF and unload end this wait at once.
+            } catch (_: InterruptedException) {
+                // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
+                Thread.currentThread().interrupt()
+                break
             } catch (e: Exception) {
                 api.logging().logToError("[ActiveAiScanner] 403 bypass path error: ${e.message}")
             }
@@ -1611,7 +1908,7 @@ class ActiveAiScanner(
 
         // === Technique 3: HTTP method switching ===
         val alternativeMethods = ScanPolicy.methodSwitchAlternatives(request.method(), maxRiskLevel)
-        for (method in alternativeMethods) {
+        for (method in alternativeMethods.untilHalted()) {
             try {
                 val modifiedRequest = request.withMethod(method)
                 val response = sendRequestWithTimeout(modifiedRequest) ?: continue
@@ -1650,7 +1947,11 @@ class ActiveAiScanner(
                         ),
                     )
                 }
-                Thread.sleep(requestDelayMs)
+                pacing.pause(requestDelayMs) // Phase 34 / D-04: OFF and unload end this wait at once.
+            } catch (_: InterruptedException) {
+                // Phase 33 / D-02: OFF interrupted this worker; keep the flag and stop attacking.
+                Thread.currentThread().interrupt()
+                break
             } catch (e: Exception) {
                 api.logging().logToError("[ActiveAiScanner] 403 bypass method error: ${e.message}")
             }
@@ -1707,21 +2008,65 @@ class ActiveAiScanner(
 
     private fun extractInjectionPoints(requestResponse: HttpRequestResponse): List<InjectionPoint> = InjectionPointExtractor.extract(requestResponse.request(), headerInjectionAllowlist)
 
-    fun shutdown() {
+    /** Unload with a fresh shared deadline; see the overload. */
+    fun shutdown() = shutdown(ShutdownDeadline.unload())
+
+    /**
+     * Phase 33 / D-05 — stops the scanner for good within the shared unload [deadline].
+     *
+     * Nothing starts again afterwards ([setEnabled] and [requestEnabled] become no-ops). The worker and
+     * scheduler pools are interrupted and awaited only for what is left of [deadline]; one that does not
+     * stop is forced and reported with one Error line. The per-request pool is `shutdownNow()`'d but NOT
+     * awaited: a Montoya request in flight cannot be interrupted, and the final unload sweep waits for it
+     * once. Queued lifecycle requests still run (they can no longer start anything) so their callbacks
+     * fire.
+     */
+    fun shutdown(deadline: ShutdownDeadline) {
+        terminated = true
         enabled.set(false)
-        stopProcessing()
-        executor?.shutdownNow()
-        scheduledExecutor?.shutdownNow()
-        requestExecutor.shutdown()
-        try {
-            if (!requestExecutor.awaitTermination(3, TimeUnit.SECONDS)) {
-                requestExecutor.shutdownNow()
+        val logError: (String) -> Unit = { line -> runCatching { api.logging().logToError(line) } }
+        val workers = executor
+        val scheduler = scheduledExecutor
+        withLifecycleLockWithin(deadline) { stopProcessing(waitForWorkers = false) }
+        workers?.let { deadline.awaitOrForce(it, "Active scanner workers", logError) }
+        scheduler?.let { deadline.awaitOrForce(it, "Active scanner scheduler", logError) }
+        requestExecutor.shutdownNow()
+        lifecycle.shutdown()
+        deadline.awaitOrForce(lifecycle, "Active scanner lifecycle", logError)
+        listOfNotNull(workers, scheduler, lifecycle).forEach { ExtensionThreads.release(it) }
+    }
+
+    /**
+     * Runs [block] holding [lifecycleLock] when it can be taken before [deadline]; otherwise runs it
+     * anyway. At unload a toggle stop that still holds the lock must not eat the whole budget, and every
+     * step of the disable transition is safe to repeat.
+     */
+    private fun withLifecycleLockWithin(
+        deadline: ShutdownDeadline,
+        block: () -> Unit,
+    ) {
+        val locked =
+            try {
+                lifecycleLock.tryLock(deadline.remainingMs(), TimeUnit.MILLISECONDS)
+            } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+                false
             }
-        } catch (_: InterruptedException) {
-            // INTENTIONAL: thread interrupt on executor shutdown; shutdownNow() for immediate termination
-            requestExecutor.shutdownNow()
+        try {
+            block()
+        } finally {
+            if (locked) lifecycleLock.unlock()
         }
     }
+
+    /** The live worker pool, or null while the scanner is stopped. Tests only. */
+    internal fun workerPoolForTests(): ThreadPoolExecutor? = executor as? ThreadPoolExecutor
+
+    /** How many shared baselines are cached. Tests only. */
+    internal fun baselineCacheSizeForTests(): Int = baselineCache.size()
+
+    /** How many Collaborator confirmations are pending. Tests only. */
+    internal fun pendingOastCountForTests(): Int = pendingOast.size
 }
 
 /**
@@ -1732,15 +2077,12 @@ class ActiveAiScanner(
  * owns the stuck threads instead of showing an anonymous `pool-N-thread-M`. That readability is the
  * stated point of SC6; an unnamed bounded pool would satisfy the ceiling and none of the diagnosis.
  *
- * The counter is per factory instance, so each pool numbers its own threads from 1.
+ * Phase 33 / D-11: the thread helper builds the threads (`ExtensionThreads.factory("scan-request")`), the
+ * same factory the live pool gets from `ExtensionThreads.boundedPool("scan-request", ...)`. The counter
+ * is per factory instance, so each pool numbers its own threads from 1.
  *
  * Visibility: `internal` so `ScanRequestExecutorTest` can assert on the names and the daemon flag by
  * calling this directly, with no live pool and no reflection (same pattern as `buildTimeoutMessage`
  * / `CliTimeoutMessageTest`). Not part of the scanner's public surface.
  */
-internal fun scanRequestThreadFactory(): ThreadFactory {
-    val counter = AtomicInteger(0)
-    return ThreadFactory { runnable ->
-        Thread(runnable, "burp-ai-agent-scan-request-${counter.incrementAndGet()}").apply { isDaemon = true }
-    }
-}
+internal fun scanRequestThreadFactory(): ThreadFactory = ExtensionThreads.factory("scan-request")

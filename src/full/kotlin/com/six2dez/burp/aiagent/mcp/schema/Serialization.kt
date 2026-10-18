@@ -6,13 +6,17 @@ import burp.api.montoya.scanner.audit.issues.AuditIssue
 import burp.api.montoya.websocket.Direction
 import com.six2dez.burp.aiagent.mcp.tools.ResponsePreprocessor
 import com.six2dez.burp.aiagent.mcp.tools.ResponsePreprocessorSettings
+import com.six2dez.burp.aiagent.util.IssueUtils
 import kotlinx.serialization.Serializable
 
+// The extension stores issue text as escaped <br>-joined HTML. Decoding it here lets redactIfNeeded
+// redact tokens and header lines in the scanner_issues result (32-REVIEW CR-01); this text is JSON
+// for an MCP client and is never rendered as HTML.
 fun AuditIssue.toSerializableForm(): IssueDetails =
     IssueDetails(
         name = name(),
-        detail = detail(),
-        remediation = remediation(),
+        detail = detail()?.let(IssueUtils::issueDetailHtmlToText),
+        remediation = remediation()?.let(IssueUtils::issueDetailHtmlToText),
         httpService =
             HttpService(
                 host = httpService().host(),
@@ -33,8 +37,8 @@ fun AuditIssue.toSerializableForm(): IssueDetails =
         definition =
             AuditIssueDefinition(
                 id = definition().name(),
-                background = definition().background(),
-                remediation = definition().remediation(),
+                background = definition().background()?.let(IssueUtils::issueDetailHtmlToText),
+                remediation = definition().remediation()?.let(IssueUtils::issueDetailHtmlToText),
                 typeIndex = definition().typeIndex(),
             ),
     )

@@ -367,7 +367,8 @@ internal object ToolApprovalGate {
         // are not in the catalog and are untrusted by ADR-11, so every one of them prompts every time —
         // including `ext:<server>:scope_check`, which must not inherit the built-in's AUTO tier.
         if (canonical.startsWith("ext:")) return SecTier.CONFIRM_EACH
-        val descriptor = McpToolCatalog.all().firstOrNull { it.id == canonical }
+        // Phase 31 / TOOL-01: the tools this build offers, so a tier exists only for a tool that can run.
+        val descriptor = McpToolCatalog.available().firstOrNull { it.id == canonical }
         // Fail closed. D-03 removes the AUTHORING default; this is the RUNTIME fallback it does not
         // cover. An unrecognised name must never resolve to AUTO.
         return descriptor?.secTier ?: SecTier.CONFIRM_EACH

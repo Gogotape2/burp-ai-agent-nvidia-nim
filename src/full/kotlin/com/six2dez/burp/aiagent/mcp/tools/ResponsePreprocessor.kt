@@ -5,6 +5,9 @@ package com.six2dez.burp.aiagent.mcp.tools
  * Filters out binary content and truncates large responses.
  */
 object ResponsePreprocessor {
+    // Compiled once; declared first so no object initializer can read it before it exists.
+    private val HEADER_LINE_BREAK_REGEX = Regex("\\r?\\n")
+
     /**
      * Binary content type prefixes that should be filtered out
      */
@@ -83,7 +86,7 @@ object ResponsePreprocessor {
      * Extracts Content-Type header value from response headers.
      */
     fun extractContentType(headers: String): String? {
-        val lines = headers.split(Regex("\\r?\\n"))
+        val lines = headers.split(HEADER_LINE_BREAK_REGEX)
         for (line in lines) {
             if (line.startsWith("content-type:", ignoreCase = true)) {
                 val value = line.substringAfter(":", "").trim()

@@ -9,7 +9,10 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Test
 import org.mockito.Answers
 import org.mockito.kotlin.any
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
+import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
 class SettingsDefaultsPersistenceTest {
@@ -28,7 +31,9 @@ class SettingsDefaultsPersistenceTest {
 
     @Test
     fun saveAndLoad_roundTripPreservesSafetyRelevantFields() {
-        val repo = AgentSettingsRepository(apiWith(inMemoryPreferences()))
+        val preferences = inMemoryPreferences()
+        val api = apiWith(preferences)
+        val repo = AgentSettingsRepository(api)
         val defaults = repo.defaultSettings()
         val updated =
             defaults.copy(
@@ -55,8 +60,22 @@ class SettingsDefaultsPersistenceTest {
         assertEquals(updated.mcpSettings.externalEnabled, loaded.mcpSettings.externalEnabled)
         assertEquals(updated.mcpSettings.allowedOrigins, loaded.mcpSettings.allowedOrigins)
         assertEquals(updated.mcpSettings.unsafeEnabled, loaded.mcpSettings.unsafeEnabled)
-        assertEquals(updated.passiveAiEnabled, loaded.passiveAiEnabled)
-        assertEquals(updated.activeAiEnabled, loaded.activeAiEnabled)
+        assertEquals(
+            updated.passiveAiEnabled,
+            loaded.passiveAiEnabled,
+            "D-06: the same repository must report the session passive scanner value.",
+        )
+        assertEquals(
+            updated.activeAiEnabled,
+            loaded.activeAiEnabled,
+            "D-06: the same repository must report the session active scanner value.",
+        )
+        val fresh = AgentSettingsRepository(api).load()
+        assertEquals(updated.privacyMode, fresh.privacyMode, "Anti-vacuity: the other fields must persist.")
+        assertFalse(fresh.passiveAiEnabled, "D-06: a new load must start the passive scanner OFF.")
+        assertFalse(fresh.activeAiEnabled, "D-06: a new load must start the active scanner OFF.")
+        verify(preferences, never()).setBoolean(eq("passive.ai.enabled"), any())
+        verify(preferences, never()).setBoolean(eq("active.ai.enabled"), any())
     }
 
     private fun apiWith(preferences: Preferences): MontoyaApi {

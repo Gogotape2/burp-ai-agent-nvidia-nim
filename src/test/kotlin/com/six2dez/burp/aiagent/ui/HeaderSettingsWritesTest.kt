@@ -14,6 +14,7 @@ import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import org.junit.jupiter.api.AfterEach
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertTimeoutPreemptively
@@ -21,7 +22,9 @@ import org.mockito.Answers
 import org.mockito.kotlin.any
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.clearInvocations
+import org.mockito.kotlin.eq
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 import java.lang.reflect.InvocationTargetException
@@ -84,10 +87,18 @@ class HeaderSettingsWritesTest {
             repo.load().privacyMode,
             "A header toggle must not save the unsaved OFF privacy edit; only Save settings may.",
         )
-        assertEquals(target, repo.load().passiveAiEnabled, "The header toggle must save its own field.")
+        assertEquals(
+            target,
+            repo.load().passiveAiEnabled,
+            "D-06: the header toggle must be seen by every reader of the same repository for the session.",
+        )
         val reread = AgentSettingsRepository(api).load()
         assertEquals(PrivacyMode.STRICT, reread.privacyMode, "The preferences must still say STRICT.")
-        assertEquals(target, reread.passiveAiEnabled, "The preferences must hold the toggled field.")
+        assertFalse(
+            reread.passiveAiEnabled,
+            "D-06: the passive scanner switch is session-only, so a new load must start it OFF.",
+        )
+        assertNoPassiveScannerKeyWrite(api)
         onEdt { assertMarker(panel, true, "OFF is still on screen and unsaved, so the marker must stay.") }
     }
 
@@ -164,10 +175,14 @@ class HeaderSettingsWritesTest {
         settle()
 
         assertEquals(PrivacyMode.STRICT, repo.load().privacyMode, "The Save's STRICT must be kept.")
-        assertTrue(repo.load().passiveAiEnabled, "The header toggle must be kept.")
+        assertTrue(repo.load().passiveAiEnabled, "D-06: the header toggle must be kept for the session.")
         val reread = AgentSettingsRepository(api).load()
         assertEquals(PrivacyMode.STRICT, reread.privacyMode, "The preferences must say STRICT.")
-        assertTrue(reread.passiveAiEnabled, "The preferences must hold the toggle.")
+        assertFalse(
+            reread.passiveAiEnabled,
+            "D-06: the passive scanner switch is session-only, so a new load must start it OFF.",
+        )
+        assertNoPassiveScannerKeyWrite(api)
         // STRICT and the toggle are both on screen and both saved: no false marker after the race.
         onEdt { assertMarker(panel, false, "A header toggle that landed during a Save flight must leave no marker.") }
     }
@@ -191,7 +206,8 @@ class HeaderSettingsWritesTest {
         onBackgroundThread { persistHeaderChange(repo, HeaderSettingsChange.PassiveAiEnabled(true)) }
 
         onEdt { assertMarker(panel, false, "A header toggle with nothing else unsaved must leave no marker.") }
-        assertTrue(repo.load().passiveAiEnabled, "The header toggle must be saved.")
+        assertTrue(repo.load().passiveAiEnabled, "D-06: the header toggle must be seen for the session.")
+        assertNoPassiveScannerKeyWrite(api)
     }
 
     // ---------------------------------------------------------------------------------------------
@@ -199,7 +215,7 @@ class HeaderSettingsWritesTest {
     // ---------------------------------------------------------------------------------------------
 
     /**
-     * Parks the FIRST preference write made on the Settings Save worker (`burp-ai-settings-save`) once
+     * Parks the FIRST preference write made on the Settings Save worker (`burp-ai-agent-settings-save`) once
      * armed, i.e. the Save is inside `AgentSettingsRepository.save()` with nothing published yet. The arm
      * flag is consumed by compareAndSet, so no other write and no other thread ever blocks.
      */
@@ -214,6 +230,11 @@ class HeaderSettingsWritesTest {
             entered.countDown()
             check(release.await(FAILSAFE_SECONDS, TimeUnit.SECONDS)) { "The write gate was never released." }
         }
+    }
+
+    /** D-06: the stored passive.ai.enabled key is never written, so a 1.0.1 downgrade still reads it. */
+    private fun assertNoPassiveScannerKeyWrite(api: MontoyaApi) {
+        verify(api.persistence().preferences(), never()).setBoolean(eq(PASSIVE_AI_ENABLED_KEY), any())
     }
 
     /** Runs [block] on a background thread, the shape of MainTab's persist worker, then drains the EDT. */
@@ -335,6 +356,7 @@ class HeaderSettingsWritesTest {
 
     private companion object {
         const val FAILSAFE_SECONDS = 20L
-        const val SAVE_THREAD_NAME = "burp-ai-settings-save"
+        const val SAVE_THREAD_NAME = "burp-ai-agent-settings-save"
+        const val PASSIVE_AI_ENABLED_KEY = "passive.ai.enabled"
     }
 }

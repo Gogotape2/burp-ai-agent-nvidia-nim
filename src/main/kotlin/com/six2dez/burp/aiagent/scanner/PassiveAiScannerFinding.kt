@@ -167,7 +167,7 @@ internal fun PassiveAiScanner.qualifiesForIssue(
 /**
  * Everything recorded once per NEW passive issue, after it was filed (by [handleFinding] through
  * `api.siteMap().add`, or by the Burp Scanner check through its AuditResult): the counter, the Issue
- * Output line, the knowledge-base signal, the suggested-target offer to the sink and the single
+ * Output line, the knowledge-base signal, the suggested targets (core list, then plug-in sink) and the single
  * `passive_ai_issue` audit record of this file.
  */
 internal fun PassiveAiScanner.recordNewIssue(
@@ -194,7 +194,7 @@ internal fun PassiveAiScanner.recordNewIssue(
         ),
     )
 
-    // Offer the suggested active-scan targets to the installed sink, if any (D-02)
+    // Add the suggested active-scan targets to the core list, then offer them to the plug-in sink, if any
     offerSuggestedTargets(requestResponse, title, rawSeverity, detail, confidence, settings)
 
     audit.logEvent(
@@ -292,14 +292,16 @@ internal fun PassiveAiScanner.hasExistingIssue(
     )
 
 /**
- * Phase 29 / D-02: builds the suggested active-scan targets of a new finding and offers them, once, to
+ * Phase 29 / D-02, Phase 32 / D-06..D-09: builds the suggested active-scan targets of a new finding
+ * (local parsing only, no network), adds them to the core list [PassiveAiScanner.suggestedTargets] in
+ * both builds, then offers the same targets, once, to the optional plug-in sink
  * [PassiveAiScanner.suggestedTargetSink]. It replaces the 1.0.1 function that queued them to the active
  * scanner directly.
  *
- * With no sink installed (the store build) it returns before building anything. The title-to-class
- * mapping, the passive-only and scan-mode filters, the injection-point extraction and the severity
- * priority are the 1.0.1 ones. The core applies no settings gate of its own: the sink decides whether
- * anything is queued (the full build's auto-queue plug-in checks its own toggle and the active scanner).
+ * The title-to-class mapping, the passive-only and scan-mode filters, the injection-point extraction
+ * and the severity priority are the 1.0.1 ones. The core applies no settings gate of its own: the user
+ * queues list entries by hand, and the full build's auto-queue plug-in checks its own toggle and the
+ * active scanner.
  */
 internal fun PassiveAiScanner.offerSuggestedTargets(
     requestResponse: HttpRequestResponse,
@@ -309,8 +311,6 @@ internal fun PassiveAiScanner.offerSuggestedTargets(
     confidence: Int,
     settings: AgentSettings,
 ) {
-    val sink = suggestedTargetSink ?: return
-
     val vulnClass = mapTitleToVulnClass(title)
     val testable =
         vulnClass != null &&
@@ -339,7 +339,9 @@ internal fun PassiveAiScanner.offerSuggestedTargets(
                     },
             )
         }
-    if (targets.isNotEmpty()) sink.offer(targets, settings)
+    if (targets.isEmpty()) return
+    suggestedTargets.addAll(targets)
+    suggestedTargetSink?.offer(targets, settings)
 }
 
 internal fun PassiveAiScanner.mapTitleToVulnClass(title: String): VulnClass? {

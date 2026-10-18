@@ -2,7 +2,9 @@ package com.six2dez.burp.aiagent.backends
 
 import burp.api.montoya.MontoyaApi
 import burp.api.montoya.logging.Logging
+import com.six2dez.burp.aiagent.backends.http.AiAccessRefusedException
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
+import com.six2dez.burp.aiagent.backends.http.TestTransports
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.McpSettings
 import com.six2dez.burp.aiagent.config.SeverityLevel
@@ -10,7 +12,7 @@ import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.scanner.PayloadRisk
 import com.six2dez.burp.aiagent.scanner.ScanMode
 import org.junit.jupiter.api.Assertions.assertEquals
-import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito
@@ -97,13 +99,14 @@ class BackendRegistryTest {
     fun setHttpTransport_survivesReload() {
         // Quick 261008-kw4 / BUG-69-01: Settings save calls reload(), which recreates every
         // backend. The registry must re-apply Burp's transport so health checks keep using it.
+        // Phase 31 / GATE-01: each backend receives a view bound by core to its own id.
         val registry = createRegistry()
-        val transport = MontoyaHttpTransport(mock<MontoyaApi>(defaultAnswer = Mockito.RETURNS_DEEP_STUBS))
+        val transport = MontoyaHttpTransport(mock<MontoyaApi>(defaultAnswer = Mockito.RETURNS_DEEP_STUBS), TestTransports.ALLOW_ALL)
         registry.setHttpTransport(transport)
+        assertEveryAwareBackendIsBoundToItsOwnId(registry, "after setHttpTransport")
         registry.reload()
+        assertEveryAwareBackendIsBoundToItsOwnId(registry, "after reload")
 
-        val aware = registry.listAllBackendIds().mapNotNull { registry.get(it) as? HttpTransportAware }
-        aware.forEach { assertSame(transport, it.healthCheckTransport(), "transport lost after reload") }
         val awareIds = registry.listAllBackendIds().filter { registry.get(it) is HttpTransportAware }.toSet()
         assertTrue(
             awareIds.containsAll(setOf("nvidia-nim", "perplexity", "openai-compatible", "lmstudio", "ollama")),
@@ -112,12 +115,33 @@ class BackendRegistryTest {
     }
 
     @Test
-    fun setHttpTransport_appliesToExistingInstancesWithoutReload() {
+    fun setHttpTransport_refusingRootRefusesThroughEveryBoundCopy() {
         val registry = createRegistry()
         val nim = registry.get("nvidia-nim") as HttpTransportAware
-        val transport = MontoyaHttpTransport(mock<MontoyaApi>(defaultAnswer = Mockito.RETURNS_DEEP_STUBS))
-        registry.setHttpTransport(transport)
-        assertSame(transport, nim.healthCheckTransport())
+        val refusal = "refused by the test gate"
+        val root = MontoyaHttpTransport(mock<MontoyaApi>(defaultAnswer = Mockito.RETURNS_DEEP_STUBS)) { refusal }
+        registry.setHttpTransport(root)
+
+        assertEquals("nvidia-nim", nim.healthCheckTransport()?.boundBackendId, "applies to existing instances without reload")
+        val aware = registry.listAllBackendIds().mapNotNull { registry.get(it) as? HttpTransportAware }
+        assertTrue(aware.isNotEmpty())
+        aware.forEach { backend ->
+            val copy = checkNotNull(backend.healthCheckTransport()) { "${backend.javaClass.simpleName} has no transport" }
+            val thrown = assertThrows(AiAccessRefusedException::class.java) { copy.requireEgress() }
+            assertEquals(refusal, thrown.message)
+        }
+    }
+
+    private fun assertEveryAwareBackendIsBoundToItsOwnId(
+        registry: BackendRegistry,
+        stage: String,
+    ) {
+        val ids = registry.listAllBackendIds().filter { registry.get(it) is HttpTransportAware }
+        assertTrue(ids.isNotEmpty())
+        ids.forEach { id ->
+            val bound = (registry.get(id) as HttpTransportAware).healthCheckTransport()
+            assertEquals(id, bound?.boundBackendId, "$id must hold a transport bound to its own id $stage")
+        }
     }
 
     private fun createRegistry(): BackendRegistry {

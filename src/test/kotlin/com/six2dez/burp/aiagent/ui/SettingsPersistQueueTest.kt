@@ -113,7 +113,7 @@ class SettingsPersistQueueTest {
                     "the whole bounded ten-second MCP stop on the EDT.",
             )
             assertEquals(
-                listOf("burp-ai-settings-sync"),
+                listOf("burp-ai-agent-settings-sync"),
                 workerThread.toList(),
                 "SC4: the persist body must run on the named daemon worker, not the caller's thread.",
             )
@@ -289,7 +289,7 @@ class SettingsPersistQueueTest {
     /**
      * T-23-06-05 — `dispose()` stops new work and never blocks its caller.
      *
-     * `MainTab.shutdown()` calls it from the EDT while a worker may be inside a bounded ten-second
+     * `MainTab.quiesce()` calls it on the unload path while a worker may be inside a bounded ten-second
      * `mcpSupervisor.applySettings`. A `dispose()` that took the queue's lock would block there for the
      * whole wait, reintroducing at unload the exact freeze this class removes — and would fail this
      * test as a deadlock rather than as an assertion.
@@ -339,7 +339,7 @@ class SettingsPersistQueueTest {
                 listOf("held"),
                 appliedIds.toList(),
                 "T-23-06-05: a write submitted after dispose() must never reach its apply body, so no " +
-                    "settings write can start after MainTab.shutdown() has run.",
+                    "settings write can start after MainTab.quiesce() has run.",
             )
         }
     }
@@ -497,6 +497,80 @@ class SettingsPersistQueueTest {
         )
     }
 
+    /**
+     * Phase 31 / D-09, D-11, T-31-11 — the status-pill health timer exists only when the injected
+     * policy allows unprompted checks, so an idle BApp Store build has no timer and no health tick.
+     *
+     * Structural for the reason above (a real `MainTab` cannot be built headlessly). On MainTab's
+     * comment-stripped code: the timer is constructed exactly once, inside
+     * `startUnpromptedHealthTimerIfAllowed`, whose first statement is the policy guard, and the two
+     * unprompted trigger names occur nowhere else, so no other path can start a STARTUP or PERIODIC
+     * check.
+     */
+    @Test
+    fun theHealthTimerExistsOnlyWhenThePolicyAllowsUnpromptedChecks() {
+        val code = codeLinesOf(MAIN_TAB_SOURCE)
+        val source = code.joinToString("\n")
+        val body = functionBodyOf(source, "private fun startUnpromptedHealthTimerIfAllowed(")
+
+        val timerToken = "Timer(Defaults.LOCAL_BACKEND_HEALTH_POLL_INTERVAL_MS"
+        assertEquals(1, code.count { it.contains(timerToken) }, "MainTab must construct the health timer exactly once.")
+        assertTrue(body.contains(timerToken), "The health timer must be constructed inside startUnpromptedHealthTimerIfAllowed.")
+        assertTrue(
+            body.removePrefix("{").trimStart().startsWith("if (!supervisor.allowsUnpromptedHealthChecks()) return"),
+            "startUnpromptedHealthTimerIfAllowed must start with the allowsUnpromptedHealthChecks guard; body:\n$body",
+        )
+        listOf("HealthCheckTrigger.STARTUP", "HealthCheckTrigger.PERIODIC").forEach { trigger ->
+            assertEquals(
+                occurrencesOf(body, trigger),
+                occurrencesOf(source, trigger),
+                "$trigger may occur only inside startUnpromptedHealthTimerIfAllowed.",
+            )
+            assertTrue(body.contains(trigger), "$trigger must still be raised by the timer body.")
+        }
+        assertEquals(
+            1,
+            code.count { it.contains("startUnpromptedHealthTimerIfAllowed()") && !it.contains("private fun") },
+            "startUnpromptedHealthTimerIfAllowed must be called exactly once, where the timer used to be created.",
+        )
+        val request = functionBodyOf(source, "private fun requestHealthCheck(")
+        assertTrue(
+            request.contains("supervisor.allowsUnpromptedHealthChecks()"),
+            "requestHealthCheck must pass the policy's answer to BackendHealthPolicy.shouldRun.",
+        )
+    }
+
+    /**
+     * Phase 31 / D-01, D-10, T-31-13 — the pill reports "AI disabled in Burp" from a LOCAL policy read
+     * and refreshing it sends nothing.
+     *
+     * `requestHealthCheck` asks `supervisor.aiAccessRefusal(` before it can reach `healthGate.submit`,
+     * so a refused backend paints the disabled state and submits no check. `updateBackendBadge`, which
+     * the existing 1 Hz `mcpStatusTimer` calls, re-reads the policy and names no health check at all
+     * (Research OQ4: a local re-read is acceptable only because it sends no request).
+     */
+    @Test
+    fun thePillRefusalIsLocalAndTheBadgeRefreshSendsNothing() {
+        val source = codeLinesOf(MAIN_TAB_SOURCE).joinToString("\n")
+
+        val request = functionBodyOf(source, "private fun requestHealthCheck(")
+        val refusalAt = request.indexOf("supervisor.aiAccessRefusal(")
+        val submitAt = request.indexOf("healthGate.submit")
+        assertTrue(refusalAt >= 0, "requestHealthCheck must ask supervisor.aiAccessRefusal( first.")
+        assertTrue(submitAt >= 0, "requestHealthCheck must still submit through healthGate.")
+        assertTrue(refusalAt < submitAt, "requestHealthCheck must ask the policy before healthGate.submit.")
+        assertTrue(
+            request.indexOf("renderAiDisabled(") in (refusalAt + 1) until submitAt,
+            "A refusal must paint the disabled pill before (instead of) any submit.",
+        )
+
+        val badge = functionBodyOf(source, "private fun updateBackendBadge(")
+        assertTrue(badge.contains("supervisor.aiAccessRefusal("), "updateBackendBadge must re-read the policy locally; body:\n$badge")
+        listOf("requestHealthCheck(", "healthGate.", "backendHealth(", "healthCheck(").forEach { token ->
+            assertFalse(badge.contains(token), "updateBackendBadge must never name `$token`: it runs every second.")
+        }
+    }
+
     // ---------------------------------------------------------------------------------------------
     // Fixture
     // ---------------------------------------------------------------------------------------------
@@ -556,6 +630,20 @@ class SettingsPersistQueueTest {
             index++
         }
         error("Unbalanced braces after `$signature`.")
+    }
+
+    /** How many times [needle] occurs in [haystack] (non-overlapping). */
+    private fun occurrencesOf(
+        haystack: String,
+        needle: String,
+    ): Int {
+        var count = 0
+        var index = haystack.indexOf(needle)
+        while (index >= 0) {
+            count++
+            index = haystack.indexOf(needle, index + needle.length)
+        }
+        return count
     }
 
     private companion object {

@@ -2,6 +2,7 @@ package com.six2dez.burp.aiagent.mcp.tools
 
 import com.six2dez.burp.aiagent.audit.AuditLogger
 import com.six2dez.burp.aiagent.audit.Hashing
+import com.six2dez.burp.aiagent.backends.http.AiAccessRefusedException
 import com.six2dez.burp.aiagent.mcp.McpToolContext
 import io.modelcontextprotocol.kotlin.sdk.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.TextContent
@@ -13,6 +14,8 @@ private const val MCP_TOOL_EVENT_BLOCKED = "mcp_tool_blocked"
 private val unixAbsPathRegex = Regex("""/(?:Users|home|var|tmp|opt|etc|private|Library|Applications)(?:/[^\s:]+)+""")
 private val windowsAbsPathRegex = Regex("""[A-Za-z]:\\(?:[^\\\s:]+\\)*[^\\\s:]*""")
 private val packageClassRegex = Regex("""\b(?:[a-z_][a-z0-9_]*\.){2,}[A-Za-z_][A-Za-z0-9_$]*\b""")
+private val REQUIRED_FIELD_REGEX = Regex("Field '([^']+)' is required")
+private val WHITESPACE_RUN_REGEX = Regex("\\s+")
 
 interface Paginated {
     val count: Int
@@ -86,7 +89,7 @@ internal fun runTool(
     } catch (e: kotlinx.serialization.SerializationException) {
         // Extract missing field from the error message for a cleaner message
         val msg = e.message.orEmpty()
-        val fieldMatch = Regex("Field '([^']+)' is required").find(msg)
+        val fieldMatch = REQUIRED_FIELD_REGEX.find(msg)
         val cleanMsg =
             if (fieldMatch != null) {
                 "Missing required parameter: ${fieldMatch.groupValues[1]}"
@@ -104,6 +107,22 @@ internal fun runTool(
         )
         CallToolResult(
             content = listOf(TextContent(cleanMsg)),
+            isError = true,
+        )
+    } catch (e: AiAccessRefusedException) {
+        // Phase 31 / D-03: a policy outcome, not a failure. The text is the policy's own user-facing
+        // refusal, so it is returned verbatim (no sanitizing, no truncation) and no stack trace is logged.
+        emitToolTelemetry(
+            MCP_TOOL_EVENT_END,
+            baseTelemetry +
+                mapOf(
+                    "outcome" to "refused",
+                    "errorType" to "ai_access_refused",
+                    "durationMs" to elapsedMs(startedAtNanos),
+                ),
+        )
+        CallToolResult(
+            content = listOf(TextContent(e.message.orEmpty())),
             isError = true,
         )
     } catch (e: Exception) {
@@ -141,7 +160,7 @@ private fun sanitizeErrorMessage(e: Exception): String {
     message = unixAbsPathRegex.replace(message, "[path]")
     message = windowsAbsPathRegex.replace(message, "[path]")
     message = packageClassRegex.replace(message, "[internal]")
-    message = message.replace(Regex("\\s+"), " ").trim()
+    message = message.replace(WHITESPACE_RUN_REGEX, " ").trim()
     if (message.isBlank()) {
         message = "Unexpected MCP tool error"
     }

@@ -41,11 +41,19 @@ class AiPassiveScanCheck(
      *     lookup) or when the request is out of scope while scope-only is set.
      *  2. Run fast local heuristics via passiveScanner.localChecks().
      *  3. Convert each LocalFinding to an AuditIssue named passiveScanner.issueNameForPassive(title),
-     *     the name the AI passive scanner gives it, so each local finding is filed once.
+     *     the name the AI passive scanner gives it, so each local finding is filed once. The issue
+     *     detail is HTML-escaped and <br>-joined through IssueUtils.formatIssueDetailHtml (Phase 32
+     *     D-11): a local finding can carry a target-supplied value (an upload filename, a
+     *     Content-Length value), which must show in Burp as literal text.
      *  4. Record the findings' side effects (audit record, counter, knowledge-base signal, findings
-     *     buffer, auto-queue) via passiveScanner.recordScanCheckFindings() before returning.
+     *     buffer, suggested targets (the core list, plus the full build's plug-in sink when
+     *     installed)) via passiveScanner.recordScanCheckFindings() before returning. These use the
+     *     raw finding text, not the escaped issue detail. Recorded whatever the AI gate says, as long
+     *     as the scanner is on and the token budget is not paused (Phase 31 gap closure WR-02): the
+     *     local heuristics send no AI request.
      *  5. Enqueue async AI deep-analysis via passiveScanner.enqueueForScanCheck(); it does not file
-     *     the local findings again but still uses them to decide whether to skip the AI call.
+     *     the local findings again but still uses them to decide whether to skip the AI call. The
+     *     enqueued analysis is skipped while the AI access policy refuses the saved backend (D-02).
      *
      * MUST NOT call supervisor.send() or any blocking AI operation.
      */
@@ -72,7 +80,7 @@ class AiPassiveScanCheck(
             localFindings.map { finding ->
                 AuditIssue.auditIssue(
                     passiveScanner.issueNameForPassive(finding.title),
-                    finding.detail,
+                    IssueUtils.formatIssueDetailHtml(finding.detail.lines()),
                     "Verify the finding manually or use AI Active Scanner for confirmation.",
                     request.url(),
                     mapSeverity(finding.severity),

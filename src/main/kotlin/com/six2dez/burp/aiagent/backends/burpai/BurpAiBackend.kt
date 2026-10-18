@@ -8,9 +8,11 @@ import com.six2dez.burp.aiagent.backends.AiBackend
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.ChatMessage
 import com.six2dez.burp.aiagent.backends.HealthCheckResult
+import com.six2dez.burp.aiagent.backends.http.AiAccessRefusedException
+import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
 import com.six2dez.burp.aiagent.config.AgentSettings
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
 class BurpAiBackend(
@@ -44,15 +46,23 @@ class BurpAiBackend(
         }
 }
 
+/**
+ * Phase 31 / GATE-01 (RESEARCH Pattern 2): Burp AI sends no HTTP request, so it asks the same egress
+ * gate itself. Before every `api.ai().prompt().execute`, the worker calls `requireEgress()` on the
+ * transport core bound to `burp-ai` (`config.transport`); a connection launched without a transport
+ * refuses every prompt with [MontoyaHttpTransport.UNBOUND_REFUSAL]. For the id `burp-ai` both flavor
+ * policies reduce to "refused exactly when `api.ai().isEnabled()` is false".
+ */
 private class BurpAiConnection(
     private val api: MontoyaApi,
     private val config: BackendLaunchConfig,
 ) : AgentConnection {
     private val alive = AtomicBoolean(true)
+
+    // Phase 33 / D-11: a fixed label. The chat session id is user-correlated data and must never reach
+    // a thread dump, so the worker is burp-ai-agent-burp-ai-connection for every session.
     private val exec: ExecutorService =
-        Executors.newSingleThreadExecutor { r ->
-            Thread(r, "burp-ai-${config.sessionId}").apply { isDaemon = true }
-        }
+        ExtensionThreads.singleThread("burp-ai-connection")
     private val promptOptions =
         PromptOptions
             .promptOptions()
@@ -76,6 +86,7 @@ private class BurpAiConnection(
         try {
             exec.submit {
                 try {
+                    requireEgress()
                     val messages = buildMessages(text, history, systemPrompt, jsonMode)
                     val response = api.ai().prompt().execute(promptOptions, *messages.toTypedArray())
                     val content = response.content() ?: ""
@@ -90,6 +101,12 @@ private class BurpAiConnection(
         } catch (e: java.util.concurrent.RejectedExecutionException) {
             onComplete(IllegalStateException("Burp AI connection is closed"))
         }
+    }
+
+    // Fail closed: no bound transport means no gate to ask, so the prompt is refused.
+    private fun requireEgress() {
+        val transport = config.transport ?: throw AiAccessRefusedException(MontoyaHttpTransport.UNBOUND_REFUSAL)
+        transport.requireEgress()
     }
 
     override fun stop() {

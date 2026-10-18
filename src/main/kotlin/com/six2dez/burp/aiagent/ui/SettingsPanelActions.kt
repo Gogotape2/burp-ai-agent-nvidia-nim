@@ -20,7 +20,6 @@ import javax.swing.JLabel
 import javax.swing.JOptionPane
 import javax.swing.JPanel
 import javax.swing.JTextField
-import javax.swing.SwingUtilities
 import javax.swing.border.LineBorder
 
 internal fun SettingsPanel.refreshProfileOptions() {
@@ -193,16 +192,21 @@ fun SettingsPanel.setPassiveAiEnabled(enabled: Boolean) {
     applyPassiveAiSettings()
 }
 
+/**
+ * The header toggle's path (MainTab). Phase 33 / D-04, EDT-01: like a click on the Settings toggle,
+ * it hands the start or stop to the scanner's lifecycle thread and returns at once on the EDT.
+ */
 fun SettingsPanel.setActiveAiEnabled(enabled: Boolean) {
     activeAiEnabled.isSelected = enabled
-    applyActiveAiSettings()
+    applyActiveAiTunables()
+    applyActiveAiEnabled()
     updatePrivacyWarnings()
 }
 
 /**
- * Teardown hook for the Settings panel, reached from `MainTab.shutdown()` — which `App.shutdown()`
- * calls FIRST, before `passiveAiScanner.shutdown()`, `activeAiScanner.shutdown()` and
- * `mcpSupervisor.shutdown()`.
+ * Teardown hook for the Settings panel, reached from `MainTab.quiesce()` — which `App.shutdown()`
+ * calls FIRST, before `mcpSupervisor.shutdown(deadline)`, `passiveAiScanner.shutdown(deadline)` and
+ * `activeAiScanner.shutdown(deadline)`.
  *
  * The first two statements supersede any `burp-ai-settings-save` worker still in flight (CR-01), so it
  * cannot restart the MCP server or re-enable a scanner after `App.shutdown()` has torn them down. See
@@ -269,11 +273,36 @@ internal fun SettingsPanel.privacySection(): JPanel =
         patternsFeedback = patternsFeedbackLabel,
     ).build()
 
+/**
+ * Phase 31 / D-12: Test connection is a provider request; in the store build it is refused while Use AI
+ * is off, and the GATE-01 choke point stays the backstop. The policy judges the resolved backend, so an
+ * unregistered saved id (a CLI id carried over from a full install) is judged as burp-ai.
+ */
+internal fun SettingsPanel.connectionTestRefusal(backendId: String): String? = supervisor.aiAccessRefusal(backends.resolve(backendId))
+
 internal fun SettingsPanel.testBackendConnection(backendId: String) {
+    // D-12: asked on the EDT before any thread or request; a refusal shows the policy's own text.
+    val refusal = connectionTestRefusal(backendId)
+    if (refusal != null) {
+        JOptionPane.showMessageDialog(
+            dialogParentComponent(),
+            refusal,
+            "Backend health: $backendId",
+            JOptionPane.ERROR_MESSAGE,
+        )
+        return
+    }
     val settingsSnapshot = currentSettings()
-    Thread {
-        val result = backends.healthCheck(backendId, settingsSnapshot)
-        SwingUtilities.invokeLater {
+    // Phase 33 / D-11, LIFE-03, EDT-01: the check runs on the named daemon worker (a bare Thread here
+    // inherited the EDT's non-daemon flag and could hold extension unload open); the result comes back
+    // through OffEdtDispatch's single invokeLater.
+    OffEdtDispatch.run(
+        threadName = "burp-ai-agent-test-connection",
+        label = "test connection $backendId",
+        logError = { api.logging().logToError(it) },
+        work = { backends.healthCheck(backendId, settingsSnapshot) },
+        onEdt = { outcome ->
+            val result = outcome.getOrElse { HealthCheckResult.Unavailable(it.message ?: "Health check failed") }
             val title = "Backend health: $backendId"
             when (result) {
                 is HealthCheckResult.Healthy ->
@@ -305,8 +334,8 @@ internal fun SettingsPanel.testBackendConnection(backendId: String) {
                         JOptionPane.INFORMATION_MESSAGE,
                     )
             }
-        }
-    }.start()
+        },
+    )
 }
 
 internal fun SettingsPanel.promptSection(): JPanel =

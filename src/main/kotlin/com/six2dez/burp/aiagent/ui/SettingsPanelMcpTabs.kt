@@ -59,7 +59,8 @@ internal fun SettingsPanel.mcpSection(): JPanel {
             mcpProxyHistoryMaxItems = mcpProxyHistoryMaxItems,
             mcpProxyHistorySortOrder = mcpProxyHistorySortOrder,
             mcpAllowUnpreprocessedProxyHistory = mcpAllowUnpreprocessedProxyHistory,
-            mcpUnsafe = mcpUnsafe,
+            // Phase 31 / D-13: the switch and its "No unsafe tools in this build" note share one cell.
+            mcpUnsafe = unsafeSwitchRow(),
             preprocessProxyHistory = preprocessProxyHistory,
             preprocessMaxResponseSizeKb = preprocessMaxResponseSizeKb,
             preprocessFilterBinaryContent = preprocessFilterBinaryContent,
@@ -82,6 +83,19 @@ internal fun SettingsPanel.mcpSection(): JPanel {
         contributedComponents(SettingsSlot.MCP_TAB).forEach { add(it) }
     }
 }
+
+/**
+ * Phase 31 / D-13: the Unsafe mode cell, holding the switch and [SettingsPanel.mcpUnsafeNote]. The note
+ * is hidden unless the loaded catalog has no unsafe tool, so the full build's cell looks as in 1.0.1.
+ */
+private fun SettingsPanel.unsafeSwitchRow(): JPanel =
+    JPanel().apply {
+        layout = BoxLayout(this, BoxLayout.X_AXIS)
+        isOpaque = false
+        add(mcpUnsafe)
+        add(Box.createHorizontalStrut(DesignTokens.Spacing.sm))
+        add(mcpUnsafeNote)
+    }
 
 internal fun SettingsPanel.tokenPanel(): JPanel {
     val panel = JPanel()
@@ -613,7 +627,8 @@ private data class McpNoticeItem(
 private fun SettingsPanel.mcpNoticeItems(): List<McpNoticeItem> {
     val selectedPrivacy = privacyMode.selectedItem as? PrivacyMode ?: PrivacyMode.STRICT
     val external = mcpExternal.isSelected
-    val unsafeEnabled = mcpUnsafe.isSelected
+    // Phase 31 / D-13 / Pitfall 8: a carried-over Unsafe value means nothing without unsafe tools.
+    val unsafeEnabled = mcpUnsafe.isSelected && McpToolCatalog.hasUnsafeTools()
     val tokenBlank = mcpToken.text.trim().isBlank()
     val hasAllowedOrigins = parseAllowedOriginsInput(mcpAllowedOrigins.text).isNotEmpty()
 

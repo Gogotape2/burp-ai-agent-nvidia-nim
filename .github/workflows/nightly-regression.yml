@@ -27,7 +27,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v6
 
       - name: Run nightly regression suites
-        run: ./gradlew test nightlyRegressionTest nightlyRegressionFullTest edtGuardWithoutAssertionsTest fullJar bappJar storeJarContentTest --no-daemon
+        run: ./gradlew test nightlyRegressionTest nightlyRegressionFullTest edtGuardWithoutAssertionsTest unloadLeakTest fullJar bappJar storeJarContentTest --no-daemon
 
       - name: Upload regression reports
         if: always()

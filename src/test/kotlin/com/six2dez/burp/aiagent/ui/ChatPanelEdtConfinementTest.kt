@@ -118,8 +118,9 @@ class ChatPanelEdtConfinementTest {
                 "and the whole Burp UI freezes for as long as the call runs there.",
         )
         assertTrue(captured.isDaemon, "E9/D-08: a non-daemon worker can hold extension unload open.")
-        assertTrue(
-            captured.name.startsWith("burp-ai-tool"),
+        assertEquals(
+            "burp-ai-agent-tool-exec",
+            captured.name,
             "E9: a stuck worker must be identifiable in a thread dump. Thread name was '${captured.name}'.",
         )
     }
@@ -1021,7 +1022,8 @@ class ChatPanelEdtConfinementTest {
             OFF_EDT_DISPATCH_SITES,
             lambdas.size,
             "Expected $OFF_EDT_DISPATCH_SITES OffEdtDispatch.run call sites in ChatPanel.kt (the " +
-                "auto-chain step, the tool dialog and the /tool command). Finding a different number " +
+                "auto-chain step, the tool dialog, the /tool command and the chat-send readiness probe). " +
+                "Finding a different number " +
                 "means either a new off-EDT path exists that this assertion has not inspected, or the " +
                 "extraction is stale and the assertion below is inspecting nothing.",
         )
@@ -2061,7 +2063,7 @@ private const val BUSY_STATE_ENTRY = "setSendingState(true)"
 /**
  * The number of busy-state entries in `ChatPanel.kt`, and the ledger of what each one is for.
  *
- * **Four, measured at source, and every one is accounted for:**
+ * **Five, measured at source, and every one is accounted for:**
  *
  * - `sendMessage` — the ordinary chat send. The panel goes busy for the model request itself.
  * - `openToolDialog` — user-originated tool invocation via the dialog. Rule S-3, dialog path; the
@@ -2076,12 +2078,18 @@ private const val BUSY_STATE_ENTRY = "setSendingState(true)"
  * Sites are named by FUNCTION, not by line: line citations in this repo have rotted twice (WINDOWS.md
  * entry 34), and a function name survives every edit that does not actually move the call.
  *
- * A bare number with no reason is not evidence. A number that fails loudly when someone adds an
- * unexplained send path is. If a fifth appears, its line goes here:
+ * - `probeThenSend` (Phase 33 / EDT-01, plan 33-08) — `sendMessage`'s Ollama / LM Studio pre-send
+ *   probe runs on `burp-ai-agent-chat-readiness`, so the panel goes busy BEFORE the dispatch: Send
+ *   hidden and input disabled, so a second click or Enter cannot start a second probe or turn. Its
+ *   ordering is asserted behaviourally, while the probe is blocked, by
+ *   `ChatSendOffEdtTest.aSecondSendClickOrEnterDuringTheProbeStartsNothing`.
  *
- * - `5`: _which function, and why that path needs its own busy-state entry_
+ * A bare number with no reason is not evidence. A number that fails loudly when someone adds an
+ * unexplained send path is. If a sixth appears, its line goes here:
+ *
+ * - `6`: _which function, and why that path needs its own busy-state entry_
  */
-private const val CHAT_PANEL_BUSY_STATE_ENTRIES = 4
+private const val CHAT_PANEL_BUSY_STATE_ENTRIES = 5
 
 /**
  * Asserts [earlier] precedes [later] in the body of [declaration], and that each occurs exactly once.
@@ -2130,8 +2138,12 @@ private fun assertPrecedesWithin(
 private val GUARDED_SESSION_MAPS =
     listOf("sessionPanels", "sessionStates", "sessionsById", "sessionDrafts", "pendingDecisions")
 
-/** The auto-chain step, the tool dialog and the `/tool` command — D-01's three call sites. */
-private const val OFF_EDT_DISPATCH_SITES = 3
+/**
+ * The auto-chain step, the tool dialog and the `/tool` command (D-01's three call sites), plus the
+ * chat-send readiness probe in `probeThenSend` (Phase 33 / EDT-01, plan 33-08), whose worker reads only
+ * the `ChatBackendReadiness` it was given.
+ */
+private const val OFF_EDT_DISPATCH_SITES = 4
 
 /**
  * The `work = { … }` argument of every `OffEdtDispatch.run(…)` call in `ChatPanel.kt`.

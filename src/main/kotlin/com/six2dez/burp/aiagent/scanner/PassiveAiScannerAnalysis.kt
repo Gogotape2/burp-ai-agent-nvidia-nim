@@ -8,6 +8,7 @@ import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.redact.Redaction
 import com.six2dez.burp.aiagent.redact.RedactionPolicy
 import com.six2dez.burp.aiagent.redact.SecretTripwire
+import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.util.BudgetGuard
 import com.six2dez.burp.aiagent.util.TokenTracker
 import java.net.URI
@@ -29,6 +30,9 @@ private const val RESPONSE_BODY_LOCAL_CHECK_MAX_CHARS = 6_000
 // JS discovery limits (companion-private; redeclared for extension use)
 private const val JS_MIN_BODY_FOR_EXTRACTION = 100
 private const val JS_ENDPOINTS_LOG_MAX = 10
+
+// Phase 34 / D-02: how long a passive item waits for a backend start already in progress.
+private const val BACKEND_READY_WAIT_MS = 10_000L
 
 // (PRIV-05) W-01: how many cookie entries the prompt surfaces. SIX is the INTENDED value; the
 // SHIPPED value is that literal clamped to Redaction.MAX_COOKIE_SECTION_LINES, because the redactor
@@ -76,37 +80,40 @@ internal fun PassiveAiScanner.ensureBackendRunning(settings: AgentSettings): Boo
     api.logging().logToOutput("[PassiveAiScanner] $action backend: $targetBackend (current=${currentBackend ?: "none"})")
     val started = supervisor.startOrAttach(targetBackend)
     if (started) {
-        val ready = waitForBackendSession(maxWaitMs = 10_000L, pollMs = 200L)
-        if (ready) {
+        // Phase 34 / D-01: startOrAttach is synchronous, so a true answer needs no wait.
+        if (supervisor.currentSessionId() != null) {
             api.logging().logToOutput("[PassiveAiScanner] Backend ready: $targetBackend")
             return true
         }
         api.logging().logToError("[PassiveAiScanner] Backend started but session did not become ready in time")
     } else {
-        val error = supervisor.lastStartError()
-        api.logging().logToError("[PassiveAiScanner] Failed to start backend: $error")
+        awaitStartInProgressAndLog(targetBackend)
     }
 
     return supervisor.currentSessionId() != null && supervisor.status().backendId == targetBackend
 }
 
-internal fun PassiveAiScanner.waitForBackendSession(
-    maxWaitMs: Long,
-    pollMs: Long,
-): Boolean {
-    val deadline = System.currentTimeMillis() + maxWaitMs.coerceAtLeast(0L)
-    while (System.currentTimeMillis() < deadline) {
-        if (supervisor.currentSessionId() != null) {
-            return true
+/**
+ * Phase 34 / D-01..D-03: after a refused start, waits on the ready signal of a start another thread
+ * already has in progress (at most [BACKEND_READY_WAIT_MS], ended at once by unload) instead of polling.
+ * A timeout drops the item with one Error line and the next item tries again; an unload or an
+ * interrupt ends quietly (Phase 33 D-09).
+ */
+private fun PassiveAiScanner.awaitStartInProgressAndLog(targetBackend: String) {
+    when (supervisor.awaitStartInProgress(BACKEND_READY_WAIT_MS)) {
+        null, AgentSupervisor.StartWait.FAILED -> {
+            val error = supervisor.lastStartError()
+            api.logging().logToError("[PassiveAiScanner] Failed to start backend: $error")
         }
-        try {
-            Thread.sleep(pollMs.coerceAtLeast(1L))
-        } catch (_: InterruptedException) {
-            Thread.currentThread().interrupt()
-            return false
+        AgentSupervisor.StartWait.READY -> {
+            if (supervisor.currentSessionId() != null && supervisor.status().backendId == targetBackend) {
+                api.logging().logToOutput("[PassiveAiScanner] Backend ready: $targetBackend")
+            }
         }
+        AgentSupervisor.StartWait.TIMEOUT ->
+            api.logging().logToError("[PassiveAiScanner] Backend startup in progress did not finish in time")
+        AgentSupervisor.StartWait.UNLOADING, AgentSupervisor.StartWait.INTERRUPTED -> Unit
     }
-    return supervisor.currentSessionId() != null
 }
 
 // ---- JS endpoint extraction ----
@@ -270,6 +277,9 @@ internal fun PassiveAiScanner.doAnalysis(requestResponse: HttpRequestResponse) {
             lastAnalysisTime.set(System.currentTimeMillis())
             return
         }
+
+        // Phase 33 / SC3: once unload began, no backend start and no provider request.
+        if (shuttingDown) return
 
         // Ensure backend is running for AI analysis
         if (!ensureBackendRunning(settings)) {
@@ -467,6 +477,9 @@ internal fun PassiveAiScanner.doAnalysis(requestResponse: HttpRequestResponse) {
             return
         }
 
+        // Phase 33 / SC3: checked again, because the backend check above can outlast the start of unload.
+        if (shuttingDown) return
+
         // Single-request mode: send directly to AI backend
         val responseBuffer = StringBuilder()
         val completionLatch = CountDownLatch(1)
@@ -605,6 +618,9 @@ internal fun PassiveAiScanner.doAnalysis(requestResponse: HttpRequestResponse) {
                 "responseChars" to responseBuffer.length.toString(),
             ),
         )
+    } catch (_: InterruptedException) {
+        // Phase 33 / SC3: unload interrupted the analysis (shutdownNow). Keep the flag; write nothing.
+        Thread.currentThread().interrupt()
     } catch (e: Exception) {
         api.logging().logToError("[PassiveAiScanner] Error: ${e.javaClass.simpleName}: ${e.message}")
     }
@@ -613,6 +629,8 @@ internal fun PassiveAiScanner.doAnalysis(requestResponse: HttpRequestResponse) {
 // ---- batch + single-send ----
 
 internal fun PassiveAiScanner.flushBatch(settings: AgentSettings) {
+    // Phase 33 / SC3: once unload began, nothing is drained and nothing is sent.
+    if (shuttingDown) return
     val batch = batchQueue.drain()
     if (batch.isEmpty()) return
 
@@ -635,6 +653,8 @@ internal fun PassiveAiScanner.flushBatch(settings: AgentSettings) {
         fallbackToIndividualAnalysis(batch, settings)
         return
     }
+    // Phase 33 / SC3: checked again, because the backend check above can outlast the start of unload.
+    if (shuttingDown) return
 
     val responseBuffer = StringBuilder()
     val completionLatch = CountDownLatch(1)
@@ -716,6 +736,10 @@ internal fun PassiveAiScanner.fallbackToIndividualAnalysis(
         try {
             val prompt = buildAnalysisPrompt(item.metadata, item.minSeverity)
             sendSingleAnalysis(prompt, item.requestResponse, item.minSeverity, settings)
+        } catch (_: InterruptedException) {
+            // Phase 33 / SC3: unload interrupted this send. Keep the flag and send nothing more.
+            Thread.currentThread().interrupt()
+            return
         } catch (e: Exception) {
             api.logging().logToError("[PassiveAiScanner] Individual fallback failed for ${item.host}: ${e.message}")
             requestsAnalyzed.incrementAndGet()
@@ -729,7 +753,10 @@ internal fun PassiveAiScanner.sendSingleAnalysis(
     minSeverity: String,
     settings: AgentSettings,
 ) {
-    if (!ensureBackendRunning(settings)) return
+    // Phase 33 / SC3: once unload began, a single analysis starts no provider request. Checked again
+    // after the backend check, which can outlast the start of unload.
+    if (shuttingDown) return
+    if (!ensureBackendRunning(settings) || shuttingDown) return
 
     val promptHash = sha256Hex(prompt)
     val responseBuffer = StringBuilder()

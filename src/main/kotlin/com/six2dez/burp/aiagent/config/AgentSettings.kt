@@ -177,10 +177,28 @@ class AgentSettingsRepository(
      * Guards every write of the applied snapshot ([save] and [update]), listener notification included,
      * so listeners see saves in save order. [load] never takes it, so the EDT (chat pill, safety
      * indicator, status pill, UiActions) never waits on a save. [save] and [update] run only on worker
-     * threads: `burp-ai-settings-sync` for header writes, `burp-ai-settings-save` for Save settings and
+     * threads: `burp-ai-agent-settings-sync` for header writes, `burp-ai-settings-save` for Save settings and
      * Restore defaults.
      */
     private val writeLock = Any()
+
+    /**
+     * Phase 31 / D-05, D-06 (GATE-02) — the passive and active AI scanner switches are session-only in
+     * both builds. They start OFF at every extension load, so no scanner sends AI traffic before the
+     * user turns it on. A session change (header toggle or Save settings) lives in these two fields and
+     * is what every [load] reports until Burp unloads the extension.
+     *
+     * The preference keys `passive.ai.enabled` and `active.ai.enabled` are neither read, written nor
+     * deleted any more, so a 1.0.1 downgrade still sees the values it saved.
+     *
+     * These are fields rather than a constant `false` in [load] because a failed [save] evicts the
+     * cached snapshot: a constant would then switch session-ON scanners OFF in the next snapshot while
+     * the scanner objects keep running (Pitfall 9).
+     */
+    @Volatile private var sessionPassiveAiEnabled = false
+
+    /** Phase 31 / D-05, D-06 — see [sessionPassiveAiEnabled]. */
+    @Volatile private var sessionActiveAiEnabled = false
 
     /** Notified after every fully successful [save]; see [addChangeListener]. */
     private val changeListeners =
@@ -339,7 +357,8 @@ class AgentSettingsRepository(
                     prefs.getString(KEY_PREPROCESS_ALLOWED_CONTENT_TYPES),
                     Defaults.PREPROCESS_ALLOWED_CONTENT_TYPES,
                 ),
-            passiveAiEnabled = prefs.getBoolean(KEY_PASSIVE_AI_ENABLED) ?: false,
+            // Phase 31 / D-05: session-only, never read from the preferences (see sessionPassiveAiEnabled).
+            passiveAiEnabled = sessionPassiveAiEnabled,
             passiveAiRateSeconds = (prefs.getInteger(KEY_PASSIVE_AI_RATE) ?: 5).coerceIn(1, 60),
             passiveAiScopeOnly = prefs.getBoolean(KEY_PASSIVE_AI_SCOPE_ONLY) ?: true,
             passiveAiMaxSizeKb = (prefs.getInteger(KEY_PASSIVE_AI_MAX_SIZE) ?: 96).coerceIn(16, 1024),
@@ -370,7 +389,8 @@ class AgentSettingsRepository(
             contextRequestBodyMaxChars = (prefs.getInteger(KEY_CONTEXT_REQUEST_BODY_MAX_CHARS) ?: 4_000).coerceIn(256, 40_000),
             contextResponseBodyMaxChars = (prefs.getInteger(KEY_CONTEXT_RESPONSE_BODY_MAX_CHARS) ?: 8_000).coerceIn(512, 80_000),
             contextCompactJson = prefs.getBoolean(KEY_CONTEXT_COMPACT_JSON) ?: true,
-            activeAiEnabled = prefs.getBoolean(KEY_ACTIVE_AI_ENABLED) ?: false,
+            // Phase 31 / D-05: session-only, never read from the preferences (see sessionActiveAiEnabled).
+            activeAiEnabled = sessionActiveAiEnabled,
             activeAiMaxConcurrent = (prefs.getInteger(KEY_ACTIVE_AI_MAX_CONCURRENT) ?: 3).coerceIn(1, 10),
             activeAiMaxPayloadsPerPoint = (prefs.getInteger(KEY_ACTIVE_AI_MAX_PAYLOADS) ?: 10).coerceIn(1, 50),
             activeAiTimeoutSeconds = (prefs.getInteger(KEY_ACTIVE_AI_TIMEOUT) ?: 30).coerceIn(5, 120),
@@ -518,6 +538,11 @@ class AgentSettingsRepository(
             // WR-03: all prefs writes first; update the cache only on full success so a
             // SecretCipherException mid-save does not leave the cache holding never-persisted values.
             // On exception, clear the cache so the next load() re-reads the (partial) prefs.
+            // Phase 31 / D-06: the scanner switches go to the session fields BEFORE any preference
+            // write, so a write that fails below still leaves the value the user chose (the scanner
+            // objects were already switched by their callers) and the next load() agrees with them.
+            sessionPassiveAiEnabled = settings.passiveAiEnabled
+            sessionActiveAiEnabled = settings.activeAiEnabled
             try {
                 prefs.setString(KEY_AGENT_PROFILE, settings.agentProfile)
                 prefs.setString(KEY_OLLAMA_MODEL, settings.ollamaModel)
@@ -582,7 +607,6 @@ class AgentSettingsRepository(
                     KEY_PREPROCESS_ALLOWED_CONTENT_TYPES,
                     serializeContentTypeSet(settings.preprocessAllowedContentTypes),
                 )
-                prefs.setBoolean(KEY_PASSIVE_AI_ENABLED, settings.passiveAiEnabled)
                 prefs.setInteger(KEY_PASSIVE_AI_RATE, settings.passiveAiRateSeconds)
                 prefs.setBoolean(KEY_PASSIVE_AI_SCOPE_ONLY, settings.passiveAiScopeOnly)
                 prefs.setInteger(KEY_PASSIVE_AI_MAX_SIZE, settings.passiveAiMaxSizeKb)
@@ -638,7 +662,6 @@ class AgentSettingsRepository(
                     settings.contextResponseBodyMaxChars.coerceIn(512, 80_000),
                 )
                 prefs.setBoolean(KEY_CONTEXT_COMPACT_JSON, settings.contextCompactJson)
-                prefs.setBoolean(KEY_ACTIVE_AI_ENABLED, settings.activeAiEnabled)
                 prefs.setInteger(KEY_ACTIVE_AI_MAX_CONCURRENT, settings.activeAiMaxConcurrent)
                 prefs.setInteger(KEY_ACTIVE_AI_MAX_PAYLOADS, settings.activeAiMaxPayloadsPerPoint)
                 prefs.setInteger(KEY_ACTIVE_AI_TIMEOUT, settings.activeAiTimeoutSeconds)
@@ -921,6 +944,10 @@ class AgentSettingsRepository(
         private const val KEY_PREPROCESS_MAX_RESPONSE_SIZE_KB = "mcp.preprocess.max.response.size.kb"
         private const val KEY_PREPROCESS_FILTER_BINARY_CONTENT = "mcp.preprocess.filter.binary.content"
         private const val KEY_PREPROCESS_ALLOWED_CONTENT_TYPES = "mcp.preprocess.allowed.content.types"
+
+        // Phase 31 / D-06: kept to document the stored key the repository no longer reads or writes
+        // (a 1.0.1 downgrade still reads it); unused on purpose, so suppressed locally (ADR-17).
+        @Suppress("UnusedPrivateProperty", "unused")
         private const val KEY_PASSIVE_AI_ENABLED = "passive.ai.enabled"
         private const val KEY_PASSIVE_AI_RATE = "passive.ai.rate.seconds"
         private const val KEY_PASSIVE_AI_SCOPE_ONLY = "passive.ai.scope.only"
@@ -947,6 +974,10 @@ class AgentSettingsRepository(
 
         // 07-02 D-02: chat-context cap toggle for small (1278-token-class) local models.
         private const val KEY_CHAT_SMALL_MODEL_MODE = "chat.small.model.mode"
+
+        // Phase 31 / D-06: kept to document the stored key the repository no longer reads or writes
+        // (a 1.0.1 downgrade still reads it); unused on purpose, so suppressed locally (ADR-17).
+        @Suppress("UnusedPrivateProperty", "unused")
         private const val KEY_ACTIVE_AI_ENABLED = "active.ai.enabled"
         private const val KEY_ACTIVE_AI_MAX_CONCURRENT = "active.ai.max.concurrent"
         private const val KEY_ACTIVE_AI_MAX_PAYLOADS = "active.ai.max.payloads"

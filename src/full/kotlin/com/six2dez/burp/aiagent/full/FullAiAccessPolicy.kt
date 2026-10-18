@@ -19,6 +19,9 @@ class FullAiAccessPolicy : AiAccessPolicy {
         burpAiEnabled: Boolean,
     ): String? = if (backendId == BURP_AI_BACKEND_ID && !burpAiEnabled) REFUSAL else null
 
+    /** Phase 31 / D-11 — the 1.0.1 health behaviour is kept: a startup check and local-backend polling. */
+    override fun allowsUnpromptedHealthChecks(): Boolean = true
+
     private companion object {
         const val BURP_AI_BACKEND_ID = "burp-ai"
         const val REFUSAL = "Burp AI is disabled in Burp Suite settings. Enable 'Use AI' for extensions, or pick a different backend."

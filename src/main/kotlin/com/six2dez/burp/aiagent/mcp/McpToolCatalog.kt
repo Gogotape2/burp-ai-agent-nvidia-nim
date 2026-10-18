@@ -43,6 +43,11 @@ data class McpToolDescriptor(
     val defaultEnabled: Boolean,
     val proOnly: Boolean = false,
     val unsafeOnly: Boolean = false,
+    /**
+     * Phase 31 / D-16 — the tool sends AI requests and requires Burp's "Use AI" in every build, applied
+     * by the executor on top of the backend policy (`AgentSupervisor.aiToolRefusal`), not by the handler.
+     */
+    val requiresBurpAi: Boolean = false,
     // D-03: deliberately has NO default value. A default is how a new tool silently inherits a tier
     // nobody chose; the compile error at the catalog site is the control.
     val secTier: SecTier,
@@ -68,6 +73,13 @@ object McpToolCatalog {
     fun defaults(): Map<String, Boolean> = all().associate { it.id to it.defaultEnabled }
 
     fun unsafeToolIds(): Set<String> = all().filter { it.unsafeOnly }.map { it.id }.toSet()
+
+    /**
+     * Phase 31 / D-13 — true when the loaded providers supply at least one `unsafeOnly` tool. The MCP
+     * Unsafe switch, its note and every "Unsafe on" warning follow this, never the flavor: the store
+     * build ships no unsafe tool, so its switch is inert and no indicator may claim Unsafe is on.
+     */
+    fun hasUnsafeTools(): Boolean = available().any { it.unsafeOnly }
 
     fun mergeWithDefaults(overrides: Map<String, Boolean>): Map<String, Boolean> {
         val merged = defaults().toMutableMap()

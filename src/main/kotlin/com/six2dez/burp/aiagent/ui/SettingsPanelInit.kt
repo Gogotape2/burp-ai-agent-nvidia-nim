@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.ui
 
 import com.six2dez.burp.aiagent.config.McpSettings
+import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.spi.SettingsContributionContext
 import com.six2dez.burp.aiagent.spi.SettingsSlot
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
@@ -211,6 +212,7 @@ internal fun SettingsPanel.initUiWiring() {
     mcpStdio.font = DesignTokens.Typography.body
     mcpUnsafe.font = DesignTokens.Typography.body
     mcpUnsafe.toolTipText = "Allows tools that modify Burp state, write files, or send active requests."
+    applyUnsafeToolAvailability()
     // 07-03 D-03: mirror the styling of mcpUnsafe so the new toggle blends into the section.
     mcpScopeOnly.font = DesignTokens.Typography.body
     mcpScopeOnly.toolTipText =
@@ -471,30 +473,32 @@ internal fun SettingsPanel.initUiWiring() {
         refreshPassiveAiStatus()
     }
 
-    // Active AI Scanner event listeners
+    // Active AI Scanner event listeners. Phase 33 / D-01, D-04: only the on/off toggle starts or stops
+    // the scanner (non-blocking, through requestEnabled); every other control hot-applies its value.
     activeAiEnabled.addActionListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
+        applyActiveAiEnabled()
         updatePrivacyWarnings()
         updateRiskWarnings()
         onActiveAiEnabledChanged?.invoke(activeAiEnabled.isSelected)
     }
     activeAiScopeOnly.addActionListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiMaxConcurrentSpinner.addChangeListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiMaxPayloadsSpinner.addChangeListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiTimeoutSpinner.addChangeListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiDelaySpinner.addChangeListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiRiskLevelCombo.addActionListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
         val level = activeAiRiskLevelCombo.selectedItem as? String
         if (level == "DANGEROUS") {
             JOptionPane.showMessageDialog(
@@ -506,13 +510,13 @@ internal fun SettingsPanel.initUiWiring() {
         }
     }
     activeAiScanModeCombo.addActionListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiUseCollaborator.addActionListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiAdaptivePayloads.addActionListener {
-        applyActiveAiSettings()
+        applyActiveAiTunables()
     }
     activeAiViewFindings.addActionListener {
         showActiveAiFindingsDialog()
@@ -538,6 +542,20 @@ internal fun SettingsPanel.initUiWiring() {
         }
     statusRefreshTimer?.start()
     updateProfileWarnings()
+}
+
+/**
+ * Phase 31 / D-13: when the loaded catalog has no unsafe tool (the store build), the Unsafe switch stays
+ * visible but disabled, with [NO_UNSAFE_TOOLS_NOTE] beside it and as its tooltip. Its selection is never
+ * touched: a value carried over from a full install stays as loaded and Save writes it back unchanged.
+ * Decided from catalog data, never the flavor; with unsafe tools present nothing changes.
+ */
+private fun SettingsPanel.applyUnsafeToolAvailability() {
+    if (!McpToolCatalog.hasUnsafeTools()) {
+        mcpUnsafe.isEnabled = false
+        mcpUnsafe.toolTipText = NO_UNSAFE_TOOLS_NOTE
+        mcpUnsafeNote.isVisible = true
+    }
 }
 
 /**

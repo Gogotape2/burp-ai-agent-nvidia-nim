@@ -4,7 +4,22 @@ All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/), and this project adheres to [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [1.1.0] - 2026-10-18
+
+### Added
+
+- **Suggested targets, queued by hand** - in both builds, passive findings that point to a
+  vulnerability the AI Active Scanner can test are listed in a "Suggested targets" section of the
+  AI Active Scanner Queue dialog ("View queue" on the AI Active Scanner tab), with Suggested At,
+  Vulnerability, Injection Point, URL and Confidence, and counted as "Suggested: N" in the AI Active
+  Scanner status line ("Suggested: N (cap reached)" once the cap below is hit). "Queue N suggested
+  targets" and "Queue selected" ask to enable the AI Active Scanner if it is off and then show the
+  same "Confirm AI Active Scan" dialog as the context menu; nothing is sent to a target before you
+  confirm. With Burp's "Use AI" off in the BApp Store build, the reason is shown and nothing is
+  queued. The list is kept in memory for the session only, holds at most 500 entries (the oldest
+  are dropped first), is never saved and is emptied when the extension unloads. In the BApp Store
+  build these suggestions used to be dropped. Local (non-AI) findings add no suggestions today
+  because every class they detect is passive-only.
 
 ### Changed
 
@@ -32,11 +47,90 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   card has neither. The Ollama required-field message for a blank base URL is gone from both builds.
 - **The BApp Store build requires Burp's "Use AI" for every provider** - with "Use AI" off, every
   AI backend is refused, not only Burp AI. The full build keeps the 1.0.1 rule.
+- **Burp edition requirements** - The BApp Store build runs on Burp Community and Burp
+  Professional; it sends AI requests only while Burp's "Use AI" setting is enabled for the
+  extension, and with it off it loads and refuses every AI request. For local or CLI AI that does
+  not depend on "Use AI", use the GitHub full build: its HTTP and CLI backends do not depend on that
+  setting, while Burp AI and the MCP tools `ai_analyze` and `ai_passive_scan` still do.
+- **The Burp AI settings card names the real setting** - it now says AI requests need Burp's
+  "Use AI" setting enabled for this extension, and where to turn it on: Extensions > Installed >
+  Custom AI Agent > Use AI. It no longer names a Burp edition or points at Extensions > Settings.
 - **Releases carry both builds** - each GitHub release attaches `Custom-AI-Agent-full-<version>.jar`
   (the GitHub full build) and `Custom-AI-Agent-bapp-<version>.jar` (the BApp Store build,
   `./gradlew bappJar`), each with a `.sha256` in `sha256sum` format, and the release notes open with
   a short "Which JAR?" section. CI and the release now build both JARs and fail if the BApp Store JAR
-  contains a full-only class or a CLI backend. One `bom.json` covers both.
+  contains a full-only class or a CLI backend. One `bom.json` covers both: it lists the full build's
+  runtime dependencies, which include every dependency of the BApp Store build at the version the
+  BApp Store JAR packages, plus libraries only the full build ships. CI and the release fail if the
+  two builds resolve a shared dependency to different versions.
+- **The AI scanners start OFF at every load, in both builds** - the passive and active AI scanners
+  no longer resume at load; switching one on lasts until Burp unloads the extension. The values a
+  1.0.1 install saved are left untouched, so a downgrade still reads them. This is a deliberate
+  change for full-build users too.
+- **The BApp Store build checks Burp's "Use AI" on every request** - one check in Burp's networking
+  layer refuses any AI request, Burp AI included, while "Use AI" is off. The refusal is shown in the
+  chat, on the status pill ("AI disabled in Burp"), in the scanner panel ("Paused: Use AI is off")
+  and as an MCP tool error. Starting "AI Passive Scan" from the context menu while "Use AI" is off
+  shows the reason in a dialog. While the scanner panel shows "Paused: Use AI is off", the passive
+  check still files and records its local (non-AI) findings; only the AI analysis is skipped.
+- **Health checks on demand in the BApp Store build** - no startup check and no timer. The pill
+  reads "Not checked · click to test" until Save, a backend change, a click on the pill, Test
+  connection or the first chat message checks it. The full build keeps its startup check and local
+  polling.
+- **The status pill also follows chat replies, in both builds** - each chat reply on the selected
+  backend repaints the pill from its own result, with no extra request. A reply shows "AI: OK", a
+  refusal shows "AI disabled in Burp", and any other error shows "AI: Offline" with the error in the
+  tooltip. That includes cancelling a message and an error a reachable provider returns, for example
+  an unknown model name. The next check or reply repaints it.
+- **MCP `ai_analyze` and `ai_passive_scan`** return an MCP tool error with the reason while "Use AI"
+  is off, in both builds, and stay in the tool list.
+- **Unsafe mode** is shown disabled with "No unsafe tools in this build" when the build has no
+  unsafe tools.
+- **Drop-in backend JARs** in `~/.burp-ai-agent/backends` load in the full build only. The BApp
+  Store build never creates, lists or loads that directory. In the full build, a drop-in JAR built
+  against the OkHttp classes or the HTTP helpers that earlier versions bundled no longer loads: the
+  failure is written to Burp's error output and no drop-in backend from that directory is registered
+  on that load (one class loader serves the whole directory). The extension and its built-in
+  backends still load.
+- **OkHttp removed** - every AI request goes through Burp's networking in both builds, and neither
+  JAR ships OkHttp.
+- **Ollama** sends nothing at backend start. When the context window setting is left at its default
+  (8192), the extension asks Ollama (`/api/show`) for the model's window before it sends a message,
+  through the same "Use AI" check as the chat request (refused in the BApp Store build while "Use AI"
+  is off). Until an answer gives a window, it asks again before every message and every retry of one,
+  for example when the server has no `/api/show` or its answer holds no window. Once an answer gives
+  a window, that connection reuses it. A context window you set yourself is used as is and never
+  asked for.
+- **Bundled agent profiles** name only the built-in tools and point the model at the session's tool
+  catalog. Profiles an earlier version installed in `~/.burp-ai-agent/AGENTS` are kept as they are,
+  so an existing install keeps its old copies until you delete them.
+- **The AI Active Scan confirmation shows how many hosts** - the context-menu dialog now reads
+  "This will send active test payloads to N target(s) on H host(s)."
+- **The full build's auto-queue reports only what it queued** - with "Auto-queue passive findings
+  for active testing" on, "[AutoQueue] Queued N suggested target(s) to the Active Scanner" counts
+  only the targets the AI Active Scanner accepted, and those leave the suggested list. Targets it
+  could not queue, for example while Burp's "Use AI" is off, stay in the list and nothing is logged.
+- **AI Active Scanner settings apply without a restart** - changing a spinner (max concurrent,
+  request delay and the others), the risk level, the scan mode or a checkbox on the AI Active
+  Scanner tab, or pressing Save, applies to the next target and never restarts the scanner, so
+  pending Collaborator checks and baselines are kept. Only the on/off switch starts or stops it,
+  and the switch answers at once. Turning the scanner off shows "Active: Stopping…" in the status
+  line until in-flight work has stopped, then "Active: OFF"; after that no new request goes to the
+  target, except one that was already sent. Answering Yes to "Active Scanner is disabled. Enable
+  it now?" no longer blocks Burp either.
+- **Chat send, site-map actions and Test connection no longer freeze Burp** - the Ollama / LM Studio
+  check that runs before a chat message, the walk of a selected site-map subtree before any
+  context-menu action on it (AI Passive Scan, AI Active Scan, the targeted tests, BountyPrompt), and
+  Test connection now run in the background. The dialogs still appear as before ("Ollama is not
+  running. Start it now?", the scan confirmations with real target counts taken from the list that
+  is actually queued, the Test connection result). If the site map cannot be read, a dialog says
+  "Could not read the selected site map subtree." and the action stops.
+- **Waits end when you stop them** - backend retries keep their timing but no longer hold a thread,
+  and stop at once when a connection is stopped or the extension unloads. Turning the AI Active
+  Scanner off ends its request pacing at once. A passive item that arrives while another start of
+  the backend is in progress waits up to 10 s for it instead of being dropped. In the full build,
+  an OpenCode timeout reports the same timeout message as the other CLI backends. MCP TLS
+  certificate generation gives up after 60 s instead of waiting forever.
 
 ### Removed
 
@@ -44,12 +138,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
   webhook client, the interactive PTY CLI connection, and the auto-restart health monitor with its
   "auto-restart" setting.
 
-### Known limitations
+### Fixed
 
-- Both builds still load drop-in backend JARs from `~/.burp-ai-agent/backends`, so the store build
-  can run backend code that is not part of its JAR.
-- The bundled agent profiles still mention generic MCP tools that the BApp Store build does not
-  offer; calls to them are refused as unknown tools.
+- **The AI Active Scanner Queue dialog closes when the extension unloads**, and its refresh timer
+  stops.
+- **Unloading leaves nothing running** - no thread, timer, MCP listener or tab listener of the
+  extension survives an unload, in both builds. Unload takes about 10 seconds at most. It writes
+  nothing when everything stops cleanly, and one Error line for each part that had to be stopped
+  forcibly: "Unload: <component> did not stop before the unload deadline" or "Unload: <component>
+  was still running at unload and was stopped". Turning MCP on and off quickly can no longer leave
+  the port listening. A load that fails part-way is now cleaned up (nothing it started keeps
+  running and the MCP port is released) and is still reported to Burp as a failed load.
+- **Unloading sends nothing to the AI** - from the moment unload begins, the extension starts no
+  new request to an AI provider: a reply in progress is stopped, a tool chain sends no further turn,
+  there are no backend retries, and no health or readiness check reaches a provider. A request that
+  was already on its way when unload began cannot be recalled. A partly filled passive analysis
+  batch is dropped instead of being sent, and an analysis already running sends nothing once unload
+  has begun. One Output line gives the count: "[PassiveAiScanner] Unload: dropped N pending passive
+  analysis item(s); nothing was sent to the AI backend."
+- **Every thread the extension starts is named `burp-ai-agent-...`** and is a daemon thread, so a
+  thread dump (`jcmd <pid> Thread.print` or `jstack <pid>`) shows what belongs to the extension and
+  none of them can keep Burp from exiting. In the full build, the MCP scanner-task and Collaborator
+  registries no longer run background cleaner threads: their entries expire when they are next
+  read or written, and unload empties them.
+
+### Security
+
+- **Issue details are HTML-encoded** - every issue the extension creates (AI Active issues found
+  through Burp Scanner, AI passive and local passive findings, AI Active Scanner confirmations,
+  BountyPrompt issues and issues created through the MCP `issue_create` tool) shows payloads, values
+  taken from the target and AI text as literal text in Burp's issue view and reports. `issue_create`
+  now escapes what an agent sends, so HTML in its detail, remediation or background shows as text.
+  Privacy redaction of cookie values still runs first. When an issue is sent to the AI from the
+  issue context menus, or read through the full build's MCP `scanner_issues` tool, its text is
+  turned back into plain text before privacy redaction, so tokens, API-key and authorization
+  headers and cookie headers in issue text are still redacted under STRICT and BALANCED.
+- **Issue text keeps underscores inside words** - issue details and remediation written by the AI,
+  by BountyPrompt or through the MCP `issue_create` tool now keep underscores inside words (for
+  example `access_token`, `session_id`). Markdown emphasis such as `_italic_` and `__bold__` is
+  still removed. Before, every underscore was dropped, which hid such parameter names from privacy
+  redaction when the issue was later sent to the AI or read over MCP. One visible side effect: an
+  AI passive finding whose title matches no known vulnerability class keeps the underscores in its
+  issue name too.
 
 ## [1.0.1] - 2026-10-09
 

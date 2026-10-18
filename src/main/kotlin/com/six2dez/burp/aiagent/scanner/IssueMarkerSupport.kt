@@ -9,6 +9,8 @@ import burp.api.montoya.http.message.HttpRequestResponse
  * response (evidence) so Burp shows highlighted regions in finding details.
  */
 object IssueMarkerSupport {
+    // Phase 34 / PERF-01: compiled once per class load, not per call.
+    private val QUOTED_MARKER_REGEX = Regex(""""([^"]{4,80})"""")
     private const val MAX_MARKERS = 5
 
     /**
@@ -76,9 +78,8 @@ object IssueMarkerSupport {
         val respBytes = resp.toByteArray()
         val respStr = String(respBytes.bytes, Charsets.ISO_8859_1)
         // Extract quoted strings from the detail that might exist in the response
-        val quotedPattern = Regex(""""([^"]{4,80})"""")
         val markers = mutableListOf<Marker>()
-        for (match in quotedPattern.findAll(detail)) {
+        for (match in QUOTED_MARKER_REGEX.findAll(detail)) {
             val snippet = match.groupValues[1]
             val idx = respStr.indexOf(snippet)
             if (idx >= 0 && idx + snippet.length <= respBytes.length()) {

@@ -16,8 +16,7 @@ import java.util.concurrent.TimeUnit
  * subsequent execution, nothing is written to any log, and the only observable signal is `isDone()`
  * on the returned `ScheduledFuture` — a value this codebase discards at every scheduling site. The
  * production symptom is therefore indistinguishable from "nothing is happening": the active scanner
- * queue stops draining, the MCP registries stop expiring entries, and the Burp error log stays
- * empty.
+ * queue stops draining and the Burp error log stays empty.
  *
  * That reasoning was first written inline above the health monitor's guard in
  * [com.six2dez.burp.aiagent.supervisor.AgentSupervisor]; it moves here because the guarantee now has
@@ -31,18 +30,17 @@ import java.util.concurrent.TimeUnit
  *
  * ### AWT-free contract
  * This file MUST NOT import `java.awt.*` or `javax.swing.*`, and it deliberately takes a
- * `logError: (String) -> Unit` lambda rather than a `MontoyaApi`: the MCP registries log through
- * their own private callback and must not gain a Burp dependency, and the whole file stays drivable
- * from a headless unit test.
+ * `logError: (String) -> Unit` lambda rather than a `MontoyaApi`, so a caller that logs through its
+ * own callback needs no Burp dependency, and the whole file stays drivable from a headless unit test.
  */
 
 /**
  * Runs [body], absorbing anything it throws and reporting it through [logError] as
  * `[component] task failed: message`, the format `CONVENTIONS.md` §Error Handling mandates.
  *
- * Logs **only** on a throw: a successful or no-op run produces zero lines. Both registry cleaners
- * tick over an empty map and `processQueue()` ticks over an empty queue several times a second, so
- * a guard that also logged the success path would flood Burp's error log.
+ * Logs **only** on a throw: a successful or no-op run produces zero lines. `processQueue()` ticks
+ * over an empty queue several times a second, so a guard that also logged the success path would
+ * flood Burp's error log.
  *
  * This function never rethrows. That is the entire contract — the caller is a recurring scheduled
  * task whose next execution depends on nothing escaping. The contract covers [logError] as well as

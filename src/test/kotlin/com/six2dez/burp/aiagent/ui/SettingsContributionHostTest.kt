@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertTimeoutPreemptively
 import org.mockito.Answers
 import org.mockito.kotlin.any
+import org.mockito.kotlin.anyOrNull
 import org.mockito.kotlin.argumentCaptor
 import org.mockito.kotlin.atLeastOnce
 import org.mockito.kotlin.doAnswer
@@ -291,7 +292,7 @@ class SettingsContributionHostTest {
             assertTrue(collect.onEdt, "UI-SPEC H-2: collect() reads Swing state on the EDT.")
             val persist = contribution.callsOf("persist").single()
             assertFalse(persist.onEdt, "T-29-28: persist() never runs on the EDT.")
-            assertEquals("burp-ai-settings-save", persist.thread, "persist() runs on the settings-save worker.")
+            assertEquals("burp-ai-agent-settings-save", persist.thread, "persist() runs on the settings-save worker.")
             assertEquals(
                 PrivacyMode.OFF,
                 coreModeAtPersist.get(),
@@ -329,7 +330,7 @@ class SettingsContributionHostTest {
             )
             assertEquals(PrivacyMode.STRICT, fixture.repo.load().privacyMode, "The core save stays applied.")
             verify(fixture.mcpSupervisor).applySettings(any(), any(), any(), any())
-            verify(fixture.activeAiScanner).setEnabled(any())
+            verify(fixture.activeAiScanner).requestEnabled(any(), anyOrNull())
             assertEquals("kept", fixture.panel.pluginSettings.getString(other.key), "The other one persisted.")
         }
     }
@@ -348,7 +349,7 @@ class SettingsContributionHostTest {
 
             assertTrue(contribution.callsOf("applyToUi").single().onEdt, "applyToUi runs on the EDT.")
             val persist = contribution.callsOf("persist").single()
-            assertEquals("burp-ai-settings-save", persist.thread, "Restore persists on the settings-save worker.")
+            assertEquals("burp-ai-agent-settings-save", persist.thread, "Restore persists on the settings-save worker.")
             assertEquals("default", fixture.panel.pluginSettings.getString(contribution.key), "Defaults stored.")
             assertTrue(contribution.callsOf("collect").isEmpty(), "Restore persists defaults(), not the screen.")
         }

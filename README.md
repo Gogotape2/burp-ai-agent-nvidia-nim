@@ -10,10 +10,32 @@
 Custom AI Agent is an extension for Burp Suite that integrates AI into your security workflow. Use local models or cloud providers, connect external AI agents via MCP, and let passive/active scanners find vulnerabilities while you focus on manual testing.
 
 > [!IMPORTANT]
-> **If you are running 1.0.0 or earlier, read [the security advisories](SECURITY.md#security-advisories) and upgrade to 1.0.1.**
+> **If you are running 1.0.0 or earlier, read [the security advisories](SECURITY.md#security-advisories) and upgrade to the latest release, 1.1.0.**
 > Audit files written with Audit logging on may hold the MCP token and full prompts, and right-click
 > "send to AI" context could bypass the privacy mode; both advisories say which credentials to rotate.
 > No CVE or GHSA identifier has been issued for any of them.
+
+## What's new in v1.1.0
+
+Two builds from one repository, built for the BApp Store resubmission. Full detail in
+[CHANGELOG.md](CHANGELOG.md).
+
+- **Two builds.** The BApp Store build (`./gradlew bappJar`) has the 8 extension-native MCP tools,
+  Burp AI and the six HTTP backends. The GitHub full build (`./gradlew fullJar`) has all 59 MCP
+  tools, the five CLI backends, the external MCP client and the opt-in auto-queue. Both are on
+  [Releases](https://github.com/six2dez/burp-ai-agent/releases), each with a `.sha256`. Load only
+  one at a time; [Which Build?](https://burp-ai-agent.six2dez.com/getting-started/which-build)
+  compares them.
+- **The BApp Store build's AI gate.** The BApp Store build runs on Burp Community and Burp Professional; it sends AI requests only while Burp's "Use AI" setting is enabled for the extension, and with it off it loads and refuses every AI request.
+- **Passive scans send nothing to the target.** Passive findings the AI Active Scanner can test are
+  listed as suggested targets in its queue dialog, in both builds, and you queue them by hand:
+  nothing is sent to a target before you confirm.
+- **Clean unload.** Unloading leaves no thread, timer or MCP listener of the extension running and
+  starts no new request to an AI provider.
+- **Issue details are HTML-encoded.** Payloads, values taken from the target and AI text show as
+  literal text in Burp's issue view and reports.
+- **The AI scanners start OFF at every load**, in both builds; switching one on lasts until Burp
+  unloads the extension.
 
 ## What's new in v1.0.1
 
@@ -69,11 +91,11 @@ plus the wider class of issues the same review surfaced. Full detail in [CHANGEL
 
 ## Highlights
 
-- **12 AI Backends** — Burp AI (built-in), Anthropic, Ollama, LM Studio, NVIDIA NIM, Perplexity, Generic OpenAI-compatible, Gemini CLI, Claude CLI, Codex CLI, OpenCode CLI, Copilot CLI.
+- **12 AI Backends** — Burp AI (built-in), Anthropic, Ollama, LM Studio, NVIDIA NIM, Perplexity, Generic OpenAI-compatible, Gemini CLI, Claude CLI, Codex CLI, OpenCode CLI, Copilot CLI. The BApp Store build has 7 (Burp AI and the six HTTP backends); the five CLI backends are in the full build only.
 - **59 MCP Tools** — Let Claude Desktop (or any MCP client) drive Burp autonomously (8 extension-native AI tools in the store build, all 59 in the full build).
 - **Scoped MCP Access** — Optionally confine every MCP tool to your in-scope hosts, so external AI clients can't reach out-of-scope targets through Burp.
 - **62 Vulnerability Classes** — Passive and Active AI scanners across injection, auth, crypto, and more. The passive scanner runs as a Burp `PassiveScanCheck` (Burp Pro).
-- **Install from Releases** — Download the JAR from [Releases](https://github.com/six2dez/burp-ai-agent/releases). Not on the BApp Store: the [submission](https://github.com/PortSwigger/extension-portal/issues/231) has been open since January 2026.
+- **Install from Releases** — Download either build from [Releases](https://github.com/six2dez/burp-ai-agent/releases); [Which Build?](https://burp-ai-agent.six2dez.com/getting-started/which-build) explains how they differ. Custom AI Agent is not listed in the BApp Store yet: the BApp Store build is going through PortSwigger's review in [extension-portal#231](https://github.com/PortSwigger/extension-portal/issues/231).
 - **Theme-Aware UI** — An internal design system styles the settings panel and re-themes automatically with Burp's light/dark switch.
 - **Burp Scan Skill** — Use your preferred AI coding assistant (Claude Code, Gemini CLI, Codex, etc.) as a scanner via MCP.
 - **Tool-Call Confirmation** — Tool calls the AI emits are gated: read-only bounded tools run silently, everything else asks first with an approval card in the chat. Unknown tools fail closed.
@@ -85,7 +107,7 @@ plus the wider class of issues the same review surfaced. Full detail in [CHANGEL
 
 ### 1. Install
 
-Download the latest JAR from [Releases](https://github.com/six2dez/burp-ai-agent/releases), or build from source (Java 21):
+Download the latest JAR from [Releases](https://github.com/six2dez/burp-ai-agent/releases): each release carries `Custom-AI-Agent-full-<version>.jar` (the GitHub full build) and `Custom-AI-Agent-bapp-<version>.jar` (the BApp Store build), each with a `.sha256`. [Which Build?](https://burp-ai-agent.six2dez.com/getting-started/which-build) explains which one to pick. Or build from source (Java 21):
 
 ```bash
 git clone https://github.com/six2dez/burp-ai-agent.git
@@ -110,6 +132,8 @@ The extension registers in Burp as **Custom AI Agent** (the name in the Extensio
 
 **Load only one build.** The full build and the BApp Store build both register as **Custom AI Agent**, so they look identical in Burp's Extensions list. Loading both at once gives you two Custom AI Agent tabs, two MCP servers competing for the same port, and two copies writing the shared `~/.burp-ai-agent` directory. Unload one before you load the other.
 
+**Burp edition and "Use AI".** The BApp Store build runs on Burp Community and Burp Professional; it sends AI requests only while Burp's "Use AI" setting is enabled for the extension, and with it off it loads and refuses every AI request. PortSwigger documents "Use AI" as a per-extension checkbox, off by default: **Extensions > Installed > Custom AI Agent > Use AI**.
+
 <!-- screenshot: Burp Extensions > Add dialog with the JAR loaded -->
 ![Load Extension](screenshots/burp-extensions-add.png)
 
@@ -124,17 +148,17 @@ Open the **AI Agent** tab and go to **Settings**. Pick a backend:
 
 | Backend | Type | Setup |
 | :--- | :--- | :--- |
-| **Burp AI (built-in)** | In-process | Use Burp Suite Pro's built-in AI when available; no extra config required. |
+| **Burp AI (built-in)** | In-process | Uses Burp's built-in AI and needs Burp's "Use AI" setting enabled for the extension (see [Requirements](#requirements)); no extra config required. |
 | **Ollama** | Local HTTP | Install [Ollama](https://ollama.com), run `ollama serve`, pull a model (`ollama pull llama3.1`). |
 | **LM Studio** | Local HTTP | Install [LM Studio](https://lmstudio.ai), load a model, start the server. |
 | **NVIDIA NIM** | HTTP | Use the default `https://integrate.api.nvidia.com` endpoint, set your NVIDIA API key, and choose a model such as `moonshotai/kimi-k2.5`. |
 | **Perplexity** | HTTP | Use the default `https://api.perplexity.ai` endpoint, set your `pplx-...` API key, and choose a model such as `sonar`, `sonar-pro`, or `sonar-reasoning`. |
 | **Generic OpenAI-compatible** | HTTP | Provide a base URL and model for any OpenAI-compatible provider. |
-| **Gemini CLI** | Cloud CLI | Install `gemini`, run `gemini auth login`. |
-| **Claude CLI** | Cloud CLI | Install `claude`, set `ANTHROPIC_API_KEY` or run `claude login`. |
-| **Codex CLI** | Cloud CLI | Install `codex`, set `OPENAI_API_KEY`. |
-| **OpenCode CLI** | Cloud CLI | Install `opencode`, configure provider credentials. |
-| **Copilot CLI** | Cloud CLI | Install `copilot` and sign in with your GitHub account. |
+| **Gemini CLI** | Cloud CLI (full build only) | Install `gemini`, run `gemini auth login`. |
+| **Claude CLI** | Cloud CLI (full build only) | Install `claude`, set `ANTHROPIC_API_KEY` or run `claude login`. |
+| **Codex CLI** | Cloud CLI (full build only) | Install `codex`, set `OPENAI_API_KEY`. |
+| **OpenCode CLI** | Cloud CLI (full build only) | Install `opencode`, configure provider credentials. |
+| **Copilot CLI** | Cloud CLI (full build only) | Install `copilot` and sign in with your GitHub account. |
 | **Anthropic** | Cloud API | Enter your Anthropic API key in Settings. API traffic routes through Burp's proxy. See [docs/anthropic-backend.md](docs/anthropic-backend.md). |
 
 For **NVIDIA NIM**, the backend expects the same chat-completions style flow as the NVIDIA hosted endpoint. A working configuration is:
@@ -183,7 +207,7 @@ Enable the MCP server in **Settings > MCP Server** and add this to your Claude D
 
 > Requires Node.js 18+. If you enable **External Access**, the MCP client must send `Authorization: Bearer <token>` on every request.
 
-You can also register external or custom MCP servers in **Settings > MCP > External Servers** (SSE or stdio transports). External server auth tokens are stored encrypted at rest, with the caveat described in [Privacy and Security Notes](#privacy-and-security-notes). See [docs/external-mcp-servers.md](docs/external-mcp-servers.md) for setup details and security notes.
+**Full build only.** You can also register external or custom MCP servers in **Settings > MCP Server > External MCP Servers** (SSE or stdio transports). External server auth tokens are stored encrypted at rest, with the caveat described in [Privacy and Security Notes](#privacy-and-security-notes). See [docs/external-mcp-servers.md](docs/external-mcp-servers.md) for setup details and security notes.
 
 ## Burp Scan Skill (Terminal AI Scanning)
 
@@ -238,6 +262,7 @@ AI: [Uses proxy_http_history to pull traffic]
 Full documentation is available at **[burp-ai-agent.six2dez.com](https://burp-ai-agent.six2dez.com)**.
 
 - [Installation](https://burp-ai-agent.six2dez.com/getting-started/installation)
+- [Which Build?](https://burp-ai-agent.six2dez.com/getting-started/which-build)
 - [Quick Start](https://burp-ai-agent.six2dez.com/getting-started/quick-start)
 - [UI Tour](https://burp-ai-agent.six2dez.com/user-guide/ui-tour)
 - [Agent Profiles](https://burp-ai-agent.six2dez.com/user-guide/agent-profiles)
@@ -248,7 +273,7 @@ Full documentation is available at **[burp-ai-agent.six2dez.com](https://burp-ai
 - [Settings Reference](https://burp-ai-agent.six2dez.com/reference/settings-reference)
 - [Security Advisories](https://burp-ai-agent.six2dez.com/security/advisories)
 - [Troubleshooting](https://burp-ai-agent.six2dez.com/reference/troubleshooting)
-- [Burp Scan Skill](https://burp-ai-agent.six2dez.com/user-guide/burp-scan-skill)
+- [Burp Scan Skill](https://burp-ai-agent.six2dez.com/examples/burp-scan-skill)
 
 ## Operator Playbooks
 
@@ -263,13 +288,14 @@ Full documentation is available at **[burp-ai-agent.six2dez.com](https://burp-ai
 - **Secrets at rest — what the encryption does and does not do.** All stored API keys and tokens (Anthropic, MCP bearer token, TLS keystore password, etc.) are encrypted with AES-256-GCM using a per-install random master key (`SecretCipher`). **That master key is itself stored in Burp Preferences, Base64-encoded, beside the ciphertext it protects** (preference `secret.master.key.v1`). Anyone who can read your Burp Preferences can therefore also read the key and decrypt the secrets. It does **not** protect against a local attacker or a malicious process running as your user; treat it as obfuscation against casual inspection of a preferences file or an exported project. If a credential must survive that threat model, keep it in a dedicated secret store and paste it per session.
 - **Model-emitted tool calls need your approval.** A tool call that the extension parses out of *model output* does not execute against Burp until you decide. Every tool carries a required security tier: run automatically (read-only and bounded output), confirm with an **Approve for session** option, or confirm on every single call. A tool name the catalog does not recognise resolves to confirm-every-time, never to automatic, and external `ext:`-namespaced tools always confirm every call. The decision appears as a card inline in the chat transcript rather than as a modal dialog, and each decision is recorded — an audit event plus a line in Burp's Output tab, since audit logging is off by default. Denying returns a neutral "not authorised, do not retry" result to the model rather than an error. This tier is independent of the **Unsafe Mode** switch: Unsafe Mode governs whether a tool may *ever* run, the tier governs whether the model may run it *without asking*. Design rationale: [`DECISIONS.md`](DECISIONS.md) ADR-15. Operator runbook: [docs/ui-safety-guide.md](docs/ui-safety-guide.md).
 - STRICT privacy mode anonymizes hosts using real HKDF (HMAC-SHA256 extract/expand). BALANCED mode redacts cookies, tokens, and auth headers. OFF mode sends traffic as-is.
-- External MCP server outputs are wrapped in a trust-boundary marker before entering the AI prompt, preventing prompt injection from untrusted server responses.
+- External MCP server outputs are wrapped in a trust-boundary marker before entering the AI prompt, preventing prompt injection from untrusted server responses (full build only).
 
 Settings are schema-versioned internally (`settings.schema.version`) and migrated additively on load for safe upgrades.
 
 ## Requirements
 
-- **Burp Suite** Community or Professional (2023.12+)
+- **Burp Suite** Community or Professional, 2026.2 or newer
+- **AI features in the BApp Store build** — The BApp Store build runs on Burp Community and Burp Professional; it sends AI requests only while Burp's "Use AI" setting is enabled for the extension, and with it off it loads and refuses every AI request. The GitHub full build's HTTP and CLI backends do not depend on Burp's "Use AI" (Burp AI and the MCP tools `ai_analyze` and `ai_passive_scan` still do); see [Which Build?](https://burp-ai-agent.six2dez.com/getting-started/which-build).
 - **Java 21** (bundled with modern Burp for runtime; required separately for building from source)
 - At least one AI backend configured (see table above)
 

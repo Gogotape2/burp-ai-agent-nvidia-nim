@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.backends.cli
 
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
 
@@ -150,6 +151,9 @@ internal object CliTempFileRegistry {
     /** Whether the exit hook is currently armed. Test seam for D-03's laziness and removal. */
     internal fun isHookRegisteredForTests(): Boolean = synchronized(hookLock) { hook != null }
 
+    /** The armed exit hook, or null. Test seam for its thread name (Phase 33 D-11). */
+    internal fun hookThreadForTests(): Thread? = synchronized(hookLock) { hook }
+
     /**
      * Returns the object to a known state without deleting anything. Test seam.
      *
@@ -164,7 +168,7 @@ internal object CliTempFileRegistry {
     private fun armHook() {
         synchronized(hookLock) {
             if (hook != null) return
-            val thread = Thread({ drain() }, "burp-ai-agent-cli-temp-sweep")
+            val thread = ExtensionThreads.newThread("cli-temp-sweep") { drain() }
             Runtime.getRuntime().addShutdownHook(thread)
             hook = thread
         }

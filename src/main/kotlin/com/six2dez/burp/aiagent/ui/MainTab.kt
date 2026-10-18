@@ -9,23 +9,26 @@ import com.six2dez.burp.aiagent.config.AgentSettingsRepository
 import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.context.ContextCapture
 import com.six2dez.burp.aiagent.mcp.McpSupervisor
-import com.six2dez.burp.aiagent.redact.PrivacyMode
+import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.scanner.ScanKnowledgeBase
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.components.DependencyBanner
 import com.six2dez.burp.aiagent.ui.components.SubtleNotice
 import com.six2dez.burp.aiagent.ui.components.ToggleSwitch
+import com.six2dez.burp.aiagent.ui.panels.ActiveScanQueuePanel
+import com.six2dez.burp.aiagent.util.ExtensionThreads
+import com.six2dez.burp.aiagent.util.ShutdownDeadline
 import java.awt.BorderLayout
 import java.awt.Cursor
 import java.awt.Dimension
 import java.awt.Graphics
 import java.awt.Graphics2D
 import java.awt.RenderingHints
+import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.awt.event.MouseAdapter
 import java.awt.event.MouseEvent
 import java.time.LocalTime
-import java.util.concurrent.Executors
 import javax.swing.BoxLayout
 import javax.swing.JComponent
 import javax.swing.JLabel
@@ -35,6 +38,7 @@ import javax.swing.JTabbedPane
 import javax.swing.SwingUtilities
 import javax.swing.Timer
 import javax.swing.border.EmptyBorder
+import javax.swing.event.ChangeListener
 
 /**
  * Minimum width of the chat side of the sessions split, in pixels.
@@ -81,7 +85,7 @@ class MainTab(
     private val backendLabel = JLabel("Backend")
     private val mcpLabel = JLabel("MCP")
     private val mcpStatusLabel = JLabel("MCP: -")
-    private val backendStatusLabel = JLabel("AI: ?")
+    private val backendStatusLabel = JLabel(BackendPill.idleText(supervisor.allowsUnpromptedHealthChecks()))
     private val activeScanStatsLabel = JLabel("Scans: 0 | Vulns: 0")
     private val safetyIndicator =
         com.six2dez.burp.aiagent.ui.components
@@ -92,8 +96,8 @@ class MainTab(
 
     /**
      * REL-05 / SC4 / CR-02 — the one seam every header and Settings-tab settings write leaves the EDT
-     * through. Disposed first in [shutdown] so no write can start after `App.shutdown()` continues on
-     * to `mcpSupervisor.shutdown()`.
+     * through. Disposed first in [quiesce], which App calls before it stops MCP, so no write can start
+     * after `App.shutdown()` continues on to `mcpSupervisor.shutdown(deadline)`.
      */
     private val settingsPersistQueue = SettingsPersistQueue { api.logging().logToError(it) }
     private val mcpStatusTimer =
@@ -106,6 +110,9 @@ class MainTab(
         }
     private val baseTabCaption = "Custom AI Agent"
     private var tabbedPane: JTabbedPane? = null
+
+    // LIFE-01: the listener ensureTabPaneAttached adds to Burp's tab pane, kept so dispose can remove it.
+    private var tabPaneListener: ChangeListener? = null
     private var attentionActive = false
     private val dependencyBanner =
         DependencyBanner("MCP Server must be enabled. Toggle MCP to enable AI features.")
@@ -119,313 +126,364 @@ class MainTab(
     private var syncingToggles = false
     private var healthTimer: Timer? = null
 
-    // Status-pill health checks: ONE named daemon thread plus a single-flight gate, so checks never
-    // overlap and never pile up threads. A Settings save / click that lands mid-check is coalesced
-    // into exactly one re-check after the flight ends.
-    private val healthExec =
-        Executors.newSingleThreadExecutor { r -> Thread(r, "burp-ai-agent-health").apply { isDaemon = true } }
+    // Status-pill health checks: ONE named daemon thread (burp-ai-agent-health, D-11) plus a
+    // single-flight gate, so checks never overlap and never pile up threads. A Settings save / click
+    // that lands mid-check is coalesced into exactly one re-check after the flight ends.
+    private val healthExec = ExtensionThreads.singleThread("health")
     private val healthGate =
         SingleFlightGate(healthExec) {
             SwingUtilities.invokeLater { requestHealthCheck(HealthCheckTrigger.SETTINGS_CHANGED) }
         }
 
-    // EDT-confined: the first timer tick is the startup check (remote providers included).
+    // EDT-confined: the first timer tick is the startup check (remote providers included). The timer
+    // exists only when the injected policy allows unprompted checks (D-09/D-11).
     private var startupHealthCheckDone = false
+
+    // EDT-confined: true while the pill shows BackendPill.AI_DISABLED (set by renderAiDisabled,
+    // cleared by renderBackendHealth and by the idle repaint in updateBackendBadge).
+    private var pillShowsAiDisabled = false
     private var sessionPersistTimer: Timer? = null
     private var lastProjectId: String? = null
 
     init {
-        settingsPanel =
-            SettingsPanel(
-                api,
-                settingsRepo,
-                backends,
-                supervisor,
-                audit,
-                mcpSupervisor,
-                passiveAiScanner,
-                activeAiScanner,
-                buildIdentity = buildIdentity,
-            )
-        if (aiRequestLogger != null) {
-            aiLoggerPanel = AiLoggerPanel(aiRequestLogger)
-        }
-        bottomTabsPanel = BottomTabsPanel(settingsPanel, aiLoggerPanel)
-        chatPanel =
-            ChatPanel(
-                api = api,
-                supervisor = supervisor,
-                // Quick 261008-n0c (H10): the chat reads the applied snapshot and never saves or applies.
-                getSettings = { settingsRepo.load() },
-                validateBackend = { validateBackendCommand(it) },
-                ensureBackendReady = { ensureBackendReady(it) },
-                showError = { showError(it) },
-                onStatusChanged = { refreshStatus() },
-                onResponseReady = { notifyResponseReady() },
-                // CAP-04: thread scanner reference so ChatPanel can call setBudgetPaused(true) on hard cap
-                passiveScanner = passiveAiScanner,
-            )
-        root.background = UiTheme.Colors.surface
+        // WR-04 / D-07: App receives no MainTab whose constructor threw, so it can never stop the timers
+        // and the health pool started below; a failed construction stops them itself. No catch: the
+        // original throwable leaves the constructor unchanged.
+        var constructed = false
+        try {
+            settingsPanel =
+                SettingsPanel(
+                    api,
+                    settingsRepo,
+                    backends,
+                    supervisor,
+                    audit,
+                    mcpSupervisor,
+                    passiveAiScanner,
+                    activeAiScanner,
+                    buildIdentity = buildIdentity,
+                )
+            if (aiRequestLogger != null) {
+                aiLoggerPanel = AiLoggerPanel(aiRequestLogger)
+            }
+            bottomTabsPanel = BottomTabsPanel(settingsPanel, aiLoggerPanel)
+            chatPanel =
+                ChatPanel(
+                    api = api,
+                    supervisor = supervisor,
+                    // Quick 261008-n0c (H10): the chat reads the applied snapshot and never saves or applies.
+                    getSettings = { settingsRepo.load() },
+                    validateBackend = { validateBackendCommand(it) },
+                    // Phase 33 / EDT-01: the Ollama / LM Studio pre-send probe runs on burp-ai-agent-chat-readiness.
+                    // Research OQ2, kept as it was: one loopback health request after Send, through the GATE-01
+                    // choke point, painted on the status pill (the first-send refresh for these two backends at no
+                    // extra request). The "start it now?" prompt and the service start stay on the EDT.
+                    readiness =
+                        LocalServiceReadiness(
+                            backendHealth = { supervisor.backendHealth(it) },
+                            onProbed = { health ->
+                                val checkedAt = LocalTime.now()
+                                SwingUtilities.invokeLater { renderBackendHealth(health, checkedAt) }
+                            },
+                            onUnreachable = { confirmLocalServiceStart(it) },
+                        ),
+                    showError = { showError(it) },
+                    onStatusChanged = { refreshStatus() },
+                    onTurnSettled = { backendId, error -> onChatTurnSettled(backendId, error) },
+                    // CAP-04: thread scanner reference so ChatPanel can call setBudgetPaused(true) on hard cap
+                    passiveScanner = passiveAiScanner,
+                )
+            root.background = UiTheme.Colors.surface
 
-        val top = HeaderPanel()
-        top.layout = BorderLayout()
-        top.border = EmptyBorder(14, 16, 14, 16)
+            val top = HeaderPanel()
+            top.layout = BorderLayout()
+            top.border = EmptyBorder(14, 16, 14, 16)
 
-        val title = JLabel("Custom AI Agent")
-        title.font = UiTheme.Typography.headline
-        title.foreground = UiTheme.Colors.onSurface
+            val title = JLabel("Custom AI Agent")
+            title.font = UiTheme.Typography.headline
+            title.foreground = UiTheme.Colors.onSurface
 
-        val subtitle = JLabel("Terminal-first workflows with privacy controls and audit logging.")
-        subtitle.font = UiTheme.Typography.body
-        subtitle.foreground = UiTheme.Colors.onSurfaceVariant
+            val subtitle = JLabel("Terminal-first workflows with privacy controls and audit logging.")
+            subtitle.font = UiTheme.Typography.body
+            subtitle.foreground = UiTheme.Colors.onSurfaceVariant
 
-        val titleBox = JPanel()
-        titleBox.layout = BoxLayout(titleBox, BoxLayout.Y_AXIS)
-        titleBox.isOpaque = false
-        titleBox.add(title)
-        titleBox.add(javax.swing.Box.createRigidArea(Dimension(0, 4)))
-        titleBox.add(subtitle)
+            val titleBox = JPanel()
+            titleBox.layout = BoxLayout(titleBox, BoxLayout.Y_AXIS)
+            titleBox.isOpaque = false
+            titleBox.add(title)
+            titleBox.add(javax.swing.Box.createRigidArea(Dimension(0, 4)))
+            titleBox.add(subtitle)
 
-        val actions = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 12, 4))
-        actions.isOpaque = false
+            val actions = JPanel(java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 12, 4))
+            actions.isOpaque = false
 
-        mcpLabel.font = UiTheme.Typography.body
-        mcpLabel.foreground = UiTheme.Colors.onSurfaceVariant
-        backendLabel.font = UiTheme.Typography.body
-        backendLabel.foreground = UiTheme.Colors.onSurfaceVariant
-        backendPicker.font = UiTheme.Typography.body
-        backendPicker.background = UiTheme.Colors.comboBackground
-        backendPicker.foreground = UiTheme.Colors.comboForeground
-        backendPicker.border = javax.swing.border.LineBorder(UiTheme.Colors.outline, 1, true)
-        val initialSettings = settingsRepo.load()
-        syncBackendPicker(initialSettings.preferredBackendId)
-        backendPicker.addActionListener {
-            if (syncingBackendPicker) return@addActionListener
-            // PC-3: any user pick, burp-ai included, replaces an unavailable saved id and hides both notices.
-            val selected = backendPicker.selectedItem as? String ?: BackendRegistry.DEFAULT_BACKEND_ID
-            unavailableBackendNotice.hideNotice()
-            settingsPanel.setPreferredBackend(selected)
-            persistSettings("backend-picker", HeaderSettingsChange.PreferredBackend(selected), recheckHealth = true)
-        }
-
-        mcpToggle.isSelected = initialSettings.mcpSettings.enabled
-        passiveToggle.isSelected = initialSettings.passiveAiEnabled
-        activeToggle.isSelected = initialSettings.activeAiEnabled
-        mcpToggle.toolTipText = "Enable MCP server."
-        passiveToggle.toolTipText = "Enable AI passive scanner."
-        activeToggle.toolTipText = "Enable AI active scanner."
-
-        val mcpGroup = JPanel()
-        mcpGroup.layout = BoxLayout(mcpGroup, BoxLayout.X_AXIS)
-        mcpGroup.isOpaque = false
-        mcpGroup.add(mcpLabel)
-        mcpGroup.add(javax.swing.Box.createRigidArea(Dimension(6, 0)))
-        mcpGroup.add(mcpToggle)
-        mcpGroup.add(javax.swing.Box.createRigidArea(Dimension(10, 0)))
-        styleStatusLabel(mcpStatusLabel)
-        mcpGroup.add(mcpStatusLabel)
-
-        styleStatusLabel(backendStatusLabel)
-        // Click the pill to re-check on demand; remote providers are never polled on a timer.
-        backendStatusLabel.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
-        backendStatusLabel.toolTipText = "Click to re-check"
-        backendStatusLabel.addMouseListener(
-            object : MouseAdapter() {
-                override fun mouseClicked(e: MouseEvent) {
-                    requestHealthCheck(HealthCheckTrigger.USER_CLICK)
-                }
-            },
-        )
-        // First tick = startup check for every backend; later ticks poll local backends only.
-        healthTimer =
-            Timer(Defaults.LOCAL_BACKEND_HEALTH_POLL_INTERVAL_MS.toInt()) {
-                val trigger = if (startupHealthCheckDone) HealthCheckTrigger.PERIODIC else HealthCheckTrigger.STARTUP
-                startupHealthCheckDone = true
-                requestHealthCheck(trigger)
-            }.apply { initialDelay = Defaults.BACKEND_HEALTH_STARTUP_CHECK_DELAY_MS.toInt() }
-        healthTimer?.start()
-
-        val passiveLabel = JLabel("Passive")
-        passiveLabel.font = UiTheme.Typography.body
-        passiveLabel.foreground = UiTheme.Colors.onSurfaceVariant
-        val activeLabel = JLabel("Active")
-        activeLabel.font = UiTheme.Typography.body
-        activeLabel.foreground = UiTheme.Colors.onSurfaceVariant
-
-        val scannerGroup = JPanel()
-        scannerGroup.layout = BoxLayout(scannerGroup, BoxLayout.X_AXIS)
-        scannerGroup.isOpaque = false
-        scannerGroup.add(passiveLabel)
-        scannerGroup.add(javax.swing.Box.createRigidArea(Dimension(6, 0)))
-        scannerGroup.add(passiveToggle)
-        scannerGroup.add(javax.swing.Box.createRigidArea(Dimension(12, 0)))
-        scannerGroup.add(activeLabel)
-        scannerGroup.add(javax.swing.Box.createRigidArea(Dimension(6, 0)))
-        scannerGroup.add(activeToggle)
-        scannerGroup.add(javax.swing.Box.createRigidArea(Dimension(10, 0)))
-        activeScanStatsLabel.font = UiTheme.Typography.body
-        activeScanStatsLabel.foreground = UiTheme.Colors.onSurfaceVariant
-        scannerGroup.add(activeScanStatsLabel)
-
-        val clientGroup = JPanel()
-        clientGroup.layout = BoxLayout(clientGroup, BoxLayout.X_AXIS)
-        clientGroup.isOpaque = false
-        clientGroup.add(backendLabel)
-        clientGroup.add(javax.swing.Box.createRigidArea(Dimension(6, 0)))
-        clientGroup.add(backendPicker)
-        clientGroup.add(javax.swing.Box.createRigidArea(Dimension(16, 0)))
-        styleStatusLabel(statusLabel)
-        sessionLabel.font = UiTheme.Typography.body
-        sessionLabel.foreground = UiTheme.Colors.onSurfaceVariant
-        clientGroup.add(statusLabel)
-        clientGroup.add(javax.swing.Box.createRigidArea(Dimension(10, 0)))
-        clientGroup.add(backendStatusLabel)
-        clientGroup.add(javax.swing.Box.createRigidArea(Dimension(10, 0)))
-        clientGroup.add(sessionLabel)
-        clientGroup.add(javax.swing.Box.createHorizontalGlue())
-        clientGroup.add(safetyIndicator)
-
-        actions.add(mcpGroup)
-        actions.add(scannerGroup)
-        actions.add(clientGroup)
-
-        val mainContent =
-            javax.swing.JSplitPane(
-                javax.swing.JSplitPane.HORIZONTAL_SPLIT,
-                chatPanel.sessionsComponent(),
-                chatPanel.root,
-            )
-        mainContent.resizeWeight = 0.2
-        mainContent.setDividerLocation(0.2)
-        mainContent.border = EmptyBorder(0, 0, 0, 0)
-        // The other half of 22-UI-REVIEW.md S-1. A JSplitPane clamps its divider to the two children's
-        // minimum sizes, and nothing set one here — so the divider could be dragged until the SEC-06
-        // approval card's decision buttons were off the right edge of a transcript that shows no
-        // horizontal scrollbar. Setting it on the CHAT side is what turns the card's own floor into a
-        // drag limit; the sessions list keeps its natural minimum so the split still moves both ways.
-        chatPanel.root.minimumSize = Dimension(CHAT_PANEL_MIN_WIDTH, 0)
-
-        val center =
-            javax.swing.JSplitPane(
-                javax.swing.JSplitPane.VERTICAL_SPLIT,
-                mainContent,
-                bottomTabsPanel.root,
-            )
-        center.resizeWeight = 0.7
-        center.setDividerLocation(0.7)
-        center.border = EmptyBorder(0, 0, 0, 0)
-        center.isOneTouchExpandable = true
-        bottomTabsPanel.root.minimumSize = java.awt.Dimension(0, 90)
-        bottomTabsPanel.root.preferredSize = java.awt.Dimension(0, 240)
-
-        top.add(titleBox, BorderLayout.CENTER)
-        top.add(actions, BorderLayout.EAST)
-
-        val north = JPanel(BorderLayout())
-        north.background = UiTheme.Colors.surface
-        north.add(top, BorderLayout.NORTH)
-        north.add(unavailableBackendNotice, BorderLayout.CENTER)
-        north.add(dependencyBanner, BorderLayout.SOUTH)
-        root.add(north, BorderLayout.NORTH)
-        root.add(center, BorderLayout.CENTER)
-
-        // ── Keyboard shortcuts ──
-        val imap = root.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
-        val amap = root.actionMap
-        val meta =
-            java.awt.Toolkit
-                .getDefaultToolkit()
-                .menuShortcutKeyMaskEx
-
-        imap.put(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_N, meta), "newSession")
-        amap.put(
-            "newSession",
-            object : javax.swing.AbstractAction() {
-                override fun actionPerformed(e: java.awt.event.ActionEvent?) {
-                    chatPanel.createNewSession()
-                }
-            },
-        )
-        imap.put(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_W, meta), "deleteSession")
-        amap.put(
-            "deleteSession",
-            object : javax.swing.AbstractAction() {
-                override fun actionPerformed(e: java.awt.event.ActionEvent?) {
-                    chatPanel.deleteCurrentSession()
-                }
-            },
-        )
-        imap.put(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_L, meta), "clearChat")
-        amap.put(
-            "clearChat",
-            object : javax.swing.AbstractAction() {
-                override fun actionPerformed(e: java.awt.event.ActionEvent?) {
-                    chatPanel.clearCurrentChat()
-                }
-            },
-        )
-        imap.put(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_E, meta), "exportChat")
-        amap.put(
-            "exportChat",
-            object : javax.swing.AbstractAction() {
-                override fun actionPerformed(e: java.awt.event.ActionEvent?) {
-                    chatPanel.exportCurrentChatAsMarkdown()
-                }
-            },
-        )
-        imap.put(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "toggleSettings")
-        amap.put(
-            "toggleSettings",
-            object : javax.swing.AbstractAction() {
-                override fun actionPerformed(e: java.awt.event.ActionEvent?) {
-                    if (!chatPanel.cancelInFlightRequest()) {
-                        bottomTabsPanel.toggle()
-                    }
-                }
-            },
-        )
-        imap.put(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_T, meta), "openToolsDialog")
-        amap.put(
-            "openToolsDialog",
-            object : javax.swing.AbstractAction() {
-                override fun actionPerformed(e: java.awt.event.ActionEvent?) {
-                    chatPanel.openToolDialog()
-                }
-            },
-        )
-
-        wireActions()
-        renderStatus()
-        mcpStatusTimer.start()
-
-        // Restore persisted chat sessions
-        chatPanel.restoreSessions()
-
-        // Capture initial project ID
-        lastProjectId =
-            try {
-                api.project().id()
-            } catch (_: Exception) {
-                null
+            mcpLabel.font = UiTheme.Typography.body
+            mcpLabel.foreground = UiTheme.Colors.onSurfaceVariant
+            backendLabel.font = UiTheme.Typography.body
+            backendLabel.foreground = UiTheme.Colors.onSurfaceVariant
+            backendPicker.font = UiTheme.Typography.body
+            backendPicker.background = UiTheme.Colors.comboBackground
+            backendPicker.foreground = UiTheme.Colors.comboForeground
+            backendPicker.border = javax.swing.border.LineBorder(UiTheme.Colors.outline, 1, true)
+            val initialSettings = settingsRepo.load()
+            syncBackendPicker(initialSettings.preferredBackendId)
+            backendPicker.addActionListener {
+                if (syncingBackendPicker) return@addActionListener
+                // PC-3: any user pick, burp-ai included, replaces an unavailable saved id and hides both notices.
+                val selected = backendPicker.selectedItem as? String ?: BackendRegistry.DEFAULT_BACKEND_ID
+                unavailableBackendNotice.hideNotice()
+                settingsPanel.setPreferredBackend(selected)
+                persistSettings("backend-picker", HeaderSettingsChange.PreferredBackend(selected), recheckHealth = true)
             }
 
-        // Auto-save sessions every 30 seconds, detect project changes, and update usage stats
-        sessionPersistTimer =
-            Timer(30_000) {
-                val currentProjectId =
+            mcpToggle.isSelected = initialSettings.mcpSettings.enabled
+            passiveToggle.isSelected = initialSettings.passiveAiEnabled
+            activeToggle.isSelected = initialSettings.activeAiEnabled
+            mcpToggle.toolTipText = "Enable MCP server."
+            passiveToggle.toolTipText = "Enable AI passive scanner."
+            activeToggle.toolTipText = "Enable AI active scanner."
+
+            val mcpGroup = JPanel()
+            mcpGroup.layout = BoxLayout(mcpGroup, BoxLayout.X_AXIS)
+            mcpGroup.isOpaque = false
+            mcpGroup.add(mcpLabel)
+            mcpGroup.add(javax.swing.Box.createRigidArea(Dimension(6, 0)))
+            mcpGroup.add(mcpToggle)
+            mcpGroup.add(javax.swing.Box.createRigidArea(Dimension(10, 0)))
+            styleStatusLabel(mcpStatusLabel)
+            mcpGroup.add(mcpStatusLabel)
+
+            styleStatusLabel(backendStatusLabel)
+            // Click the pill to re-check on demand; remote providers are never polled on a timer.
+            backendStatusLabel.cursor = Cursor.getPredefinedCursor(Cursor.HAND_CURSOR)
+            backendStatusLabel.toolTipText = "Click to re-check"
+            backendStatusLabel.addMouseListener(
+                object : MouseAdapter() {
+                    override fun mouseClicked(e: MouseEvent) {
+                        requestHealthCheck(HealthCheckTrigger.USER_CLICK)
+                    }
+                },
+            )
+            startUnpromptedHealthTimerIfAllowed()
+
+            val passiveLabel = JLabel("Passive")
+            passiveLabel.font = UiTheme.Typography.body
+            passiveLabel.foreground = UiTheme.Colors.onSurfaceVariant
+            val activeLabel = JLabel("Active")
+            activeLabel.font = UiTheme.Typography.body
+            activeLabel.foreground = UiTheme.Colors.onSurfaceVariant
+
+            val scannerGroup = JPanel()
+            scannerGroup.layout = BoxLayout(scannerGroup, BoxLayout.X_AXIS)
+            scannerGroup.isOpaque = false
+            scannerGroup.add(passiveLabel)
+            scannerGroup.add(javax.swing.Box.createRigidArea(Dimension(6, 0)))
+            scannerGroup.add(passiveToggle)
+            scannerGroup.add(javax.swing.Box.createRigidArea(Dimension(12, 0)))
+            scannerGroup.add(activeLabel)
+            scannerGroup.add(javax.swing.Box.createRigidArea(Dimension(6, 0)))
+            scannerGroup.add(activeToggle)
+            scannerGroup.add(javax.swing.Box.createRigidArea(Dimension(10, 0)))
+            activeScanStatsLabel.font = UiTheme.Typography.body
+            activeScanStatsLabel.foreground = UiTheme.Colors.onSurfaceVariant
+            scannerGroup.add(activeScanStatsLabel)
+
+            val clientGroup = JPanel()
+            clientGroup.layout = BoxLayout(clientGroup, BoxLayout.X_AXIS)
+            clientGroup.isOpaque = false
+            clientGroup.add(backendLabel)
+            clientGroup.add(javax.swing.Box.createRigidArea(Dimension(6, 0)))
+            clientGroup.add(backendPicker)
+            clientGroup.add(javax.swing.Box.createRigidArea(Dimension(16, 0)))
+            styleStatusLabel(statusLabel)
+            sessionLabel.font = UiTheme.Typography.body
+            sessionLabel.foreground = UiTheme.Colors.onSurfaceVariant
+            clientGroup.add(statusLabel)
+            clientGroup.add(javax.swing.Box.createRigidArea(Dimension(10, 0)))
+            clientGroup.add(backendStatusLabel)
+            clientGroup.add(javax.swing.Box.createRigidArea(Dimension(10, 0)))
+            clientGroup.add(sessionLabel)
+            clientGroup.add(javax.swing.Box.createHorizontalGlue())
+            clientGroup.add(safetyIndicator)
+
+            actions.add(mcpGroup)
+            actions.add(scannerGroup)
+            actions.add(clientGroup)
+
+            val mainContent =
+                javax.swing.JSplitPane(
+                    javax.swing.JSplitPane.HORIZONTAL_SPLIT,
+                    chatPanel.sessionsComponent(),
+                    chatPanel.root,
+                )
+            mainContent.resizeWeight = 0.2
+            mainContent.setDividerLocation(0.2)
+            mainContent.border = EmptyBorder(0, 0, 0, 0)
+            // The other half of 22-UI-REVIEW.md S-1. A JSplitPane clamps its divider to the two children's
+            // minimum sizes, and nothing set one here — so the divider could be dragged until the SEC-06
+            // approval card's decision buttons were off the right edge of a transcript that shows no
+            // horizontal scrollbar. Setting it on the CHAT side is what turns the card's own floor into a
+            // drag limit; the sessions list keeps its natural minimum so the split still moves both ways.
+            chatPanel.root.minimumSize = Dimension(CHAT_PANEL_MIN_WIDTH, 0)
+
+            val center =
+                javax.swing.JSplitPane(
+                    javax.swing.JSplitPane.VERTICAL_SPLIT,
+                    mainContent,
+                    bottomTabsPanel.root,
+                )
+            center.resizeWeight = 0.7
+            center.setDividerLocation(0.7)
+            center.border = EmptyBorder(0, 0, 0, 0)
+            center.isOneTouchExpandable = true
+            bottomTabsPanel.root.minimumSize = java.awt.Dimension(0, 90)
+            bottomTabsPanel.root.preferredSize = java.awt.Dimension(0, 240)
+
+            top.add(titleBox, BorderLayout.CENTER)
+            top.add(actions, BorderLayout.EAST)
+
+            val north = JPanel(BorderLayout())
+            north.background = UiTheme.Colors.surface
+            north.add(top, BorderLayout.NORTH)
+            north.add(unavailableBackendNotice, BorderLayout.CENTER)
+            north.add(dependencyBanner, BorderLayout.SOUTH)
+            root.add(north, BorderLayout.NORTH)
+            root.add(center, BorderLayout.CENTER)
+
+            // ── Keyboard shortcuts ──
+            val imap = root.getInputMap(JComponent.WHEN_ANCESTOR_OF_FOCUSED_COMPONENT)
+            val amap = root.actionMap
+            // Headless guard, as in ChatPanel: under -Djava.awt.headless=true menuShortcutKeyMaskEx throws,
+            // which made MainTab (and so App.initialize) unbuildable in a test. CTRL is the correct modifier
+            // on Linux and Windows, and a real Burp UI on macOS is never headless.
+            val meta =
+                if (java.awt.GraphicsEnvironment.isHeadless()) {
+                    InputEvent.CTRL_DOWN_MASK
+                } else {
                     try {
-                        api.project().id()
-                    } catch (_: Exception) {
-                        null
+                        java.awt.Toolkit
+                            .getDefaultToolkit()
+                            .menuShortcutKeyMaskEx
+                    } catch (_: java.awt.HeadlessException) {
+                        InputEvent.CTRL_DOWN_MASK
                     }
-                if (lastProjectId != null && currentProjectId != null && lastProjectId != currentProjectId) {
-                    onProjectChanged()
                 }
-                lastProjectId = currentProjectId
-                chatPanel.saveSessions()
-                settingsPanel.updateUsageSummary(chatPanel.usageStats())
+
+            imap.put(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_N, meta), "newSession")
+            amap.put(
+                "newSession",
+                object : javax.swing.AbstractAction() {
+                    override fun actionPerformed(e: java.awt.event.ActionEvent?) {
+                        chatPanel.createNewSession()
+                    }
+                },
+            )
+            imap.put(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_W, meta), "deleteSession")
+            amap.put(
+                "deleteSession",
+                object : javax.swing.AbstractAction() {
+                    override fun actionPerformed(e: java.awt.event.ActionEvent?) {
+                        chatPanel.deleteCurrentSession()
+                    }
+                },
+            )
+            imap.put(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_L, meta), "clearChat")
+            amap.put(
+                "clearChat",
+                object : javax.swing.AbstractAction() {
+                    override fun actionPerformed(e: java.awt.event.ActionEvent?) {
+                        chatPanel.clearCurrentChat()
+                    }
+                },
+            )
+            imap.put(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_E, meta), "exportChat")
+            amap.put(
+                "exportChat",
+                object : javax.swing.AbstractAction() {
+                    override fun actionPerformed(e: java.awt.event.ActionEvent?) {
+                        chatPanel.exportCurrentChatAsMarkdown()
+                    }
+                },
+            )
+            imap.put(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_ESCAPE, 0), "toggleSettings")
+            amap.put(
+                "toggleSettings",
+                object : javax.swing.AbstractAction() {
+                    override fun actionPerformed(e: java.awt.event.ActionEvent?) {
+                        if (!chatPanel.cancelInFlightRequest()) {
+                            bottomTabsPanel.toggle()
+                        }
+                    }
+                },
+            )
+            imap.put(javax.swing.KeyStroke.getKeyStroke(KeyEvent.VK_T, meta), "openToolsDialog")
+            amap.put(
+                "openToolsDialog",
+                object : javax.swing.AbstractAction() {
+                    override fun actionPerformed(e: java.awt.event.ActionEvent?) {
+                        chatPanel.openToolDialog()
+                    }
+                },
+            )
+
+            wireActions()
+            renderStatus()
+            mcpStatusTimer.start()
+
+            // Restore persisted chat sessions
+            chatPanel.restoreSessions()
+
+            // Capture initial project ID
+            lastProjectId =
+                try {
+                    api.project().id()
+                } catch (_: Exception) {
+                    null
+                }
+
+            // Auto-save sessions every 30 seconds, detect project changes, and update usage stats
+            sessionPersistTimer =
+                Timer(30_000) {
+                    val currentProjectId =
+                        try {
+                            api.project().id()
+                        } catch (_: Exception) {
+                            null
+                        }
+                    if (lastProjectId != null && currentProjectId != null && lastProjectId != currentProjectId) {
+                        onProjectChanged()
+                    }
+                    lastProjectId = currentProjectId
+                    chatPanel.saveSessions()
+                    settingsPanel.updateUsageSummary(chatPanel.usageStats())
+                }
+            sessionPersistTimer?.start()
+            constructed = true
+        } finally {
+            if (!constructed) abandonConstruction()
+        }
+    }
+
+    /**
+     * EDT only. Phase 31 / D-09 — paints the status pill from a chat turn that already happened, so the
+     * first send is also the first health signal and no extra request is made. Only a turn on the
+     * selected (resolved) backend repaints the pill (T-31-37): a refusal shows "AI disabled in Burp"
+     * with the policy's own text, otherwise the turn's outcome ("AI: OK" or "AI: Offline" with the
+     * error). A delivered turn also refreshes the usage summary and the tab attention.
+     */
+    private fun onChatTurnSettled(
+        backendId: String,
+        error: Throwable?,
+    ) {
+        // Both sides resolved: a saved id the registry does not know (a CLI id from a full install) runs as burp-ai.
+        if (backends.resolve(backendId) == backends.resolve(settingsRepo.load().preferredBackendId)) {
+            if (BackendPill.isRefusal(error)) {
+                renderAiDisabled(error?.message.orEmpty())
+            } else {
+                renderBackendHealth(BackendPill.healthOfTurn(error), LocalTime.now())
             }
-        sessionPersistTimer?.start()
+        }
+        if (error == null) notifyResponseReady()
     }
 
     private fun notifyResponseReady() {
@@ -441,11 +499,14 @@ class MainTab(
         if (tabbedPane != null) return tabbedPane
         val pane = findParentTabbedPane() ?: return null
         tabbedPane = pane
-        pane.addChangeListener {
-            if (pane.selectedComponent == root) {
-                setAttention(false)
+        val listener =
+            ChangeListener {
+                if (pane.selectedComponent == root) {
+                    setAttention(false)
+                }
             }
-        }
+        tabPaneListener = listener
+        pane.addChangeListener(listener)
         return pane
     }
 
@@ -574,9 +635,16 @@ class MainTab(
     private fun requestHealthCheck(trigger: HealthCheckTrigger) {
         val settings = settingsRepo.load()
         // The supervisor checks the resolved backend (burp-ai for an unregistered saved id), so does the policy.
-        val backend = backends.get(backends.resolve(settings.preferredBackendId))
-        if (!BackendHealthPolicy.shouldRun(trigger, settings, backend)) return
-        healthGate.submit(coalesce = trigger != HealthCheckTrigger.PERIODIC) {
+        val resolvedId = backends.resolve(settings.preferredBackendId)
+        val backend = backends.get(resolvedId)
+        // D-01 / D-10: a refused backend is reported from a local policy read; no check is submitted.
+        val refusal = supervisor.aiAccessRefusal(resolvedId)
+        if (refusal != null) {
+            renderAiDisabled(refusal)
+            return
+        }
+        if (!BackendHealthPolicy.shouldRun(trigger, settings, backend, supervisor.allowsUnpromptedHealthChecks())) return
+        healthGate.submit(coalesce = BackendHealthPolicy.coalesces(trigger)) {
             val health =
                 try {
                     supervisor.backendHealth(settings)
@@ -588,10 +656,41 @@ class MainTab(
         }
     }
 
+    /**
+     * EDT only. Phase 31 / D-09, D-11 — creates and starts the status-pill health timer, but only when
+     * the injected policy allows checks nobody asked for. The BApp Store build therefore has no health
+     * timer and no health tick while idle; its checks run on Save, a backend change, a pill click and
+     * Test connection. In the full build the first tick is the startup check for every backend and
+     * later ticks poll local backends only (the 1.0.1 behaviour).
+     */
+    private fun startUnpromptedHealthTimerIfAllowed() {
+        if (!supervisor.allowsUnpromptedHealthChecks()) return
+        healthTimer =
+            Timer(Defaults.LOCAL_BACKEND_HEALTH_POLL_INTERVAL_MS.toInt()) {
+                val trigger = if (startupHealthCheckDone) HealthCheckTrigger.PERIODIC else HealthCheckTrigger.STARTUP
+                startupHealthCheckDone = true
+                requestHealthCheck(trigger)
+            }.apply { initialDelay = Defaults.BACKEND_HEALTH_STARTUP_CHECK_DELAY_MS.toInt() }
+        healthTimer?.start()
+    }
+
+    /**
+     * EDT only. Phase 31 / D-01, D-10 — paints "AI disabled in Burp" with [refusal] (the injected
+     * policy's own text) as the tooltip. It comes from a local policy read and sends nothing. Plan
+     * 31-13 also calls it from the chat-turn handler when a turn was refused.
+     */
+    private fun renderAiDisabled(refusal: String) {
+        backendStatusLabel.text = BackendPill.AI_DISABLED
+        backendStatusLabel.background = UiTheme.Colors.statusTerminal
+        backendStatusLabel.toolTipText = refusal
+        pillShowsAiDisabled = true
+    }
+
     private fun renderBackendHealth(
         health: HealthCheckResult,
         checkedAt: LocalTime,
     ) {
+        pillShowsAiDisabled = false
         when (health) {
             is HealthCheckResult.Healthy -> {
                 backendStatusLabel.text = "AI: OK"
@@ -617,7 +716,7 @@ class MainTab(
     }
 
     /**
-     * Saves the one field [change] carries on `burp-ai-settings-sync` and nothing else — no MCP apply, no
+     * Saves the one field [change] carries on `burp-ai-agent-settings-sync` and nothing else — no MCP apply, no
      * scanner reload.
      *
      * Each write carries ONE field, never a snapshot read off the Settings tab: the worker
@@ -673,7 +772,7 @@ class MainTab(
 
     /**
      * Saves the MCP enabled flag [change] carries AND re-applies the MCP settings, both on
-     * `burp-ai-settings-sync`.
+     * `burp-ai-agent-settings-sync`.
      *
      * The worker ([persistHeaderChangeAndApplyMcp]) saves the flag onto the SAVED snapshot under the
      * repository write lock and applies MCP built from what was saved (port, external access, privacy
@@ -790,44 +889,35 @@ class MainTab(
         // pill. Reading the applied snapshot also means this 1 Hz tick no longer re-runs every custom
         // pattern's SafeRegex probe on the EDT.
         val settings = settingsRepo.load()
-        val privacy = settings.privacyMode.name
-        val mcpExposure =
-            when {
-                !settings.mcpSettings.enabled -> "MCP off"
-                settings.mcpSettings.externalEnabled -> "MCP external"
-                else -> "MCP local"
-            }
-        val unsafe = if (settings.mcpSettings.unsafeEnabled) "Unsafe on" else "Unsafe off"
-        val scanners = "Passive ${if (settings.passiveAiEnabled) "on" else "off"} / Active ${if (settings.activeAiEnabled) "on" else "off"}"
-
-        val level =
-            when {
-                settings.mcpSettings.enabled &&
-                    settings.mcpSettings.externalEnabled &&
-                    settings.mcpSettings.unsafeEnabled ->
-                    com.six2dez.burp.aiagent.ui.components.SafetyIndicator.Level.RISK
-                settings.privacyMode == PrivacyMode.OFF && settings.mcpSettings.enabled ->
-                    com.six2dez.burp.aiagent.ui.components.SafetyIndicator.Level.RISK
-                settings.privacyMode == PrivacyMode.OFF ||
-                    settings.mcpSettings.externalEnabled ||
-                    settings.mcpSettings.unsafeEnabled ->
-                    com.six2dez.burp.aiagent.ui.components.SafetyIndicator.Level.WARN
-                else -> com.six2dez.burp.aiagent.ui.components.SafetyIndicator.Level.OK
-            }
-        // HTML tooltip so the four flags wrap onto separate lines instead of one long string.
-        val tooltip =
-            "<html><b>Safety</b><br>" +
-                "Privacy: $privacy<br>" +
-                "MCP: $mcpExposure<br>" +
-                unsafe +
-                "<br>" +
-                scanners +
-                "</html>"
-        safetyIndicator.setSummary(level, tooltip)
+        // Phase 31 / D-13: Unsafe counts only when the catalog has unsafe tools (data, not flavor).
+        val hasUnsafeTools = McpToolCatalog.hasUnsafeTools()
+        safetyIndicator.setSummary(
+            SafetySummary.safetyLevel(settings, hasUnsafeTools),
+            SafetySummary.tooltip(settings, hasUnsafeTools),
+        )
     }
 
+    /**
+     * EDT only, called every second by [mcpStatusTimer]. Re-reads the injected policy for the selected
+     * (resolved) backend and repaints the pill only between "AI disabled in Burp" and the idle text,
+     * so turning Burp's "Use AI" on or off shows up without a click.
+     *
+     * Research OQ4, planner's call: a local re-read on an existing timer is acceptable only because it
+     * sends no request (the policy reads Burp's setting, the settings come from the applied snapshot).
+     * It must never ask for a health check, directly or through the single-flight gate; the structural
+     * test `thePillRefusalIsLocalAndTheBadgeRefreshSendsNothing` pins that.
+     */
     private fun updateBackendBadge() {
-        // Updated by separate timer to avoid blocking EDT
+        val selected = backends.resolve(settingsRepo.load().preferredBackendId)
+        val refusal = supervisor.aiAccessRefusal(selected)
+        if (refusal != null) {
+            if (!pillShowsAiDisabled) renderAiDisabled(refusal)
+        } else if (pillShowsAiDisabled) {
+            backendStatusLabel.text = BackendPill.idleText(supervisor.allowsUnpromptedHealthChecks())
+            backendStatusLabel.background = UiTheme.Colors.outlineVariant
+            backendStatusLabel.toolTipText = "Click to re-check"
+            pillShowsAiDisabled = false
+        }
     }
 
     private fun updateActiveScanStats() {
@@ -942,56 +1032,55 @@ class MainTab(
         }
     }
 
-    internal fun ensureOllamaReadyIfNeeded(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean {
-        if (settings.preferredBackendId != "ollama") return true
-        if (supervisor.isOllamaHealthy(settings)) return true
-        val result =
-            JOptionPane.showConfirmDialog(
-                root,
-                "Ollama is not running. Start it now?",
-                "Custom AI Agent",
-                JOptionPane.YES_NO_OPTION,
-            )
-        if (result != JOptionPane.YES_OPTION) return false
-        if (!settings.ollamaAutoStart) {
-            showError("Auto-start for Ollama is disabled in settings.")
-            return false
-        }
-        val ok = supervisor.startOllamaService(settings)
-        if (!ok) showError("Failed to start Ollama. Check the command in settings.")
-        return ok
-    }
-
-    internal fun ensureLmStudioReadyIfNeeded(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean {
-        if (settings.preferredBackendId != "lmstudio") return true
-        if (supervisor.isLmStudioHealthy(settings)) return true
-
-        if (settings.lmStudioAutoStart) {
-            val ok = supervisor.startLmStudioService(settings)
-            if (!ok) showError("Failed to auto-start LM Studio. Check the command in settings.")
-            return ok
-        }
-
-        val result =
-            JOptionPane.showConfirmDialog(
-                root,
-                "LM Studio is not running. Start it now?",
-                "Custom AI Agent",
-                JOptionPane.YES_NO_OPTION,
-            )
-        if (result != JOptionPane.YES_OPTION) return false
-
-        val ok = supervisor.startLmStudioService(settings)
-        if (!ok) showError("Failed to start LM Studio. Check the command in settings.")
-        return ok
-    }
-
-    private fun ensureBackendReady(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean =
+    /**
+     * Phase 33 / EDT-01: the EDT half of the chat's pre-send readiness check, asked only after the probe
+     * on `burp-ai-agent-chat-readiness` found the selected local service unreachable. Every dialog
+     * string and auto-start rule is the one `ensureOllamaReadyIfNeeded` / `ensureLmStudioReadyIfNeeded`
+     * had; only the probe moved off the EDT. Returns whether the turn may be sent.
+     */
+    @Suppress("ReturnCount") // moved from ensureOllamaReadyIfNeeded / ensureLmStudioReadyIfNeeded (baseline-keyed on the old signatures); ADR-17 forbids a new entry
+    private fun confirmLocalServiceStart(settings: com.six2dez.burp.aiagent.config.AgentSettings): Boolean {
         when (settings.preferredBackendId) {
-            "ollama" -> ensureOllamaReadyIfNeeded(settings)
-            "lmstudio" -> ensureLmStudioReadyIfNeeded(settings)
-            else -> true
+            "ollama" -> {
+                val result =
+                    JOptionPane.showConfirmDialog(
+                        root,
+                        "Ollama is not running. Start it now?",
+                        "Custom AI Agent",
+                        JOptionPane.YES_NO_OPTION,
+                    )
+                if (result != JOptionPane.YES_OPTION) return false
+                if (!settings.ollamaAutoStart) {
+                    showError("Auto-start for Ollama is disabled in settings.")
+                    return false
+                }
+                val ok = supervisor.startOllamaService(settings)
+                if (!ok) showError("Failed to start Ollama. Check the command in settings.")
+                return ok
+            }
+            "lmstudio" -> {
+                if (settings.lmStudioAutoStart) {
+                    val ok = supervisor.startLmStudioService(settings)
+                    if (!ok) showError("Failed to auto-start LM Studio. Check the command in settings.")
+                    return ok
+                }
+
+                val result =
+                    JOptionPane.showConfirmDialog(
+                        root,
+                        "LM Studio is not running. Start it now?",
+                        "Custom AI Agent",
+                        JOptionPane.YES_NO_OPTION,
+                    )
+                if (result != JOptionPane.YES_OPTION) return false
+
+                val ok = supervisor.startLmStudioService(settings)
+                if (!ok) showError("Failed to start LM Studio. Check the command in settings.")
+                return ok
+            }
+            else -> return true
         }
+    }
 
     /**
      * Called when the Burp project changes (detected via api.project().id() diff).
@@ -1010,21 +1099,82 @@ class MainTab(
         supervisor.shutdownAllChatSessions()
     }
 
-    fun shutdown() {
-        // FIRST, before settingsPanel.shutdown(): App.shutdown() calls mainTab?.shutdown() before
-        // mcpSupervisor.shutdown(), so disposing here is what stops a settings write submitted just
-        // before unload from starting after the supervisor is gone. It never takes the queue's lock,
-        // so it cannot itself block the EDT on an in-flight bounded MCP stop.
+    internal fun attachTabPaneForTests(): JTabbedPane? = ensureTabPaneAttached()
+
+    /**
+     * Phase 33 / D-06 — unload step 0, before MCP stops: stops everything that could start new work.
+     * CR-01 (UI half) / LIFE-02: it also stops the status-pill health pool and asks the chat panel to
+     * cancel its readiness probes, its turn in flight and every pending tool card. Takes no lock and
+     * waits for nothing: the chat cancel is posted to the EDT, not awaited.
+     */
+    fun quiesce() {
+        // FIRST: App.shutdown() calls quiesce() before mcpSupervisor.shutdown(deadline), so disposing the
+        // queue here is what stops a settings write submitted just before unload from restarting MCP (or
+        // a scanner) after it stopped. It never takes the queue's lock, so it cannot block on a write in
+        // flight; the save worker that is running is superseded and its tail does nothing.
         settingsPersistQueue.dispose()
         settingsPanel.shutdown()
+        // No wait and no release: a health check in flight is a Montoya request that cannot be
+        // interrupted. The pool stays tracked, so the final unload sweep waits for it within the
+        // deadline and reports it only if it outlives the deadline. From step 0 on, a pill click or a
+        // backend change can no longer submit a status-pill check, which in the full build could
+        // reach a cloud provider: the gate's submit is rejected and releases itself.
+        healthExec.shutdownNow()
+        chatPanel.cancelForUnload()
         mcpStatusTimer.stop()
         healthTimer?.stop()
         healthTimer = null
-        healthExec.shutdownNow()
+    }
+
+    /**
+     * WR-04 / LIFE-01 / D-07 — runs only when the constructor throws. App assigns its tab only after the
+     * constructor returns, so it can neither quiesce nor dispose a tab whose construction failed, and the
+     * ExtensionThreads unload sweep does not track Swing timers: without this cleanup the timers started
+     * so far would keep firing into a half-built extension for the rest of Burp's life. Stops every timer
+     * construction may have started (MCP status, health, session persist, the Settings panel's, the chat
+     * panel's own) and the health pool. Each step runs inside runCatching, so a cleanup failure can never
+     * replace the throwable that is leaving the constructor. Constructs nothing and waits for nothing.
+     */
+    private fun abandonConstruction() {
+        runCatching { settingsPersistQueue.dispose() }
+        if (this::settingsPanel.isInitialized) runCatching { settingsPanel.shutdown() }
+        runCatching { mcpStatusTimer.stop() }
+        runCatching { healthTimer?.stop() }
+        runCatching { sessionPersistTimer?.stop() }
+        runCatching { healthExec.shutdownNow() }
+        if (this::chatPanel.isInitialized) runCatching { chatPanel.cancelForUnload() }
+        runCatching { aiLoggerPanel?.shutdown() }
+    }
+
+    /**
+     * Phase 33 / D-06, LIFE-01 — unload step 4, after MCP, the scanners and the backends stopped: tears
+     * the UI down. Swing state is touched on the EDT; the health pool was already stopped by [quiesce].
+     * [deadline] is the shared unload budget (D-05). WR-03: both EDT waits here, the tab-pane listener
+     * removal and the chat teardown, are bounded by what is left of it; a part the EDT did not tear
+     * down in time writes one Error line naming it (D-09), and its teardown still runs once the EDT is
+     * free.
+     */
+    fun dispose(deadline: ShutdownDeadline) {
+        // Phase 32 / D-13: no queue dialog or queue refresh timer outlives the extension.
+        ActiveScanQueuePanel.disposeOpenDialogs()
+        removeTabPaneListener(deadline)
         sessionPersistTimer?.stop()
         sessionPersistTimer = null
-        chatPanel.shutdown()
+        chatPanel.shutdown(deadline)
         chatPanel.saveSessions()
         aiLoggerPanel?.shutdown()
+    }
+
+    /**
+     * LIFE-01: removes the listener this tab added to Burp's tab pane, on the EDT. WR-03: waits for the
+     * EDT at most what is left of [deadline].
+     */
+    private fun removeTabPaneListener(deadline: ShutdownDeadline) {
+        EdtTeardown.runWithin("MainTab", deadline, { api.logging().logToError(it) }) {
+            tabPaneListener?.let { listener -> tabbedPane?.removeChangeListener(listener) }
+            tabPaneListener = null
+            // tabbedPane stays set on purpose: a late setAttention then finds it attached and adds no
+            // new listener.
+        }
     }
 }

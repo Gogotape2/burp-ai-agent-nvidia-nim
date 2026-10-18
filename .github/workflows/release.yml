@@ -32,13 +32,16 @@ jobs:
       # The full asset ships the CLI backends, whose heavy suites live in the full flavor, so the
       # release runs both flavors' fast and heavy suites, not only the store ones.
       - name: Run both flavors' test suites (fast + heavy)
-        run: ./gradlew test fullTest nightlyRegressionTest nightlyRegressionFullTest edtGuardWithoutAssertionsTest --no-daemon
+        run: ./gradlew test fullTest nightlyRegressionTest nightlyRegressionFullTest edtGuardWithoutAssertionsTest unloadLeakTest --no-daemon
 
       # This is the same task PRs run. A failing step stops the job before anything is staged or
       # published, so a tag on a commit that never ran PR CI cannot publish an unchecked store JAR (D-02).
       - name: Build both JARs and inspect the BApp Store JAR (CI-01 / D-02)
         run: ./gradlew bappJar fullJar storeJarContentTest --no-daemon
 
+      # bom.json is generated from fullRuntimeClasspath. storeJarContentTest in the gate step above fails
+      # if that classpath resolves a dependency of the BApp Store JAR to another version or lacks it
+      # (CR-01), so the Which JAR? block's bom.json line holds for both assets.
       - name: Generate SBOM (CycloneDX)
         # --no-configuration-cache: cyclonedx-gradle-plugin 1.10.0 uses Task.project
         # at execution time, which is incompatible with Gradle's configuration cache.
@@ -121,7 +124,7 @@ jobs:
 
           Each JAR has a `.sha256` file in `sha256sum` format. Run `sha256sum -c <asset>.sha256` next to the download to check that it is complete and uncorrupted. The checksum is published on the same release as the JAR, so it does not show who built the file.
 
-          `bom.json` lists the full build's runtime dependencies, which include every dependency of the BApp Store build.
+          `bom.json` lists the full build's runtime dependencies: every dependency of the BApp Store build, at the version the BApp Store JAR packages (the release checks this before it publishes), plus libraries only the full build ships, such as the Ktor client.
 
           WHICH_JAR
           sed "s/@VERSION@/${VERSION}/g" build/release-notes/which-jar.md > build/release-notes/release_notes.md

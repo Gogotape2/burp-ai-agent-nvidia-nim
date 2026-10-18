@@ -2,6 +2,10 @@ package com.six2dez.burp.aiagent.ui.panels
 
 import com.six2dez.burp.aiagent.scanner.ActiveAiScanner
 import com.six2dez.burp.aiagent.scanner.ActiveScanQueueItem
+import com.six2dez.burp.aiagent.scanner.SuggestedTarget
+import com.six2dez.burp.aiagent.scanner.SuggestedTargetList
+import com.six2dez.burp.aiagent.ui.SuggestedQueueAction
+import com.six2dez.burp.aiagent.ui.SwingSuggestedQueuePrompts
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
 import java.awt.BorderLayout
 import java.awt.Dialog
@@ -10,6 +14,7 @@ import java.awt.FlowLayout
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import java.util.concurrent.CopyOnWriteArraySet
 import javax.swing.BorderFactory
 import javax.swing.JButton
 import javax.swing.JComponent
@@ -18,6 +23,7 @@ import javax.swing.JLabel
 import javax.swing.JOptionPane
 import javax.swing.JPanel
 import javax.swing.JScrollPane
+import javax.swing.JSplitPane
 import javax.swing.JTable
 import javax.swing.ListSelectionModel
 import javax.swing.SwingUtilities
@@ -25,23 +31,71 @@ import javax.swing.Timer
 import javax.swing.border.EmptyBorder
 import javax.swing.table.AbstractTableModel
 
+// Phase 32 / D-01: room for the queued table and the Suggested section, one above the other.
+private const val DIALOG_MIN_HEIGHT = 560
+private const val DIALOG_PREFERRED_HEIGHT = 720
+private const val SPLIT_RESIZE_WEIGHT = 0.5
+
 object ActiveScanQueuePanel {
+    /**
+     * Phase 32 / D-13 — a window the extension unload must close. Phase 33 owns unload in general; this
+     * covers the queue dialog, whose 2-second refresh timer would otherwise outlive the extension.
+     */
+    internal interface UnloadClosable {
+        /** Stops the window's timers and disposes it. Called on the EDT. */
+        fun closeForUnload()
+    }
+
+    private val openDialogs = CopyOnWriteArraySet<UnloadClosable>()
+
+    internal fun track(dialog: UnloadClosable) {
+        openDialogs.add(dialog)
+    }
+
+    internal fun untrack(dialog: UnloadClosable) {
+        openDialogs.remove(dialog)
+    }
+
+    internal fun openDialogCount(): Int = openDialogs.size
+
+    /**
+     * Phase 32 / D-13 — closes every open queue dialog and stops its refresh timer, then forgets them.
+     * Unload may run off the EDT: the closes then run through [SwingUtilities.invokeLater], never
+     * [SwingUtilities.invokeAndWait], so the unload thread is never blocked on the EDT.
+     */
+    fun disposeOpenDialogs() {
+        val dialogs = openDialogs.toList()
+        openDialogs.clear()
+        if (dialogs.isEmpty()) return
+        val closeAll = { dialogs.forEach { it.closeForUnload() } }
+        if (SwingUtilities.isEventDispatchThread()) closeAll() else SwingUtilities.invokeLater(closeAll)
+    }
+
+    /**
+     * Opens the "AI Active Scanner Queue" dialog: the queued targets on top and, below them, the
+     * targets passive findings [suggested] (Phase 32 / D-01), which the user queues through the
+     * confirmed flow.
+     */
     fun showDialog(
         parent: JComponent?,
         scanner: ActiveAiScanner,
+        suggested: SuggestedTargetList,
     ) {
-        val dialog = QueueDialog(parent, scanner)
+        val dialog = QueueDialog(parent, scanner, suggested)
+        track(dialog)
         dialog.isVisible = true
     }
 
     private class QueueDialog(
         parent: JComponent?,
         private val scanner: ActiveAiScanner,
+        private val suggested: SuggestedTargetList,
     ) : JDialog(
             SwingUtilities.getWindowAncestor(parent),
             "AI Active Scanner Queue",
             Dialog.ModalityType.MODELESS,
-        ) {
+        ),
+        UnloadClosable {
         private val formatter: DateTimeFormatter =
             DateTimeFormatter
                 .ofPattern("yyyy-MM-dd HH:mm:ss")
@@ -53,12 +107,17 @@ object ActiveScanQueuePanel {
         private val cancelSelectedButton = JButton("Cancel selected")
         private val clearQueueButton = JButton("Clear queue")
         private val closeButton = JButton("Close")
-        private val refreshTimer = javax.swing.Timer(2000) { refreshQueue() }
+        private val suggestedSection = SuggestedTargetsSection(suggested, { entries -> queueSuggested(entries) }, formatter)
+        private val refreshTimer =
+            javax.swing.Timer(2000) {
+                refreshQueue()
+                suggestedSection.refreshIfChanged()
+            }
 
         init {
             layout = BorderLayout(DesignTokens.Spacing.sm + 2, DesignTokens.Spacing.sm + 2)
-            minimumSize = Dimension(900, 360)
-            preferredSize = Dimension(1024, 460)
+            minimumSize = Dimension(900, DIALOG_MIN_HEIGHT)
+            preferredSize = Dimension(1024, DIALOG_PREFERRED_HEIGHT)
             rootPane.border =
                 BorderFactory.createEmptyBorder(
                     DesignTokens.Spacing.md,
@@ -67,16 +126,21 @@ object ActiveScanQueuePanel {
                     DesignTokens.Spacing.md,
                 )
 
-            val infoLabel = JLabel("Queued active scanner targets (snapshot). Select rows to cancel specific items.")
-            infoLabel.font = DesignTokens.Typography.body
-            infoLabel.foreground = DesignTokens.Colors.onSurfaceVariant
-            add(infoLabel, BorderLayout.NORTH)
-
             configureTable()
-            add(JScrollPane(table), BorderLayout.CENTER)
-            add(buildFooter(), BorderLayout.SOUTH)
+            val split = JSplitPane(JSplitPane.VERTICAL_SPLIT, buildQueuePane(), suggestedSection)
+            split.resizeWeight = SPLIT_RESIZE_WEIGHT
+            split.border = BorderFactory.createEmptyBorder()
+            add(split, BorderLayout.CENTER)
+            val closeBar = JPanel(FlowLayout(FlowLayout.RIGHT, DesignTokens.Spacing.sm, 0))
+            closeBar.background = DesignTokens.Colors.surface
+            styleButton(closeButton, outlined = false)
+            closeBar.add(closeButton)
+            add(closeBar, BorderLayout.SOUTH)
 
-            refreshButton.addActionListener { refreshQueue() }
+            refreshButton.addActionListener {
+                refreshQueue()
+                suggestedSection.refreshNow()
+            }
             cancelSelectedButton.addActionListener { cancelSelectedRows() }
             clearQueueButton.addActionListener { clearQueueWithConfirmation() }
             closeButton.addActionListener { dispose() }
@@ -86,14 +150,21 @@ object ActiveScanQueuePanel {
                 object : java.awt.event.WindowAdapter() {
                     override fun windowClosed(e: java.awt.event.WindowEvent?) {
                         refreshTimer.stop()
+                        untrack(this@QueueDialog)
                     }
                 },
             )
 
             refreshQueue()
+            suggestedSection.refreshNow()
             refreshTimer.start()
             pack()
             setLocationRelativeTo(parent)
+        }
+
+        override fun closeForUnload() {
+            refreshTimer.stop()
+            dispose()
         }
 
         private fun configureTable() {
@@ -108,6 +179,20 @@ object ActiveScanQueuePanel {
             table.tableHeader.font = DesignTokens.Typography.label
             table.tableHeader.background = DesignTokens.Colors.surface
             table.tableHeader.foreground = DesignTokens.Colors.onSurface
+            PlainTextTableCellRenderer.installOn(table)
+        }
+
+        // The queued table with its info label and its own buttons; the top half of the split.
+        private fun buildQueuePane(): JPanel {
+            val pane = JPanel(BorderLayout(DesignTokens.Spacing.sm, DesignTokens.Spacing.sm))
+            pane.background = DesignTokens.Colors.surface
+            val infoLabel = JLabel("Queued active scanner targets (snapshot). Select rows to cancel specific items.")
+            infoLabel.font = DesignTokens.Typography.body
+            infoLabel.foreground = DesignTokens.Colors.onSurfaceVariant
+            pane.add(infoLabel, BorderLayout.NORTH)
+            pane.add(JScrollPane(table), BorderLayout.CENTER)
+            pane.add(buildFooter(), BorderLayout.SOUTH)
+            return pane
         }
 
         private fun buildFooter(): JPanel {
@@ -122,11 +207,9 @@ object ActiveScanQueuePanel {
             styleButton(refreshButton, outlined = true)
             styleButton(cancelSelectedButton, outlined = true)
             styleButton(clearQueueButton, outlined = true)
-            styleButton(closeButton, outlined = false)
             buttons.add(refreshButton)
             buttons.add(cancelSelectedButton)
             buttons.add(clearQueueButton)
-            buttons.add(closeButton)
 
             footer.add(statusLabel, BorderLayout.WEST)
             footer.add(buttons, BorderLayout.EAST)
@@ -153,6 +236,13 @@ object ActiveScanQueuePanel {
             val items = scanner.getQueueItems(limit = 5_000)
             model.setItems(items)
             statusLabel.text = "Queue size: ${items.size}"
+        }
+
+        // Phase 32 / D-04, D-05: the section's queue buttons run the one confirmed flow; queued entries leave the list.
+        private fun queueSuggested(entries: List<SuggestedTarget>) {
+            SuggestedQueueAction(suggested, scanner, SwingSuggestedQueuePrompts(this, scanner)).queue(entries)
+            refreshQueue()
+            suggestedSection.refreshNow()
         }
 
         private fun cancelSelectedRows() {

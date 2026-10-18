@@ -3,8 +3,10 @@
 package com.six2dez.burp.aiagent.mcp.tools
 
 import burp.api.montoya.core.BurpSuiteEdition
+import com.six2dez.burp.aiagent.backends.http.AiAccessRefusedException
 import com.six2dez.burp.aiagent.mcp.McpToolCatalog
 import com.six2dez.burp.aiagent.mcp.McpToolContext
+import com.six2dez.burp.aiagent.mcp.McpToolDescriptor
 import com.six2dez.burp.aiagent.mcp.ToolCallOrigin
 import com.six2dez.burp.aiagent.spi.ToolHandler
 import io.modelcontextprotocol.kotlin.sdk.CallToolResult
@@ -16,6 +18,9 @@ object McpToolExecutor {
     // Phase 16 (CAP-02 / D-04): the namespace of external tools. Phase 29 (D-14): a provider's dynamic
     // namespace answers for these names; ToolApprovalGate derives CONFIRM_EACH from the same prefix.
     private const val DYNAMIC_TOOL_PREFIX = "ext:"
+
+    // The answer of an AI tool called before the supervisor exists (the handlers' own wording).
+    private const val AI_TOOLS_NOT_INITIALIZED = "AI tools not initialized."
 
     fun describeTools(
         context: McpToolContext,
@@ -142,7 +147,30 @@ object McpToolExecutor {
         val args = if (handler.pagedArgs) normalizePagedArgs(argsJson) else argsJson
         // The single redacting choke point: every handler's result, native or provider-supplied,
         // passes context.redactIfNeeded before it leaves this function.
-        return runTool(context, resolvedName, args) { context.redactIfNeeded(handler.execute(args, context)) }
+        return runTool(context, resolvedName, args) {
+            requireAiToolAccess(handler.descriptor, context)
+            context.redactIfNeeded(handler.execute(args, context))
+        }
+    }
+
+    /**
+     * Phase 31 / D-03, D-16 — refuses a tool whose descriptor says it sends AI requests
+     * ([McpToolDescriptor.requiresBurpAi]) before its handler runs, with the shared refusal of
+     * `AgentSupervisor.aiToolRefusal`: the injected backend policy first, then the requirement that
+     * Burp's "Use AI" is on whatever the backend. Data-driven (the descriptor flag), never a tool id or
+     * a flavor branch. It runs inside [runTool] on EVERY call, so a call made after "Use AI" turns off is
+     * refused even if the previous one ran (D-04); [runTool] turns the exception into an MCP tool error
+     * carrying the text verbatim. The GATE-01 transport choke point stays the backstop for any request
+     * that slips past this early check.
+     */
+    private fun requireAiToolAccess(
+        descriptor: McpToolDescriptor,
+        context: McpToolContext,
+    ) {
+        if (!descriptor.requiresBurpAi) return
+        val supervisor = context.supervisor ?: throw AiAccessRefusedException(AI_TOOLS_NOT_INITIALIZED)
+        val refusal = supervisor.aiToolRefusal() ?: return
+        throw AiAccessRefusedException(refusal)
     }
 
     /**

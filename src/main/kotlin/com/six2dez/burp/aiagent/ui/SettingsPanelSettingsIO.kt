@@ -479,7 +479,7 @@ internal fun SettingsPanel.parseContentTypePrefixesInput(
 }
 
 /**
- * The synchronous body of a Settings save. Runs on the `burp-ai-settings-save` worker, never the EDT.
+ * The synchronous body of a Settings save. Runs on the `burp-ai-agent-settings-save` worker, never the EDT.
  *
  * REL-05 / SC4: this reaches `McpSupervisor.applySettings` → `McpSupervisor.stop()` →
  * `KtorMcpServerManager.stop()`'s bounded `future.get(10, TimeUnit.SECONDS)`, and it also does
@@ -591,9 +591,11 @@ internal fun SettingsPanel.applyAndSaveSettingsBody(
     activeAiScanner.scanMode = updated.activeAiScanMode
     activeAiScanner.useCollaborator = updated.activeAiUseCollaborator
     // CR-01, guard 3 of 3. Same selectivity as guard 2, and asserted independently of it: a supersede
-    // landing between the two setEnabled calls must still stop this one.
+    // landing between the passive setEnabled and this requestEnabled must still stop this one.
     if (!isCurrent()) return
-    activeAiScanner.setEnabled(updated.activeAiEnabled)
+    // requestEnabled does nothing for the value the scanner already has, so a Save never restarts a
+    // running scanner and keeps its OAST state (Phase 33 D-01, D-03).
+    activeAiScanner.requestEnabled(updated.activeAiEnabled) { SwingUtilities.invokeLater { refreshActiveAiStatus() } }
 
     contributionFailure?.let { throw it }
     api.logging().logToOutput("AI Agent settings saved.")
@@ -628,7 +630,7 @@ internal fun SettingsPanel.persistContributions(snapshots: List<Pair<SettingsCon
 }
 
 /**
- * Applies [updated] on the `burp-ai-settings-save` worker and reports the outcome to [onDone] on the EDT.
+ * Applies [updated] on the `burp-ai-agent-settings-save` worker and reports the outcome to [onDone] on the EDT.
  *
  * Call this from the EDT with a snapshot already read off the Swing components. It returns as soon as
  * the worker is started; nothing after the dispatch waits on it (REL-05 / SC4).
@@ -655,7 +657,7 @@ internal fun SettingsPanel.applyAndSaveSettingsAsync(
     // The consequence, stated precisely: onDone is never invoked and the busy seam is never raised,
     // so there is nothing left to lower. That is correct at teardown — the panel is gone and no
     // listener remains to inform — and it is unreachable otherwise, because SettingsPanel.shutdown()
-    // is called only from MainTab.shutdown().
+    // is called only from MainTab.quiesce().
     if (disposed) return
     // Minted FIRST, on the calling thread, before the seam is raised and before anything is dispatched.
     // Same placement rule and same reason as OffEdtDispatch's dispatchedObserver and
@@ -682,8 +684,9 @@ internal fun SettingsPanel.applyAndSaveSettingsAsync(
     busyListener?.invoke(true)
     OffEdtDispatch.run(
         // Named so a stuck save is identifiable in a thread dump; the label identifies this unit of
-        // work in OffEdtDispatch's two observers and in the error log.
-        threadName = "burp-ai-settings-save",
+        // work in OffEdtDispatch's two observers and in the error log. The burp-ai-agent- prefix is
+        // the Phase 33 D-11 thread-name convention.
+        threadName = "burp-ai-agent-settings-save",
         label = "settings-save",
         logError = { api.logging().logToError(it) },
         work = {

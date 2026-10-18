@@ -12,6 +12,9 @@ import burp.api.montoya.http.message.responses.HttpResponse
 
 private val SERIALIZED_NAME_REGEX = Regex("(data|payload|serialized|object|state|viewstate)", RegexOption.IGNORE_CASE)
 
+// Phase 34 / PERF-01: compiled once per extension load, not per call.
+private val MULTIPART_FILENAME_REGEX = Regex("filename=\"([^\"]+)\"")
+
 private val csrfTokenRegex =
     Regex(
         "(csrf|xsrf|anti_csrf|csrfmiddlewaretoken|__requestverificationtoken|token)",
@@ -173,7 +176,7 @@ private fun detectUnrestrictedFileUpload(
     val contentType = request.headerValue("Content-Type") ?: return null
     if (!contentType.contains("multipart/form-data", ignoreCase = true)) return null
 
-    val filenameMatch = Regex("filename=\"([^\"]+)\"").find(requestBody) ?: return null
+    val filenameMatch = MULTIPART_FILENAME_REGEX.find(requestBody) ?: return null
     val filename = filenameMatch.groupValues[1]
     val ext = filename.substringAfterLast('.', "")
     if (ext.isBlank() || !dangerousUploadExtensions.contains(ext.lowercase())) return null

@@ -70,6 +70,40 @@ class SerializationTest {
             )
         }
 
+        /**
+         * 32-REVIEW CR-01: the extension stores issue text as escaped `<br>`-joined HTML, so the four
+         * issue text fields are decoded to plain text before `redactIfNeeded` sees the JSON.
+         */
+        @Test
+        fun decodesTheEscapedIssueTextFields() {
+            val issue =
+                auditIssue(
+                    detail = "a &amp; b<br>&nbsp;&nbsp;c &lt;x&gt;",
+                    remediation = "r1<br>r2",
+                    background = "b1<br>b2",
+                    definitionRemediation = "d1<br>d2",
+                )
+
+            val details = issue.toSerializableForm()
+
+            assertEquals("a & b\n  c <x>", details.detail)
+            assertEquals("r1\nr2", details.remediation)
+            assertEquals("b1\nb2", details.definition.background)
+            assertEquals("d1\nd2", details.definition.remediation)
+        }
+
+        @Test
+        fun keepsNullIssueTextNull() {
+            val issue = auditIssue(detail = null, remediation = null, background = null, definitionRemediation = null)
+
+            val details = issue.toSerializableForm()
+
+            assertNull(details.detail)
+            assertNull(details.remediation)
+            assertNull(details.definition.background)
+            assertNull(details.definition.remediation)
+        }
+
         @Test
         fun mapsTheRequestResponseList() {
             val issue = auditIssue()
@@ -345,6 +379,10 @@ class SerializationTest {
         confidence: MontoyaConfidence = MontoyaConfidence.CERTAIN,
         requestResponses: List<MontoyaHttpRequestResponse> = listOf(requestResponse()),
         interactions: List<Interaction> = listOf(interaction()),
+        detail: String? = "Detail text",
+        remediation: String? = "Remediation text",
+        background: String? = "Background",
+        definitionRemediation: String? = "Definition remediation",
     ): AuditIssue {
         val service = mock<MontoyaHttpService>()
         whenever(service.host()).thenReturn("example.com")
@@ -353,15 +391,15 @@ class SerializationTest {
 
         val definition = mock<AuditIssueDefinition>()
         whenever(definition.name()).thenReturn("Definition name")
-        whenever(definition.background()).thenReturn("Background")
-        whenever(definition.remediation()).thenReturn("Definition remediation")
+        whenever(definition.background()).thenReturn(background)
+        whenever(definition.remediation()).thenReturn(definitionRemediation)
         whenever(definition.typeIndex()).thenReturn(7)
 
         // Built before the `whenever` chain below for the same UnfinishedStubbing reason.
         val issue = mock<AuditIssue>()
         whenever(issue.name()).thenReturn("SQL injection")
-        whenever(issue.detail()).thenReturn("Detail text")
-        whenever(issue.remediation()).thenReturn("Remediation text")
+        whenever(issue.detail()).thenReturn(detail)
+        whenever(issue.remediation()).thenReturn(remediation)
         whenever(issue.httpService()).thenReturn(service)
         whenever(issue.baseUrl()).thenReturn("https://example.com/login")
         whenever(issue.severity()).thenReturn(severity)

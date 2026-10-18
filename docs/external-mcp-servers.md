@@ -1,15 +1,17 @@
 # External MCP Servers
 
-Burp AI Agent can connect to external or custom MCP servers over SSE (HTTP-based) or stdio (local process) transports, so AI agents can call tools from those servers alongside Burp's built-in MCP tools in the same session.
+Custom AI Agent can connect to external or custom MCP servers over SSE (HTTP-based) or stdio (local process) transports, so AI agents can call tools from those servers alongside Burp's built-in MCP tools in the same session.
+
+> **Full build only.** External MCP servers, the **Settings > MCP Server > External MCP Servers** section and the `ext:` tools are part of the GitHub full build (`./gradlew fullJar`, `Custom-AI-Agent-full-<version>.jar`). The BApp Store build (`./gradlew bappJar`) has neither the external MCP client nor that settings section. See [the README build section](../README.md#1-install).
 
 ## Setup
 
-1. Open **Settings > MCP > External Servers**.
-2. Click **Add** and enter a server name and transport type:
-   - **SSE**: enter the full SSE URL (e.g. `http://localhost:3000/sse`).
-   - **stdio**: enter the executable command (e.g. `/usr/local/bin/my-mcp-server`).
-3. For SSE servers that require authentication, enter the bearer token. The token is stored encrypted at rest (AES-256-GCM) — see [Security Notes](#security-notes) for what that does and does not protect against.
-4. Click **Connect**. Once connected, the server's tools appear in the agent's tool list alongside the built-in Burp tools.
+1. Open **Settings > MCP Server** and expand **External MCP Servers**.
+2. Click **Add Server**, enter a **Display name** and choose the **Transport**:
+   - **SSE**: enter the full SSE URL in **Server URL** (e.g. `http://localhost:3000/sse`).
+   - **stdio**: enter the executable in **Command** (e.g. `/usr/local/bin/my-mcp-server`). The **Transport** list offers stdio only while **Enable stdio bridge** is on in the same tab.
+3. For SSE servers that require authentication, enter the **Bearer token**. The token is stored encrypted at rest (AES-256-GCM) — see [Security Notes](#security-notes) for what that does and does not protect against.
+4. Click **Save Server**, then **Save settings**. Once connected, the server's tools appear in the agent's tool list alongside the built-in Burp tools.
 
 ## Transport Types
 

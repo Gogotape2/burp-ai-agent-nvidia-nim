@@ -2,6 +2,7 @@ package com.six2dez.burp.aiagent.full.autoqueue
 
 import burp.api.montoya.MontoyaApi
 import burp.api.montoya.http.message.HttpRequestResponse
+import burp.api.montoya.http.message.requests.HttpRequest
 import com.six2dez.burp.aiagent.InMemoryPreferences
 import com.six2dez.burp.aiagent.TestSettings
 import com.six2dez.burp.aiagent.audit.AuditLogger
@@ -12,6 +13,7 @@ import com.six2dez.burp.aiagent.scanner.ActiveScanTarget
 import com.six2dez.burp.aiagent.scanner.InjectionPoint
 import com.six2dez.burp.aiagent.scanner.InjectionType
 import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
+import com.six2dez.burp.aiagent.scanner.SuggestedTargetList
 import com.six2dez.burp.aiagent.scanner.VulnClass
 import com.six2dez.burp.aiagent.scanner.VulnHint
 import com.six2dez.burp.aiagent.spi.ExtensionPlugin
@@ -32,6 +34,8 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.mockito.Answers
+import org.mockito.kotlin.any
+import org.mockito.kotlin.doReturn
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.verifyNoInteractions
@@ -49,6 +53,10 @@ import javax.swing.SwingUtilities
  * the AI Active Scanner only when its own key `full.active.autoqueue.enabled` is true AND the active
  * scanner is enabled. An absent key means OFF, including on an install whose stored 1.0.1 setting
  * `active.ai.auto.passive` is true (T-29-34): the plug-in never reads that key.
+ *
+ * The sink filters the offered targets through `ActiveAiScanner.tryQueueTarget`: only the targets the
+ * active scanner really queued are counted in the "[AutoQueue] Queued N" line (31-REVIEW IN-06) and
+ * removed from the core suggested list (Phase 32 D-08). The rest stay in the list for the user.
  *
  * The contribution half pins the UI-SPEC S18 / PC-13 control on the Active Scanner tab.
  */
@@ -107,12 +115,47 @@ class AutoQueuePluginTest {
     @Test
     fun theNewToggleAndTheActiveScannerOnQueueEveryOfferedTargetOnce() {
         prefs.booleans[AutoQueuePlugin.KEY] = true
+        whenever(activeScanner.tryQueueTarget(any())).thenReturn(true)
         install()
 
         offer(TARGETS, scannerOn())
 
-        TARGETS.forEach { verify(activeScanner).queueTarget(it) }
+        TARGETS.forEach { verify(activeScanner).tryQueueTarget(it) }
         assertEquals(listOf("[AutoQueue] Queued 2 suggested target(s) to the Active Scanner"), logLines)
+    }
+
+    @Test
+    fun onlyTheTargetsReallyQueuedAreCountedAndLeaveTheSuggestedList() {
+        prefs.booleans[AutoQueuePlugin.KEY] = true
+        val (accepted, rejected) = urlTargets("https://a.example/one", "https://b.example/two")
+        whenever(activeScanner.tryQueueTarget(accepted)).thenReturn(true)
+        whenever(activeScanner.tryQueueTarget(rejected)).thenReturn(false)
+        passiveScanner.suggestedTargets.addAll(listOf(accepted, rejected))
+        install()
+
+        offer(listOf(accepted, rejected), scannerOn())
+
+        assertEquals(listOf("[AutoQueue] Queued 1 suggested target(s) to the Active Scanner"), logLines, "IN-06")
+        assertEquals(
+            listOf(SuggestedTargetList.keyOf("https://b.example/two", rejected)),
+            passiveScanner.suggestedTargets.snapshot().map { it.key },
+            "D-08: the queued target leaves the list, the other one stays",
+        )
+    }
+
+    @Test
+    fun whenNoTargetIsQueuedNothingIsLoggedAndTheListKeepsEveryEntry() {
+        prefs.booleans[AutoQueuePlugin.KEY] = true
+        val targets = urlTargets("https://a.example/one", "https://b.example/two")
+        whenever(activeScanner.tryQueueTarget(any())).thenReturn(false)
+        passiveScanner.suggestedTargets.addAll(targets)
+        install()
+
+        offer(targets, scannerOn())
+
+        targets.forEach { verify(activeScanner).tryQueueTarget(it) }
+        assertEquals(emptyList<String>(), logLines, "a refused or filtered offer logs nothing")
+        assertEquals(2, passiveScanner.suggestedTargets.count(), "every suggestion stays for the user")
     }
 
     @Test
@@ -133,9 +176,10 @@ class AutoQueuePluginTest {
         verifyNoInteractions(activeScanner)
 
         prefs.booleans[AutoQueuePlugin.KEY] = true
+        whenever(activeScanner.tryQueueTarget(any())).thenReturn(true)
         offer(TARGETS.take(1), scannerOn())
 
-        verify(activeScanner).queueTarget(TARGETS.first())
+        verify(activeScanner).tryQueueTarget(TARGETS.first())
     }
 
     @Test
@@ -272,6 +316,17 @@ class AutoQueuePluginTest {
         assertNotNull(sink, "the plug-in must be installed")
         sink!!.offer(targets, settings)
     }
+
+    private fun urlTargets(vararg urls: String): List<ActiveScanTarget> =
+        urls.map { address ->
+            val request = mock<HttpRequest> { on { url() } doReturn address }
+            ActiveScanTarget(
+                originalRequest = mock<HttpRequestResponse> { on { request() } doReturn request },
+                injectionPoint = InjectionPoint(InjectionType.URL_PARAM, "id", "1"),
+                vulnHint = VulnHint(VulnClass.SQLI, 90, "evidence"),
+                priority = 80,
+            )
+        }
 
     private fun scannerOn(): AgentSettings = TestSettings.baselineSettings().copy(activeAiEnabled = true)
 

@@ -15,10 +15,11 @@ import com.six2dez.burp.aiagent.backends.http.CircuitBreaker
 import com.six2dez.burp.aiagent.backends.http.ConversationHistory
 import com.six2dez.burp.aiagent.backends.http.HttpBackendSupport
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
+import com.six2dez.burp.aiagent.backends.http.RetryingTurnRunner
 import com.six2dez.burp.aiagent.backends.http.recordHttpFailureIfRetryable
 import com.six2dez.burp.aiagent.config.AgentSettings
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import com.six2dez.burp.aiagent.util.HeaderParser
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 
@@ -32,9 +33,9 @@ class LmStudioBackend :
     private val mapper = ObjectMapper().registerKotlinModule()
 
     /**
-     * Optional, supervisor-injected [MontoyaHttpTransport] used by [healthCheck]. Null only on the
-     * unit-test path (tests construct backends directly without a supervisor); production wiring
-     * lives in [com.six2dez.burp.aiagent.backends.BackendRegistry] (re-applied on every reload).
+     * Supervisor-injected [MontoyaHttpTransport] used by [healthCheck]; production wiring lives in
+     * [com.six2dez.burp.aiagent.backends.BackendRegistry] (re-applied on every reload). Production and
+     * tests both go through a Montoya transport; with none, [healthCheck] reports it and sends nothing.
      */
     @Volatile
     private var healthCheckTransport: MontoyaHttpTransport? = null
@@ -75,16 +76,15 @@ class LmStudioBackend :
                 HeaderParser.parse(settings.lmStudioHeaders),
             )
         val url = "${baseUrl.trimEnd('/')}/v1/models"
-        // BUG-69-01: prefer supervisor-injected MontoyaHttpTransport so health check honors Burp's
-        // upstream proxy / SOCKS / cert store. Fall through to OkHttp only on the unit-test path.
+        // BUG-69-01 / NET-01: the supervisor-injected MontoyaHttpTransport makes the health check honor
+        // Burp's upstream proxy / SOCKS / cert store and the egress gate. Without one the wiring is
+        // broken: report Unavailable (never Unknown, which the registry could map to Healthy) and send
+        // nothing.
         val transport = healthCheckTransport
         return if (transport != null) {
             transport.healthCheckGet(url, headers, timeoutMs = 3_000)
         } else {
-            HttpBackendSupport.healthCheckGet(
-                url = url,
-                headers = headers,
-            )
+            HealthCheckResult.Unavailable(MontoyaHttpTransport.TRANSPORT_UNAVAILABLE)
         }
     }
 
@@ -104,10 +104,12 @@ class LmStudioBackend :
         UsageAwareConnection,
         JsonModeCapable {
         private val alive = AtomicBoolean(true)
-        private val exec =
-            Executors.newSingleThreadExecutor { runnable ->
-                Thread(runnable, "lmstudio-connection").apply { isDaemon = true }
-            }
+
+        // Phase 34 / D-06: a scheduler, so a retry backoff is a one-shot task on this worker instead of
+        // a blocked worker. Same worker name as before (`burp-ai-agent-lmstudio-connection`).
+        private val exec = ExtensionThreads.scheduled("lmstudio-connection")
+        private val runner =
+            RetryingTurnRunner(exec, "lmstudio", "LM Studio", circuitBreaker, ::isAlive, debugLog, errorLog)
         private val conversationHistory = ConversationHistory(20)
         private val lastTokenUsageRef = AtomicReference<TokenUsage?>(null)
 
@@ -129,170 +131,123 @@ class LmStudioBackend :
                 return
             }
 
-            exec.submit {
-                try {
+            runner.submit(
+                prologue = {
                     lastTokenUsageRef.set(null)
                     if (history != null) {
                         conversationHistory.setHistory(history)
                     }
                     conversationHistory.setSystemPrompt(systemPrompt)
-                    val maxAttempts = 6
-                    var attempt = 0
-                    var lastError: Exception? = null
-                    while (attempt < maxAttempts) {
-                        val permission = circuitBreaker.tryAcquire()
-                        if (!permission.allowed) {
-                            val failFastError = HttpBackendSupport.openCircuitError("LM Studio", permission.retryAfterMs)
-                            debugLog("circuit open: ${failFastError.message}")
-                            onComplete(failFastError)
-                            return@submit
-                        }
-                        if (!isAlive()) {
-                            onComplete(IllegalStateException("Connection closed"))
-                            return@submit
-                        }
-                        try {
-                            // BUG-69-01: LM Studio MUST route through MontoyaHttpTransport in
-                            // production so Burp's upstream proxy / SOCKS / cert store participate.
-                            // Reaching this branch with transport == null means the supervisor's
-                            // wiring is broken — fail fast instead of silently bypassing Burp via
-                            // OkHttp. See HttpBackendSupport.buildClient KDoc for the test-only path.
-                            if (transport == null) {
-                                throw IllegalStateException(
-                                    "MontoyaHttpTransport unavailable; AI HTTP backends require Burp's HTTP stack " +
-                                        "(see HttpBackendSupport.buildClient KDoc for the test-only path)",
-                                )
-                            }
-                            // Add user message to conversation history
-                            conversationHistory.addUser(text)
-                            val messages = conversationHistory.snapshot()
-                            val payload =
-                                mutableMapOf<String, Any>(
-                                    "model" to model,
-                                    "messages" to messages,
-                                    "stream" to false,
-                                    "temperature" to if (determinismMode) 0.0 else 0.7,
-                                )
-                            if (maxOutputTokens != null) {
-                                payload["max_tokens"] = maxOutputTokens
-                            }
-                            if (jsonMode) {
-                                payload["response_format"] = mapOf("type" to "json_object")
-                            }
-
-                            val json = mapper.writeValueAsString(payload)
-                            val endpointUrl = "$baseUrl/v1/chat/completions"
-
-                            val allHeaders =
-                                buildMap {
-                                    putAll(headers)
-                                    if (!sessionId.isNullOrBlank()) {
-                                        put("X-Session-Id", sessionId)
-                                    }
-                                }
-
-                            debugLog("request -> $endpointUrl")
-
-                            val resp = transport.post(endpointUrl, allHeaders, json, timeoutSeconds * 1000)
-                            if (!resp.isSuccessful) {
-                                errorLog("HTTP ${resp.statusCode}: ${resp.body.take(500)}")
-                                circuitBreaker.recordHttpFailureIfRetryable(resp.statusCode)
-                                // WR-04: bound the surfaced body (matches OpenAI/Anthropic .take(800))
-                                // so a large/secret-laden error envelope isn't echoed wholesale into the
-                                // chat bubble and persisted session.messages.
-                                onComplete(IllegalStateException("LM Studio HTTP ${resp.statusCode}: ${resp.body.take(800)}"))
-                                return@submit
-                            }
-                            val body: String = resp.body
-
-                            if (body.isBlank()) {
-                                onComplete(IllegalStateException("LM Studio response body was empty"))
-                                return@submit
-                            }
-                            val node = mapper.readTree(body)
-                            val choices = node.path("choices")
-                            if (!choices.isArray || choices.isEmpty) {
-                                // Snippet capped at 200 chars; see Ollama backend for rationale.
-                                val snippet = body.take(200).replace("\n", " ")
-                                errorLog("missing or empty 'choices' array; raw body snippet: $snippet")
-                                onComplete(
-                                    IllegalStateException(
-                                        "LM Studio response had no 'choices'. Raw body snippet: $snippet",
-                                    ),
-                                )
-                                return@submit
-                            }
-                            val content =
-                                choices
-                                    .path(0)
-                                    .path("message")
-                                    .path("content")
-                                    .asText()
-                            val usageNode = node.path("usage")
-                            val promptTokens = usageNode.path("prompt_tokens").asInt(-1)
-                            val completionTokens = usageNode.path("completion_tokens").asInt(-1)
-                            if (promptTokens >= 0 || completionTokens >= 0) {
-                                lastTokenUsageRef.set(
-                                    TokenUsage(
-                                        inputTokens = promptTokens.coerceAtLeast(0),
-                                        outputTokens = completionTokens.coerceAtLeast(0),
-                                    ),
-                                )
-                            }
-                            if (content.isBlank()) {
-                                val snippet = body.take(200).replace("\n", " ")
-                                errorLog("response content empty; raw body snippet: $snippet")
-                                onComplete(
-                                    IllegalStateException(
-                                        "LM Studio response content was empty. Raw body snippet: $snippet",
-                                    ),
-                                )
-                                return@submit
-                            }
-                            debugLog("response <- ${content.take(200)}")
-                            // Add assistant response to conversation history
-                            conversationHistory.addAssistant(content)
-                            circuitBreaker.recordSuccess()
-                            onChunk(content)
-                            onComplete(null)
-                            return@submit
-                        } catch (e: Exception) {
-                            lastError = e
-                            val retryable = HttpBackendSupport.isRetryableConnectionError(e)
-                            if (retryable) {
-                                circuitBreaker.recordFailure()
-                            }
-                            if (!retryable || attempt == maxAttempts - 1) {
-                                throw e
-                            }
-                            val delayMs = HttpBackendSupport.retryDelayMs(attempt)
-                            BackendDiagnostics.logRetry("lmstudio", attempt + 1, delayMs, e.message)
-                            debugLog("retrying in ${delayMs}ms after: ${e.message}")
-                            try {
-                                Thread.sleep(delayMs)
-                            } catch (_: InterruptedException) {
-                                Thread.currentThread().interrupt()
-                                throw e
-                            }
-                            attempt++
-                        }
+                },
+                attempt = attempt@{ complete ->
+                    // BUG-69-01 / NET-01: LM Studio routes through MontoyaHttpTransport in
+                    // production and in tests, so Burp's upstream proxy / SOCKS / cert store
+                    // and the egress gate participate. Reaching this branch with transport ==
+                    // null means the supervisor's wiring is broken: fail fast, never send directly.
+                    if (transport == null) {
+                        throw IllegalStateException(MontoyaHttpTransport.TRANSPORT_UNAVAILABLE)
                     }
-                    if (lastError != null) {
-                        throw lastError
+                    // Add user message to conversation history
+                    conversationHistory.addUser(text)
+                    val messages = conversationHistory.snapshot()
+                    val payload =
+                        mutableMapOf<String, Any>(
+                            "model" to model,
+                            "messages" to messages,
+                            "stream" to false,
+                            "temperature" to if (determinismMode) 0.0 else 0.7,
+                        )
+                    if (maxOutputTokens != null) {
+                        payload["max_tokens"] = maxOutputTokens
                     }
-                } catch (e: Exception) {
-                    errorLog("exception: ${e.message}")
-                    onComplete(e)
-                } finally {
-                    if (!isAlive()) {
-                        exec.shutdownNow()
+                    if (jsonMode) {
+                        payload["response_format"] = mapOf("type" to "json_object")
                     }
-                }
-            }
+
+                    val json = mapper.writeValueAsString(payload)
+                    val endpointUrl = "$baseUrl/v1/chat/completions"
+
+                    val allHeaders =
+                        buildMap {
+                            putAll(headers)
+                            if (!sessionId.isNullOrBlank()) {
+                                put("X-Session-Id", sessionId)
+                            }
+                        }
+
+                    debugLog("request -> $endpointUrl")
+
+                    val resp = transport.post(endpointUrl, allHeaders, json, timeoutSeconds * 1000)
+                    if (!resp.isSuccessful) {
+                        errorLog("HTTP ${resp.statusCode}: ${resp.body.take(500)}")
+                        circuitBreaker.recordHttpFailureIfRetryable(resp.statusCode)
+                        // WR-04: bound the surfaced body (matches OpenAI/Anthropic .take(800))
+                        // so a large/secret-laden error envelope isn't echoed wholesale into the
+                        // chat bubble and persisted session.messages.
+                        complete(IllegalStateException("LM Studio HTTP ${resp.statusCode}: ${resp.body.take(800)}"))
+                        return@attempt
+                    }
+                    val body: String = resp.body
+
+                    if (body.isBlank()) {
+                        complete(IllegalStateException("LM Studio response body was empty"))
+                        return@attempt
+                    }
+                    val node = mapper.readTree(body)
+                    val choices = node.path("choices")
+                    if (!choices.isArray || choices.isEmpty) {
+                        // Snippet capped at 200 chars; see Ollama backend for rationale.
+                        val snippet = body.take(200).replace("\n", " ")
+                        errorLog("missing or empty 'choices' array; raw body snippet: $snippet")
+                        complete(
+                            IllegalStateException(
+                                "LM Studio response had no 'choices'. Raw body snippet: $snippet",
+                            ),
+                        )
+                        return@attempt
+                    }
+                    val content =
+                        choices
+                            .path(0)
+                            .path("message")
+                            .path("content")
+                            .asText()
+                    val usageNode = node.path("usage")
+                    val promptTokens = usageNode.path("prompt_tokens").asInt(-1)
+                    val completionTokens = usageNode.path("completion_tokens").asInt(-1)
+                    if (promptTokens >= 0 || completionTokens >= 0) {
+                        lastTokenUsageRef.set(
+                            TokenUsage(
+                                inputTokens = promptTokens.coerceAtLeast(0),
+                                outputTokens = completionTokens.coerceAtLeast(0),
+                            ),
+                        )
+                    }
+                    if (content.isBlank()) {
+                        val snippet = body.take(200).replace("\n", " ")
+                        errorLog("response content empty; raw body snippet: $snippet")
+                        complete(
+                            IllegalStateException(
+                                "LM Studio response content was empty. Raw body snippet: $snippet",
+                            ),
+                        )
+                        return@attempt
+                    }
+                    debugLog("response <- ${content.take(200)}")
+                    // Add assistant response to conversation history
+                    conversationHistory.addAssistant(content)
+                    circuitBreaker.recordSuccess()
+                    onChunk(content)
+                    complete(null)
+                },
+                onComplete = onComplete,
+            )
         }
 
         override fun stop() {
             alive.set(false)
+            // Cancels a pending retry and completes its turn before the worker goes away.
+            runner.stop()
             exec.shutdownNow()
         }
     }

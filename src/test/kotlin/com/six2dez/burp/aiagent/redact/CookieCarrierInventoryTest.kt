@@ -360,13 +360,14 @@ class CookieCarrierInventoryTest {
                                 "raw proxied session token, under a name that says nothing about cookies. That " +
                                 "is why an accessor-keyed inventory missed it: no spelling, shape or format " +
                                 "rule on this call reveals what it returns; only the point's TYPE does",
-                        // Quoted from AiScanCheck.kt as it stands AFTER plan 28-05 — the controlled
-                        // carrier line itself, not the pre-28-05 bare interpolation. A fixture that
-                        // quotes a line no longer in the tree stays GREEN while it rots, which is the
-                        // drift this class's own KDoc warns about, so it is re-read on every edit.
+                        // Quoted from AiScanCheck.kt as it stands AFTER plan 32-03 — the controlled
+                        // carrier entry of buildDetail's line list, not the pre-28-05 bare
+                        // interpolation nor the pre-32-03 Markdown line. A fixture that quotes a line
+                        // no longer in the tree stays GREEN while it rots, which is the drift this
+                        // class's own KDoc warns about, so it is re-read on every edit.
                         positiveFixture =
-                            "**Original Value:** \${sanitizeCookiePointText(insertionPoint, policy, " +
-                                "insertionPoint.baseValue(), ScannerIssueSupport.ORIGINAL_VALUE_MAX_CHARS)}",
+                            "\"Original Value: \${sanitizeCookiePointText(insertionPoint, policy, " +
+                                "insertionPoint.baseValue(), ScannerIssueSupport.ORIGINAL_VALUE_MAX_CHARS)}\",",
                     ),
             )
 
@@ -565,12 +566,13 @@ class CookieCarrierInventoryTest {
                     "parameters() calls are — and, as the fifth bound in the class KDoc says, this " +
                     "attribution is PROSE; what is machine-checked is the COUNT of 2, so a third " +
                     "baseValue() call in this file turns theMeasuredPerFilePerAccessorCountsArePinned " +
-                    "red and forces the split to be re-read. :116 IS NON-CARRYING: consumer read at " +
-                    ":116-160, determineVulnClasses binds the value only as a regex subject " +
+                    "red and forces the split to be re-read. :175 IS NON-CARRYING: consumer read at " +
+                    ":175-232, determineVulnClasses binds the value only as a regex subject " +
                     "(a digits-only match and a UUID shape) to decide whether to add " +
                     "VulnClass.IDOR, and it is " +
-                    "never appended to any emitted string. :388 IS THE CARRIER and is CONTROLLED: it " +
-                    "builds the `**Original Value:**` line of buildDetail, the SECOND producer of " +
+                    "never appended to any emitted string. :455 IS THE CARRIER and is CONTROLLED: it " +
+                    "builds the `Original Value:` entry of buildDetail's escaped, `<br>`-joined line " +
+                    "list, the SECOND producer of " +
                     "active-scan issue-detail lines, and the value now passes " +
                     "sanitizeCookiePointText, which keys on isCookieInsertionPoint — an identity " +
                     "compare against AuditInsertionPointType.PARAM_COOKIE, a member of a DIFFERENT " +

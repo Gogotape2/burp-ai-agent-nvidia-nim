@@ -2,6 +2,7 @@ package com.six2dez.burp.aiagent.mcp.tools
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -68,5 +69,10 @@ class ResponsePreprocessorTest {
 
         assertEquals("application/json", ResponsePreprocessor.extractContentType(crlfHeaders))
         assertEquals("application/json", ResponsePreprocessor.extractContentType(lfHeaders))
+    }
+
+    @Test
+    fun extractContentType_returnsNullForEmptyHeaders() {
+        assertNull(ResponsePreprocessor.extractContentType(""))
     }
 }

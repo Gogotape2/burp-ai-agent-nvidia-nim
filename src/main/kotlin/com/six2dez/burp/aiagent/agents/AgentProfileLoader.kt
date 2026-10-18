@@ -12,6 +12,24 @@ data class AgentProfile(
 )
 
 object AgentProfileLoader {
+    // Compiled once. Declared before every other property so no initializer can read them
+    // before they exist (object properties initialize in textual order).
+    private val COMPACT_TRAILING_BLANKS_REGEX = Regex("[ \t]+\n")
+    private val COMPACT_BLANK_LINES_REGEX = Regex("\n{3,}")
+    private val SECTION_KEY_UNSAFE_CHARS_REGEX = Regex("[^A-Za-z0-9]+")
+    private val PROFILE_HEADER_REGEX = Regex("^\\s*\\[([A-Za-z0-9_\\-]+)\\]\\s*$")
+    private val TOOL_LIST_HEADER_REGEX = Regex("^\\s*Available\\s+MCP\\s+Tools\\s*:\\s*$", RegexOption.IGNORE_CASE)
+    private val SECTION_HEADER_REGEX = Regex("^\\s*\\[[A-Za-z0-9_\\-]+]\\s*$")
+    private val TITLED_HEADER_REGEX = Regex("^\\s*[A-Z][A-Z\\s_\\-]{2,}\\s*:\\s*$")
+    private val BULLET_ENTRY_REGEX = Regex("^\\s*[-*]\\s*([^:]+)\\s*:\\s*.*$")
+    private val TOOL_TOKEN_REGEX = Regex("[a-z][a-z0-9_\\-]*", RegexOption.IGNORE_CASE)
+    private val SLASH_TOOL_REGEX = Regex("/tool\\s+([a-z0-9_\\-]+)", RegexOption.IGNORE_CASE)
+    private val JSON_TOOL_REGEX = Regex("\"tool\"\\s*:\\s*\"([a-z0-9_\\-]+)\"", RegexOption.IGNORE_CASE)
+
+    // Strip inline JSON object/array literals so words like "arguments", "name" inside example
+    // payloads are never tokenised as catalog tools.
+    private val INLINE_LITERAL_REGEX = Regex("\\{[^{}]*}|\\[[^\\[\\]]*]")
+
     private val defaultBaseDir: Path =
         Paths.get(
             System.getProperty("user.home"),
@@ -169,8 +187,8 @@ object AgentProfileLoader {
         val compactWhitespace =
             withoutToolCatalog
                 .replace("\r\n", "\n")
-                .replace(Regex("[ \t]+\n"), "\n")
-                .replace(Regex("\n{3,}"), "\n\n")
+                .replace(COMPACT_TRAILING_BLANKS_REGEX, "\n")
+                .replace(COMPACT_BLANK_LINES_REGEX, "\n\n")
                 .trim()
         if (compactWhitespace.length <= MAX_INSTRUCTION_CHARS) return compactWhitespace
         return compactWhitespace.take(MAX_INSTRUCTION_CHARS) + "\n...[instructions truncated]..."
@@ -307,7 +325,7 @@ object AgentProfileLoader {
         if (mapped != null) return mapped
         return actionName
             .trim()
-            .replace(Regex("[^A-Za-z0-9]+"), "_")
+            .replace(SECTION_KEY_UNSAFE_CHARS_REGEX, "_")
             .trim('_')
             .uppercase()
     }
@@ -318,9 +336,8 @@ object AgentProfileLoader {
         sections[current] = StringBuilder()
 
         val lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
-        val headerRegex = Regex("^\\s*\\[([A-Za-z0-9_\\-]+)\\]\\s*$")
         for (line in lines) {
-            val match = headerRegex.matchEntire(line)
+            val match = PROFILE_HEADER_REGEX.matchEntire(line)
             if (match != null) {
                 current = match.groupValues[1].uppercase()
                 sections.putIfAbsent(current, StringBuilder())
@@ -342,29 +359,19 @@ object AgentProfileLoader {
         val catalogTools = linkedSetOf<String>()
         val explicitTools = linkedSetOf<String>()
         val lines = text.replace("\r\n", "\n").replace("\r", "\n").lines()
-        val toolListHeaderPattern = Regex("^\\s*Available\\s+MCP\\s+Tools\\s*:\\s*$", RegexOption.IGNORE_CASE)
-        val sectionHeaderPattern = Regex("^\\s*\\[[A-Za-z0-9_\\-]+]\\s*$")
-        val titledHeaderPattern = Regex("^\\s*[A-Z][A-Z\\s_\\-]{2,}\\s*:\\s*$")
-        val bulletEntryPattern = Regex("^\\s*[-*]\\s*([^:]+)\\s*:\\s*.*$")
-        val toolTokenPattern = Regex("[a-z][a-z0-9_\\-]*", RegexOption.IGNORE_CASE)
-        val slashToolPattern = Regex("/tool\\s+([a-z0-9_\\-]+)", RegexOption.IGNORE_CASE)
-        val jsonToolPattern = Regex("\"tool\"\\s*:\\s*\"([a-z0-9_\\-]+)\"", RegexOption.IGNORE_CASE)
-        // Strip inline JSON object/array literals so words like "arguments", "name" inside example
-        // payloads are never tokenised as catalog tools.
-        val inlineLiteralPattern = Regex("\\{[^{}]*}|\\[[^\\[\\]]*]")
         var inExplicitToolList = false
         for (line in lines) {
-            if (toolListHeaderPattern.matches(line)) {
+            if (TOOL_LIST_HEADER_REGEX.matches(line)) {
                 inExplicitToolList = true
                 continue
             }
             if (inExplicitToolList) {
-                if (line.isBlank() || sectionHeaderPattern.matches(line) || titledHeaderPattern.matches(line)) {
+                if (line.isBlank() || SECTION_HEADER_REGEX.matches(line) || TITLED_HEADER_REGEX.matches(line)) {
                     inExplicitToolList = false
                 } else {
-                    bulletEntryPattern.find(line)?.groupValues?.getOrNull(1)?.let { toolExpr ->
-                        val cleaned = inlineLiteralPattern.replace(toolExpr, " ")
-                        toolTokenPattern.findAll(cleaned).forEach { token ->
+                    BULLET_ENTRY_REGEX.find(line)?.groupValues?.getOrNull(1)?.let { toolExpr ->
+                        val cleaned = INLINE_LITERAL_REGEX.replace(toolExpr, " ")
+                        TOOL_TOKEN_REGEX.findAll(cleaned).forEach { token ->
                             val lowered = token.value.lowercase()
                             if (lowered !in catalogTokenDenylist) {
                                 catalogTools.add(lowered)
@@ -373,8 +380,8 @@ object AgentProfileLoader {
                     }
                 }
             }
-            slashToolPattern.findAll(line).forEach { m -> explicitTools.add(m.groupValues[1].lowercase()) }
-            jsonToolPattern.findAll(line).forEach { m -> explicitTools.add(m.groupValues[1].lowercase()) }
+            SLASH_TOOL_REGEX.findAll(line).forEach { m -> explicitTools.add(m.groupValues[1].lowercase()) }
+            JSON_TOOL_REGEX.findAll(line).forEach { m -> explicitTools.add(m.groupValues[1].lowercase()) }
         }
         val allTools =
             linkedSetOf<String>().apply {

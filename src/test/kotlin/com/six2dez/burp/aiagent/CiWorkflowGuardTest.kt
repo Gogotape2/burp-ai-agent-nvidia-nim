@@ -31,6 +31,7 @@ class CiWorkflowGuardTest {
                 listOf(
                     Pin(PR_GATE_JOB, setOf("test", "fullTest"), "both flavors' fast suites, SC1"),
                     Pin(PR_GATE_JOB, setOf("edtGuardWithoutAssertionsTest"), "the assertions-disabled EDT guard, REL-05"),
+                    Pin(PR_GATE_JOB, setOf(UNLOAD_TASK), "the unload leak proof, LIFE-01 / SC1"),
                     Pin(PR_GATE_JOB, setOf("bappJar", "fullJar", "storeJarContentTest"), "both JARs and the store JAR inspection, CI-01 / SC2"),
                 ),
             ).toMutableList()
@@ -41,17 +42,23 @@ class CiWorkflowGuardTest {
         STORE_REPORT_GLOBS.filter { glob -> live.none { it.trim() == glob } }.forEach {
             messages += "$BUILD_WORKFLOW / $PR_GATE_JOB: the test report upload no longer includes $it (a red inspection must be readable)"
         }
+        UNLOAD_REPORT_GLOBS.filter { glob -> live.none { it.trim() == glob } }.forEach {
+            messages += "$BUILD_WORKFLOW / $PR_GATE_JOB: the test report upload no longer includes $it (a red leak proof must be readable)"
+        }
         assertTrue(messages.isEmpty(), "CI stopped checking the store JAR:\n" + messages.joinToString("\n"))
     }
 
     @Test
     fun theGuardedTaskNameIsTheOneTheBuildRegisters() {
         // Renaming the task in the build script must fail here, not silently orphan the workflow steps.
-        assertTrue(
-            projectFile(BUILD_SCRIPT).readText().contains("register<Test>(\"$INSPECTION_TASK\")"),
-            "$BUILD_SCRIPT no longer registers the Test task `$INSPECTION_TASK` that the workflows invoke " +
-                "by name. Rename the workflow invocations and this guard together.",
-        )
+        val script = projectFile(BUILD_SCRIPT).readText()
+        listOf(INSPECTION_TASK, UNLOAD_TASK).forEach { task ->
+            assertTrue(
+                script.contains("register<Test>(\"$task\")"),
+                "$BUILD_SCRIPT no longer registers the Test task `$task` that the workflows invoke " +
+                    "by name. Rename the workflow invocations and this guard together.",
+            )
+        }
     }
 
     @Test
@@ -72,6 +79,17 @@ class CiWorkflowGuardTest {
     }
 
     @Test
+    fun nightlyRunsTheUnloadLeakProof() {
+        val messages =
+            missingPins(
+                NIGHTLY_WORKFLOW,
+                projectFile(NIGHTLY_WORKFLOW).readLines(),
+                listOf(Pin(NIGHTLY_JOB, setOf(UNLOAD_TASK), "the nightly run proves nothing survives unload, LIFE-01 / SC1")),
+            )
+        assertTrue(messages.isEmpty(), "CI stopped running the unload leak proof:\n" + messages.joinToString("\n"))
+    }
+
+    @Test
     fun coverageDryRunGuardReadsTheInspectionTaskGraph() {
         val messages =
             missingPins(
@@ -80,6 +98,8 @@ class CiWorkflowGuardTest {
                 listOf(
                     Pin(COVERAGE_JOB, setOf("--dry-run", INSPECTION_TASK), "the dry run must read the inspection task's graph"),
                     Pin(COVERAGE_JOB, setOf("for", "task", "in", INSPECTION_TASK), "the guard loop must require the inspection task"),
+                    Pin(COVERAGE_JOB, setOf("--dry-run", UNLOAD_TASK), "the dry run must read the unload leak proof's graph"),
+                    Pin(COVERAGE_JOB, setOf("for", "task", "in", UNLOAD_TASK), "the guard loop must require the unload leak proof"),
                     Pin(
                         COVERAGE_JOB,
                         setOf("test", "jacocoTestCoverageVerification", "jacocoMcpTreeCoverageVerification"),
@@ -199,12 +219,18 @@ class CiWorkflowGuardTest {
         const val STORE_JOB = "store-build"
         const val NIGHTLY_JOB = "nightly-regression"
         const val INSPECTION_TASK = "storeJarContentTest"
+        const val UNLOAD_TASK = "unloadLeakTest"
 
         val PR_GATE_OSES = listOf("ubuntu-latest", "macos-latest", "windows-latest")
         val STORE_REPORT_GLOBS =
             listOf(
                 "build/reports/tests/$INSPECTION_TASK/**",
                 "build/test-results/$INSPECTION_TASK/**",
+            )
+        val UNLOAD_REPORT_GLOBS =
+            listOf(
+                "build/reports/tests/$UNLOAD_TASK/**",
+                "build/test-results/$UNLOAD_TASK/**",
             )
 
         val JOB_KEY = Regex("^ {2}[A-Za-z0-9_.-]+:.*$")

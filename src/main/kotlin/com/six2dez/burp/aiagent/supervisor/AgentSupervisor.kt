@@ -9,6 +9,7 @@ import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.BackendRegistry
 import com.six2dez.burp.aiagent.backends.HealthCheckResult
 import com.six2dez.burp.aiagent.backends.LaunchRequest
+import com.six2dez.burp.aiagent.backends.http.AiAccessRefusedException
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
@@ -17,8 +18,12 @@ import com.six2dez.burp.aiagent.spi.AiAccessPolicy
 import com.six2dez.burp.aiagent.spi.BackendModelHint
 import com.six2dez.burp.aiagent.spi.PluginSettingsStore
 import com.six2dez.burp.aiagent.spi.Plugins
+import com.six2dez.burp.aiagent.util.ExtensionThreads
 import com.six2dez.burp.aiagent.util.HeaderParser
 import java.util.UUID
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
@@ -57,8 +62,14 @@ class AgentSupervisor(
     private sealed class AgentState {
         data object Idle : AgentState()
 
+        /**
+         * Phase 34 / D-01: [ready] is this start's ready signal. It completes with `true` once the start
+         * reaches [Running] and with `false` when it fails, is stopped, or unload begins. The CAS in
+         * [startOrAttach] still compares this instance by identity.
+         */
         data class Starting(
             val backendId: String,
+            val ready: CompletableFuture<Boolean> = CompletableFuture(),
         ) : AgentState()
 
         data class Running(
@@ -73,7 +84,39 @@ class AgentSupervisor(
     private val settingsRef = AtomicReference<AgentSettings?>(null)
     private val lastErrorRef = AtomicReference<String?>(null)
     private val chatSessionManager = ChatSessionManager()
-    internal val httpTransport = MontoyaHttpTransport(api)
+
+    /**
+     * Phase 33 / CR-01 (LIFE-02 "Unload sends no AI traffic"): the unload latch. Set by [beginShutdown]
+     * at App.shutdown's first step and by [shutdown]; never cleared, because a supervisor does not
+     * outlive the extension load that built it. While it is set, [aiAccessRefusal] answers
+     * [UNLOADING_REFUSAL], so no AI provider request starts.
+     */
+    @Volatile
+    private var shuttingDown = false
+
+    /**
+     * Phase 34 / D-01: completed by [beginShutdown], never reset. [awaitStartInProgress] waits on it as
+     * well as on the start's own ready signal, so a start published just after unload began cannot leave
+     * a waiter sitting until its deadline.
+     */
+    private val unloadSignal = CompletableFuture<Unit>()
+
+    /** Phase 34 / D-01: how a wait on a start already in progress ended ([awaitStartInProgress]). */
+    enum class StartWait { READY, FAILED, TIMEOUT, UNLOADING, INTERRUPTED }
+
+    /**
+     * Phase 33 / CR-01: every turn of [send] and [sendChat], from just before its `connection.send` until
+     * its completion, keyed by a fresh per-turn token so a completion removes only its own entry even
+     * when a chat connection is reused. [beginShutdown] stops every connection found here, including a
+     * session's first-turn connection, which [ChatSessionManager] only learns about on completion.
+     */
+    private val turnsInFlight = java.util.concurrent.ConcurrentHashMap<Any, AgentConnection>()
+
+    // Phase 31 / GATE-01: the one transport production builds, unbound and gated by the injected
+    // policy. aiAccessRefusal re-reads Burp's "Use AI" on every call, so each request is judged when it
+    // is about to leave (D-04), with no watcher. Backends only ever receive views bound by core.
+    internal val httpTransport = MontoyaHttpTransport(api) { backendId -> aiAccessRefusal(backendId) }
+
     private val services = java.util.concurrent.ConcurrentHashMap<String, Process>()
     private val lifecycleLock = ReentrantLock()
 
@@ -113,8 +156,35 @@ class AgentSupervisor(
      * `null` when the injected [AiAccessPolicy] allows a request to [backendId] under the current
      * value of Burp's `Use AI` preference; otherwise the user-facing refusal message. Start / send
      * paths short-circuit on a non-null result and surface the message as the error.
+     *
+     * Phase 33 / CR-01: once unload began ([beginShutdown]) the answer is [UNLOADING_REFUSAL], before the
+     * policy is asked. The transport's egress gate built in this class and Burp AI's `requireEgress` ask
+     * this function on every request, so the latch refuses every provider request (chat, agent send,
+     * backend retries, health and readiness checks, Ollama's model lookup, the MCP AI tools through
+     * [aiToolRefusal]) at the Phase 31 choke point, not only at the entry points.
      */
-    fun aiAccessRefusal(backendId: String): String? = aiAccessPolicy.refusal(backendId, isAiEnabled())
+    fun aiAccessRefusal(backendId: String): String? = if (shuttingDown) UNLOADING_REFUSAL else aiAccessPolicy.refusal(backendId, isAiEnabled())
+
+    /**
+     * Phase 33 / CR-01 (LIFE-02): called by App at unload step 0, before anything else. Latches the
+     * supervisor, so nothing new starts ([aiAccessRefusal]), then stops every turn in flight now rather
+     * than at the later "Supervisor" step. Idempotent and without a wait of its own (a full-build CLI
+     * connection keeps its own bounded stop). A request already on the wire cannot be recalled.
+     */
+    fun beginShutdown() {
+        shuttingDown = true
+        // Phase 34 / D-01: end every wait on a start in progress at once.
+        unloadSignal.complete(Unit)
+        (stateRef.get() as? AgentState.Starting)?.ready?.complete(false)
+        turnsInFlight.values.toList().forEach { connection -> runCatching { connection.stop() } }
+    }
+
+    /**
+     * Phase 31 / D-09, D-11 — whether the injected [AiAccessPolicy] lets the status pill run checks
+     * nobody asked for (the startup check and the local-backend timer). MainTab creates its health
+     * timer only when this is true.
+     */
+    fun allowsUnpromptedHealthChecks(): Boolean = aiAccessPolicy.allowsUnpromptedHealthChecks()
 
     /**
      * `true` iff a backend is running AND the [AiAccessPolicy] currently refuses it. Returns false
@@ -126,9 +196,67 @@ class AgentSupervisor(
         return aiAccessRefusal(running.backendId) != null
     }
 
+    /**
+     * Phase 31 / GATE-01: the [AiAccessPolicy] applied to the backend the supervisor would REALLY run
+     * for [savedBackendId] (Phase 29 D-08: an unregistered saved id runs on burp-ai, and that
+     * substitution is logged once). A background caller can therefore check before any backend is
+     * running, which [isBlockedByAiAccessPolicy] cannot do (RESEARCH Pitfall 5).
+     */
+    fun refusalForSavedBackend(savedBackendId: String): String? = aiAccessRefusal(resolveBackendId(savedBackendId))
+
+    /**
+     * Phase 31 / D-16: the shared refusal for tools that send AI requests (the MCP AI tools). The
+     * injected [AiAccessPolicy] is asked first, for the running backend or else the saved one; then the
+     * requirement that Burp's "Use AI" is on, whatever the backend, applies on top of the policy
+     * ([AI_TOOLS_REQUIRE_BURP_AI]). That requirement is not a flavor branch: in the store build the
+     * policy already refuses whenever "Use AI" is off, so the policy's text always wins there.
+     */
+    fun aiToolRefusal(): String? {
+        val running = stateRef.get() as? AgentState.Running
+        val backendId =
+            running?.backendId
+                ?: resolveBackendId(settingsRef.get()?.preferredBackendId ?: BackendRegistry.DEFAULT_BACKEND_ID)
+        return aiAccessRefusal(backendId) ?: AI_TOOLS_REQUIRE_BURP_AI.takeUnless { isAiEnabled() }
+    }
+
     fun currentSessionId(): String? = (stateRef.get() as? AgentState.Running)?.sessionId
 
     fun lastStartError(): String? = lastErrorRef.get()
+
+    /**
+     * Phase 34 / D-01: waits, without polling, for a start that another thread already has in progress.
+     * Answers [StartWait.UNLOADING] at once when unload began, and `null` when no start is in progress
+     * (a mocked supervisor answers `null` too, so callers treat it as "nothing to wait for"). Otherwise
+     * it waits until that start's ready signal or the unload signal completes, or [timeoutMs] passes.
+     * An interrupt keeps the thread's interrupt flag and answers [StartWait.INTERRUPTED].
+     */
+    fun awaitStartInProgress(timeoutMs: Long): StartWait? {
+        val starting = stateRef.get() as? AgentState.Starting
+        return when {
+            shuttingDown -> StartWait.UNLOADING
+            starting == null -> null
+            else -> awaitReady(starting, timeoutMs)
+        }
+    }
+
+    private fun awaitReady(
+        starting: AgentState.Starting,
+        timeoutMs: Long,
+    ): StartWait =
+        try {
+            // anyOf completes on the thread that completes either signal: no new thread, no polling.
+            CompletableFuture.anyOf(starting.ready, unloadSignal).get(timeoutMs, TimeUnit.MILLISECONDS)
+            when {
+                shuttingDown -> StartWait.UNLOADING
+                starting.ready.getNow(false) -> StartWait.READY
+                else -> StartWait.FAILED
+            }
+        } catch (_: TimeoutException) {
+            StartWait.TIMEOUT
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            StartWait.INTERRUPTED
+        }
 
     fun startOrAttach(backendId: String): Boolean {
         // Phase 29 / D-08: an unregistered saved id runs on burp-ai, and the policy judges that backend.
@@ -200,6 +328,8 @@ class AgentSupervisor(
             // Uses the same instance reference set above — AtomicReference.compareAndSet
             // checks identity (===), not structural equality.
             if (stateRef.compareAndSet(startingState, newState)) {
+                // Phase 34 / D-01: the session is Running, so a waiter's final check sees it.
+                startingState.ready.complete(true)
                 audit.logEvent(
                     "session_start",
                     mapOf(
@@ -212,6 +342,7 @@ class AgentSupervisor(
                 true
             } else {
                 // Another thread called stop() while we were launching — clean up
+                startingState.ready.complete(false)
                 conn.stop()
                 false
             }
@@ -221,11 +352,10 @@ class AgentSupervisor(
             api.logging().logToError(msg)
             // Reset to Idle if still in STARTING
             stateRef.compareAndSet(startingState, AgentState.Idle)
+            startingState.ready.complete(false)
             false
         }
     }
-
-    fun isOllamaHealthy(settings: AgentSettings): Boolean = registry.healthCheck("ollama", settings).isReachable
 
     fun startOllamaService(settings: AgentSettings): Boolean {
         val cmd = settings.ollamaServeCmd
@@ -235,8 +365,6 @@ class AgentSupervisor(
         }
         return startService("ollama-serve", cmd)
     }
-
-    fun isLmStudioHealthy(settings: AgentSettings): Boolean = registry.healthCheck("lmstudio", settings).isReachable
 
     fun startLmStudioService(settings: AgentSettings): Boolean {
         val cmd = settings.lmStudioServerCmd
@@ -276,6 +404,7 @@ class AgentSupervisor(
                 is AgentState.Starting -> {
                     // Launch in progress — state set to Idle; the launching thread
                     // will detect the CAS failure and clean up the connection.
+                    prev.ready.complete(false)
                     audit.logEvent("session_stop", mapOf("backendId" to prev.backendId, "note" to "cancelled_during_start"))
                 }
                 is AgentState.Idle -> { /* nothing */ }
@@ -283,6 +412,11 @@ class AgentSupervisor(
         }
     }
 
+    /**
+     * Sends one agent turn on the running session. Phase 33 / CR-01: the turn is tracked while it runs so
+     * [beginShutdown] can stop it, and a second check of the unload latch after registering closes the
+     * race with an unload that begins after the entry check.
+     */
     fun send(
         text: String,
         history: List<com.six2dez.burp.aiagent.backends.ChatMessage>? = null,
@@ -303,12 +437,23 @@ class AgentSupervisor(
         }
         val refusal = aiAccessRefusal(current.backendId)
         if (refusal != null) {
-            onComplete(IllegalStateException(refusal))
+            onComplete(AiAccessRefusedException(refusal))
             return
         }
 
         if (!current.connection.isAlive()) {
             onComplete(IllegalStateException("Session is not alive"))
+            return
+        }
+
+        // Phase 33 / CR-01: register the turn, THEN check only the unload latch again (sendChat explains
+        // why). The agent session's connection is idle here, so it is not stopped: the Supervisor step's
+        // stop() ends it.
+        val turn = Any()
+        turnsInFlight[turn] = current.connection
+        if (shuttingDown) {
+            turnsInFlight.remove(turn)
+            onComplete(AiAccessRefusedException(UNLOADING_REFUSAL))
             return
         }
 
@@ -365,13 +510,14 @@ class AgentSupervisor(
             jsonMode = jsonMode,
             maxOutputTokens = maxOutputTokens,
             onComplete = { err ->
+                turnsInFlight.remove(turn)
                 val durationMs = System.currentTimeMillis() - sendStartMs
                 audit.logEvent(
                     "prompt_complete",
                     mapOf("backendId" to backendId, "status" to (if (err == null) "ok" else "error")) + audit.errorFields(err),
                 )
                 if (err != null) {
-                    api.logging().logToError("AI backend error ($backendId): ${err.message}")
+                    logBackendError(backendId, err)
                     aiRequestLogger?.log(
                         type = ActivityType.ERROR,
                         source = "agent",
@@ -413,6 +559,12 @@ class AgentSupervisor(
         )
     }
 
+    /**
+     * Sends one chat turn on [chatSessionId], reusing the session's connection when there is one.
+     * Phase 33 / CR-01: the turn is tracked while it runs so [beginShutdown] can stop it (a first-turn
+     * connection included), and a second check of the unload latch after registering closes the race
+     * with an unload that begins after the entry check.
+     */
     fun sendChat(
         chatSessionId: String,
         backendId: String,
@@ -432,7 +584,7 @@ class AgentSupervisor(
         val resolvedId = resolveBackendId(backendId)
         val refusal = aiAccessRefusal(resolvedId)
         if (refusal != null) {
-            onComplete(IllegalStateException(refusal))
+            onComplete(AiAccessRefusedException(refusal))
             return null
         }
 
@@ -469,6 +621,20 @@ class AgentSupervisor(
                 onComplete(e)
                 return null
             }
+        }
+
+        // Phase 33 / CR-01: register the turn, THEN check the unload latch again. Either beginShutdown
+        // sees the turn and stops it, or this check sees the latch, so unload landing between the entry
+        // check and the send starts nothing. It deliberately tests only the latch and never re-runs the
+        // policy, and it sits before the audit block (ProviderEgressChokePointTest turns "Use AI" off
+        // inside audit.isEnabled() to prove the transport gate).
+        val turn = Any()
+        turnsInFlight[turn] = connection
+        if (shuttingDown) {
+            turnsInFlight.remove(turn)
+            runCatching { connection.stop() }
+            onComplete(AiAccessRefusedException(UNLOADING_REFUSAL))
+            return null
         }
 
         if (audit.isEnabled()) {
@@ -522,13 +688,14 @@ class AgentSupervisor(
             systemPrompt = systemPrompt,
             maxOutputTokens = maxOutputTokens,
             onComplete = { err ->
+                turnsInFlight.remove(turn)
                 val durationMs = System.currentTimeMillis() - chatSendStartMs
                 audit.logEvent(
                     "prompt_complete",
                     mapOf("backendId" to resolvedId, "status" to (if (err == null) "ok" else "error")) + audit.errorFields(err),
                 )
                 if (err != null) {
-                    api.logging().logToError("AI backend error ($resolvedId): ${err.message}")
+                    logBackendError(resolvedId, err)
                     aiRequestLogger?.log(
                         type = ActivityType.ERROR,
                         source = "chat",
@@ -628,6 +795,8 @@ class AgentSupervisor(
                 "BURP_AI_AGENT_SESSION_ID" to sessionId,
                 "BURP_AI_AGENT_DETERMINISM" to determinism.toString(),
             )
+        // Phase 31 / GATE-01: core binds the backend id the egress gate judges; no backend chooses it.
+        val transport = httpTransport.forBackend(backendId)
 
         return when (backendId) {
             "burp-ai" ->
@@ -637,6 +806,7 @@ class AgentSupervisor(
                     sessionId = sessionId,
                     determinismMode = determinism,
                     env = baseEnv,
+                    transport = transport,
                 )
             "ollama" -> {
                 val url = (settings?.ollamaUrl ?: prefs.getString("ollama.url") ?: "http://127.0.0.1:11434").trim()
@@ -666,7 +836,7 @@ class AgentSupervisor(
                     contextWindow =
                         settings?.ollamaContextWindow
                             ?: prefs.getInteger("ollama.contextWindow"),
-                    transport = httpTransport,
+                    transport = transport,
                 )
             }
             "lmstudio" -> {
@@ -693,7 +863,7 @@ class AgentSupervisor(
                     determinismMode = determinism,
                     env = baseEnv,
                     cliSessionId = cliSessionId,
-                    transport = httpTransport,
+                    transport = transport,
                 )
             }
             "openai-compatible" -> {
@@ -720,7 +890,7 @@ class AgentSupervisor(
                     determinismMode = determinism,
                     env = baseEnv,
                     cliSessionId = cliSessionId,
-                    transport = httpTransport,
+                    transport = transport,
                 )
             }
             "nvidia-nim" -> {
@@ -748,9 +918,9 @@ class AgentSupervisor(
                     env = baseEnv,
                     cliSessionId = cliSessionId,
                     // BUG-69-01: NVIDIA NIM is an OpenAiCompatibleBackend instance whose send()
-                    // now fails fast on transport == null. Pass httpTransport so production calls
+                    // now fails fast on transport == null. Pass the bound transport so production calls
                     // route through Burp's HTTP stack (issue #69) instead of throwing.
-                    transport = httpTransport,
+                    transport = transport,
                 )
             }
             "perplexity" -> {
@@ -778,9 +948,9 @@ class AgentSupervisor(
                     env = baseEnv,
                     cliSessionId = cliSessionId,
                     // BUG-69-01: Perplexity is also an OpenAiCompatibleBackend instance whose
-                    // send() now fails fast on transport == null. Pass httpTransport for the same
+                    // send() now fails fast on transport == null. Pass the bound transport for the same
                     // reason as NVIDIA NIM.
-                    transport = httpTransport,
+                    transport = transport,
                 )
             }
             "anthropic" -> {
@@ -802,7 +972,7 @@ class AgentSupervisor(
                     env = baseEnv,
                     cliSessionId = cliSessionId,
                     // BUG-69-01: route through Burp's HTTP stack so traffic appears in Proxy history (SC2).
-                    transport = httpTransport,
+                    transport = transport,
                 )
             }
             else ->
@@ -855,8 +1025,13 @@ class AgentSupervisor(
             // ENTIRE lifetime of the service process. Unbounded-duration work belongs on its own
             // dedicated, named daemon thread (Phase 23 D-05), never on a shared pool where it would
             // park a worker for as long as the service runs.
+            // Phase 23 D-05 / Phase 33 D-11: the thread is burp-ai-agent-service-<name> and daemon.
+            // ExtensionThreads sets the daemon flag explicitly on every thread it builds, so "a daemon
+            // thread never blocks unload" holds here without a separate isDaemon line: a non-daemon
+            // pump would keep the JVM alive after Burp quits. <name> is one of the two fixed service
+            // labels (ollama-serve, lmstudio-server), never user input.
             val pumpThread =
-                Thread({
+                ExtensionThreads.newThread("service-$name") {
                     try {
                         process.inputStream.bufferedReader().use { reader ->
                             reader.forEachLine { line ->
@@ -866,10 +1041,7 @@ class AgentSupervisor(
                     } catch (e: Exception) {
                         safeLogOutput("[$name] output stream closed: ${e.message}")
                     }
-                }, "burp-ai-agent-service-$name")
-            // Phase 23 D-05: set explicitly. "A daemon thread never blocks unload" only holds if the
-            // flag is actually set — a non-daemon pump would keep the JVM alive after Burp quits.
-            pumpThread.isDaemon = true
+                }
             pumpThread.start()
             safeLogOutput("Started service: $name")
             true
@@ -907,7 +1079,21 @@ class AgentSupervisor(
         }
     }
 
+    /**
+     * Phase 33 / D-09: the "AI backend error" Error line of a failed turn. Once unload began a failed
+     * turn is the expected result of [beginShutdown] stopping it, not an error, so nothing is written.
+     */
+    private fun logBackendError(
+        backendId: String,
+        error: Throwable,
+    ) {
+        if (shuttingDown) return
+        api.logging().logToError("AI backend error ($backendId): ${error.message}")
+    }
+
     fun shutdown() {
+        // Phase 33 / CR-01: latch first, so nothing starts while the rest of the supervisor stops.
+        beginShutdown()
         stop()
         chatSessionManager.shutdown()
         for ((name, process) in services) {
@@ -921,6 +1107,21 @@ class AgentSupervisor(
     }
 
     companion object {
+        /**
+         * Phase 31 / D-16: the refusal of an AI tool while Burp's "Use AI" is off and the policy allows
+         * the backend. The 1.0.1 text, kept byte-identical for users who already know it.
+         */
+        const val AI_TOOLS_REQUIRE_BURP_AI =
+            "AI features unavailable: check that your Burp edition supports AI " +
+                "and the 'Use AI' toggle is enabled. Non-AI backends remain usable via the chat panel."
+
+        /**
+         * Phase 33 / CR-01 (LIFE-02): the refusal of every AI request once unload began
+         * ([beginShutdown]). Entry points complete with it as an AiAccessRefusedException, and the
+         * egress gate refuses any provider request with it.
+         */
+        const val UNLOADING_REFUSAL = "AI request refused: the extension is unloading."
+
         /** The Ollama model when the user left the field blank and no plug-in suggests one. */
         private const val DEFAULT_OLLAMA_MODEL = "llama3.1"
 

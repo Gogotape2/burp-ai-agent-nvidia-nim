@@ -69,7 +69,7 @@ class BackendHealthSchedulingTest {
             )
         local.forEach { (s, backend) ->
             assertTrue(
-                BackendHealthPolicy.shouldRun(HealthCheckTrigger.PERIODIC, s, backend),
+                BackendHealthPolicy.shouldRun(HealthCheckTrigger.PERIODIC, s, backend, unpromptedAllowed = true),
                 "expected periodic poll for ${s.preferredBackendId}",
             )
         }
@@ -92,7 +92,7 @@ class BackendHealthSchedulingTest {
             )
         remote.forEach { (s, backend) ->
             assertFalse(
-                BackendHealthPolicy.shouldRun(HealthCheckTrigger.PERIODIC, s, backend),
+                BackendHealthPolicy.shouldRun(HealthCheckTrigger.PERIODIC, s, backend, unpromptedAllowed = true),
                 "a timer must never poll ${s.preferredBackendId}",
             )
         }
@@ -103,9 +103,72 @@ class BackendHealthSchedulingTest {
         val remote = settings("perplexity") { it.copy(perplexityUrl = "https://api.perplexity.ai") }
         val unknown = settings(externalRemote.id)
         listOf(HealthCheckTrigger.STARTUP, HealthCheckTrigger.SETTINGS_CHANGED, HealthCheckTrigger.USER_CLICK).forEach { trigger ->
-            assertTrue(BackendHealthPolicy.shouldRun(trigger, remote, null))
-            assertTrue(BackendHealthPolicy.shouldRun(trigger, unknown, externalRemote))
+            assertTrue(BackendHealthPolicy.shouldRun(trigger, remote, null, unpromptedAllowed = true))
+            assertTrue(BackendHealthPolicy.shouldRun(trigger, unknown, externalRemote, unpromptedAllowed = true))
         }
+    }
+
+    /**
+     * Phase 31 / D-09, D-11 — every trigger x policy x locality combination (4 x 2 x 2 = 16). With
+     * unprompted checks forbidden (the BApp Store build) STARTUP and PERIODIC never run, loopback
+     * included; the user-action triggers always run. With them allowed (the full build) the 1.0.1
+     * rule holds: STARTUP for every backend, PERIODIC for local ones only.
+     */
+    @Test
+    fun everyTriggerPolicyAndLocalityCombinationIsDecided() {
+        val local = settings("ollama") { it.copy(ollamaUrl = "http://127.0.0.1:11434") }
+        val remote = settings("perplexity") { it.copy(perplexityUrl = "https://api.perplexity.ai") }
+
+        data class Row(
+            val trigger: HealthCheckTrigger,
+            val unpromptedAllowed: Boolean,
+            val isLocal: Boolean,
+            val expected: Boolean,
+        )
+        val rows =
+            listOf(
+                Row(HealthCheckTrigger.STARTUP, unpromptedAllowed = true, isLocal = true, expected = true),
+                Row(HealthCheckTrigger.STARTUP, unpromptedAllowed = true, isLocal = false, expected = true),
+                Row(HealthCheckTrigger.STARTUP, unpromptedAllowed = false, isLocal = true, expected = false),
+                Row(HealthCheckTrigger.STARTUP, unpromptedAllowed = false, isLocal = false, expected = false),
+                Row(HealthCheckTrigger.PERIODIC, unpromptedAllowed = true, isLocal = true, expected = true),
+                Row(HealthCheckTrigger.PERIODIC, unpromptedAllowed = true, isLocal = false, expected = false),
+                Row(HealthCheckTrigger.PERIODIC, unpromptedAllowed = false, isLocal = true, expected = false),
+                Row(HealthCheckTrigger.PERIODIC, unpromptedAllowed = false, isLocal = false, expected = false),
+                Row(HealthCheckTrigger.SETTINGS_CHANGED, unpromptedAllowed = true, isLocal = true, expected = true),
+                Row(HealthCheckTrigger.SETTINGS_CHANGED, unpromptedAllowed = true, isLocal = false, expected = true),
+                Row(HealthCheckTrigger.SETTINGS_CHANGED, unpromptedAllowed = false, isLocal = true, expected = true),
+                Row(HealthCheckTrigger.SETTINGS_CHANGED, unpromptedAllowed = false, isLocal = false, expected = true),
+                Row(HealthCheckTrigger.USER_CLICK, unpromptedAllowed = true, isLocal = true, expected = true),
+                Row(HealthCheckTrigger.USER_CLICK, unpromptedAllowed = true, isLocal = false, expected = true),
+                Row(HealthCheckTrigger.USER_CLICK, unpromptedAllowed = false, isLocal = true, expected = true),
+                Row(HealthCheckTrigger.USER_CLICK, unpromptedAllowed = false, isLocal = false, expected = true),
+            )
+        assertEquals(16, rows.map { Triple(it.trigger, it.unpromptedAllowed, it.isLocal) }.toSet().size)
+        assertEquals(HealthCheckTrigger.entries.toSet(), rows.map { it.trigger }.toSet(), "every trigger is covered")
+        rows.forEach { row ->
+            val s = if (row.isLocal) local else remote
+            assertEquals(row.isLocal, BackendHealthPolicy.isLocal(s, null), "fixture locality for ${s.preferredBackendId}")
+            assertEquals(
+                row.expected,
+                BackendHealthPolicy.shouldRun(row.trigger, s, null, row.unpromptedAllowed),
+                "$row",
+            )
+        }
+    }
+
+    @Test
+    fun onlyATimerTickSkipsTheCoalescedRerun() {
+        assertFalse(BackendHealthPolicy.coalesces(HealthCheckTrigger.PERIODIC))
+        listOf(HealthCheckTrigger.STARTUP, HealthCheckTrigger.SETTINGS_CHANGED, HealthCheckTrigger.USER_CLICK).forEach {
+            assertTrue(BackendHealthPolicy.coalesces(it), "$it must coalesce into one re-run")
+        }
+    }
+
+    @Test
+    fun theIdlePillTextComesFromThePolicy() {
+        assertEquals("Not checked · click to test", BackendPill.idleText(unpromptedAllowed = false))
+        assertEquals("AI: ?", BackendPill.idleText(unpromptedAllowed = true))
     }
 
     @Test

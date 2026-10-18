@@ -26,6 +26,18 @@ import kotlin.test.fail
  *
  * Next to the real-JAR check, a planted copy of the same JAR proves the rules fire against the real
  * artifact's structure, and a non-vacuity check proves both inputs are real build outputs.
+ *
+ * Phase 30 / CI-02 (review finding CR-01): the same task passes the resolved store runtime classpath and the
+ * classpath bom.json is generated from as [StoreSbomAlignment.STORE_MODULES_PROPERTY] and
+ * [StoreSbomAlignment.SBOM_MODULES_PROPERTY]. [sbomSourceResolvesEveryStoreModuleAtTheStoreJarVersion] fails
+ * naming every store module the SBOM source resolves to another version or lacks, and
+ * [alignmentReadsBothResolvedClasspaths] proves both lists are the real, full classpaths.
+ *
+ * Phase 31 / NET-01 (ROADMAP SC3): OkHttp is a test-only dependency, so neither JAR ships OkHttp, Okio or
+ * MockWebServer. The store JAR is covered by the BUNDLED_LIBRARY rule and by [storeJarHoldsNoOkHttp]; the
+ * full JAR, whose path arrives as [StoreJarInspector.FULL_JAR_PROPERTY], is read only for
+ * [fullJarHoldsNoOkHttp]: the store rules cannot apply to it because it legitimately holds full classes. A
+ * missing property, a missing file or a full JAR that is not a real fullJar output fails, never passes.
  */
 class StoreJarContentTest {
     @Test
@@ -69,6 +81,54 @@ class StoreJarContentTest {
         assertTrue(PLANTED_CLASS in fullOnly, "the derived src/full set does not contain $PLANTED_CLASS")
     }
 
+    @Test
+    fun storeJarHoldsNoOkHttp() {
+        val jar = storeJar()
+        val found = StoreJarInspector.okHttpEntries(StoreJarInspector.entryNames(jar))
+        assertTrue(found.isEmpty(), okHttpReport(jar, found))
+    }
+
+    @Test
+    fun fullJarHoldsNoOkHttp() {
+        val jar = fullJar()
+        val names = StoreJarInspector.entryNames(jar)
+        // Non-vacuity: an empty or wrong file would hold no OkHttp entry either.
+        assertTrue(
+            names.size >= MIN_JAR_ENTRIES,
+            "${jar.absolutePath} has only ${names.size} entries; expected at least $MIN_JAR_ENTRIES. Run: $RUN_COMMAND",
+        )
+        assertTrue(FULL_PROFILE_CLASS in names, "${jar.absolutePath} does not contain $FULL_PROFILE_CLASS; it is not the full JAR")
+        val found = StoreJarInspector.okHttpEntries(names)
+        assertTrue(found.isEmpty(), okHttpReport(jar, found))
+    }
+
+    @Test
+    fun sbomSourceResolvesEveryStoreModuleAtTheStoreJarVersion() {
+        val store = StoreSbomAlignment.parse(requiredProperty(StoreSbomAlignment.STORE_MODULES_PROPERTY))
+        val sbom = StoreSbomAlignment.parse(requiredProperty(StoreSbomAlignment.SBOM_MODULES_PROPERTY))
+        val configuration = requiredProperty(StoreSbomAlignment.SBOM_CONFIGURATION_PROPERTY)
+        val found = StoreSbomAlignment.misalignments(store, sbom)
+        assertTrue(found.isEmpty(), StoreSbomAlignment.report(configuration, found))
+    }
+
+    @Test
+    fun alignmentReadsBothResolvedClasspaths() {
+        val storeProperty = StoreSbomAlignment.STORE_MODULES_PROPERTY
+        val sbomProperty = StoreSbomAlignment.SBOM_MODULES_PROPERTY
+        val store = StoreSbomAlignment.parse(requiredProperty(storeProperty))
+        val sbom = StoreSbomAlignment.parse(requiredProperty(sbomProperty))
+        assertTrue(
+            store.size >= MIN_STORE_MODULES,
+            "$storeProperty lists only ${store.size} modules; expected at least $MIN_STORE_MODULES",
+        )
+        assertTrue(SERVER_CORE_MODULE in store, "$storeProperty does not list $SERVER_CORE_MODULE")
+        // Transitive (kotlin-sdk -> ktor-server-websockets): proves the walk is not limited to direct dependencies.
+        assertTrue(WEBSOCKET_SERIALIZATION_MODULE in store, "$storeProperty does not list the transitive $WEBSOCKET_SERIALIZATION_MODULE")
+        // Full-only: proves the SBOM side is the full classpath and not a second copy of the store list.
+        assertTrue(CLIENT_CORE_MODULE in sbom, "$sbomProperty does not list the full-only $CLIENT_CORE_MODULE")
+        assertTrue(CLIENT_CORE_MODULE !in store, "$storeProperty lists the full-only $CLIENT_CORE_MODULE")
+    }
+
     private fun requiredProperty(name: String): String =
         System.getProperty(name)?.takeIf { it.isNotBlank() }
             ?: fail("System property $name is not set. This class runs only in the storeJarContentTest task: $RUN_COMMAND")
@@ -78,6 +138,21 @@ class StoreJarContentTest {
         if (!jar.isFile) fail("The store JAR ${jar.absolutePath} does not exist. Run: $RUN_COMMAND")
         return jar
     }
+
+    private fun fullJar(): File {
+        val jar = File(requiredProperty(StoreJarInspector.FULL_JAR_PROPERTY))
+        if (!jar.isFile) fail("The full JAR ${jar.absolutePath} does not exist. Run: $RUN_COMMAND")
+        return jar
+    }
+
+    private fun okHttpReport(
+        jar: File,
+        found: List<String>,
+    ): String =
+        "The JAR ships OkHttp, Okio or MockWebServer (Phase 31 / NET-01): ${jar.absolutePath}\n" +
+            "OkHttp is a test-only dependency; provider traffic goes only through Burp's networking. Keep " +
+            "com.squareup.okhttp3 on testImplementation; never allowlist an entry.\n" +
+            found.joinToString("\n") { "  $it" }
 
     private fun fullOnly(): Set<String> {
         val dirs =
@@ -132,9 +207,13 @@ class StoreJarContentTest {
     }
 
     private companion object {
-        const val RUN_COMMAND = "./gradlew bappJar storeJarContentTest"
+        const val RUN_COMMAND = "./gradlew bappJar fullJar storeJarContentTest"
         const val MIN_JAR_ENTRIES = 1_000
         const val MIN_FULL_ENTRIES = 100
+        const val MIN_STORE_MODULES = 50
+        const val SERVER_CORE_MODULE = "io.ktor:ktor-server-core"
+        const val WEBSOCKET_SERIALIZATION_MODULE = "io.ktor:ktor-websocket-serialization"
+        const val CLIENT_CORE_MODULE = "io.ktor:ktor-client-core"
         const val EXTENSION_CLASS = "com/six2dez/burp/aiagent/BurpAiAgentExtension.class"
         const val FULL_PROFILE_CLASS = "com/six2dez/burp/aiagent/full/FullFlavorProfile.class"
         const val PLANTED_CLASS = "com/six2dez/burp/aiagent/backends/cli/CliBackend.class"
