@@ -233,7 +233,9 @@ class ChatPanelToolGateTest {
         // repeat of the same tool runs straight through. `atLeast(2)` rather than a literal: the chain
         // keeps going until the monotone budget stops it, so the exact count is the budget's business,
         // not this test's. What matters is that a SECOND call ran without a second decision.
-        verify(h.api.proxy(), atLeast(2)).history()
+        // Global settle observers can receive another panel's late completion. Wait for
+        // this API mock's actual second call instead of treating unrelated settles as proof.
+        verify(h.api.proxy(), Mockito.timeout(TOOL_COMPLETION_FAILSAFE_MILLIS).atLeast(2)).history()
         assertTrue(
             decisionButtons(h.panel.root).isEmpty(),
             "A session grant must suppress the CARD, not just the prompt: no decision button may remain.",
@@ -861,6 +863,8 @@ private const val SUCCESS_CLOSING_LINE = "Provide the final response using the t
 
 /** Comfortably longer than any chain this suite drives; over-draining an empty EDT queue is free. */
 private const val LONG_DRAIN = 24
+
+private const val TOOL_COMPLETION_FAILSAFE_MILLIS = 10_000L
 
 /**
  * Deadlock failsafe for the two supersede budget variants, in seconds.

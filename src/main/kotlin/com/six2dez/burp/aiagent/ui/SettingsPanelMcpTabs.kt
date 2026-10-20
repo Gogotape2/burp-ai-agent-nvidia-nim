@@ -70,7 +70,7 @@ internal fun SettingsPanel.mcpSection(): JPanel {
                 },
             tokenPanelFactory = ::tokenPanel,
             quickActionsFactory = ::mcpQuickActions,
-        ).build()
+        ).withAutomaticApprovalControl(mcpAutoApproveToolCalls).build()
 
     // Phase 16-05: append ExternalServersPanel accordion below the McpConfigPanel section.
     val externalPanel = externalServersPanel.buildPanel()

@@ -34,6 +34,7 @@ data class McpSettings(
     // PHASE 16: external MCP server list. JSON-serialized blob stored encrypted via SecretCipher.
     // Default empty list; schema v5 migration adds the Preferences key.
     val externalMcpServers: List<ExternalMcpServerConfig> = emptyList(),
+    val autoApproveToolCalls: Boolean = false,
 ) {
     companion object {
         private val mapper =

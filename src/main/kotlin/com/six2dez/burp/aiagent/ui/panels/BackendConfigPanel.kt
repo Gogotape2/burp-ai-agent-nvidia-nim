@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.ui.panels
 
+import com.six2dez.burp.aiagent.config.NvidiaNimOptions
 import com.six2dez.burp.aiagent.ui.components.ToggleSwitch
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
 import com.six2dez.burp.aiagent.ui.design.addRowFull
@@ -48,10 +49,11 @@ data class BackendConfigState(
     val openAiCompatHeaders: String = "",
     val openAiCompatTimeoutSeconds: String = "",
     val nvidiaNimUrl: String = "https://integrate.api.nvidia.com",
-    val nvidiaNimModel: String = "",
+    val nvidiaNimModel: String = NvidiaNimOptions.DEFAULT_MODEL,
     val nvidiaNimApiKey: String = "",
     val nvidiaNimHeaders: String = "",
-    val nvidiaNimTimeoutSeconds: String = "",
+    val nvidiaNimTimeoutSeconds: String = NvidiaNimOptions.DEFAULT_TIMEOUT_SECONDS.toString(),
+    val nvidiaNimOptions: NvidiaNimOptions = NvidiaNimOptions(),
     val perplexityUrl: String = "https://api.perplexity.ai",
     val perplexityModel: String = "",
     val perplexityApiKey: String = "",
@@ -106,11 +108,12 @@ class BackendConfigPanel(
     private val openAiCompatApiKey = JPasswordField(initialState.openAiCompatApiKey)
     private val openAiCompatHeaders = JTextArea(initialState.openAiCompatHeaders, 3, 20)
     private val openAiCompatTimeout = JTextField(initialState.openAiCompatTimeoutSeconds)
-    private val nvidiaNimUrl = JTextField(initialState.nvidiaNimUrl)
-    private val nvidiaNimModel = JTextField(initialState.nvidiaNimModel)
-    private val nvidiaNimApiKey = JPasswordField(initialState.nvidiaNimApiKey)
+    private val nvidiaNimUrl = JTextField(initialState.nvidiaNimUrl, NIM_TEXT_COLUMNS)
+    private val nvidiaNimModel = JTextField(initialState.nvidiaNimModel, NIM_TEXT_COLUMNS)
+    private val nvidiaNimApiKey = JPasswordField(initialState.nvidiaNimApiKey, NIM_TEXT_COLUMNS)
     private val nvidiaNimHeaders = JTextArea(initialState.nvidiaNimHeaders, 3, 20)
     private val nvidiaNimTimeout = JTextField(initialState.nvidiaNimTimeoutSeconds)
+    private val nvidiaNimOptions = NvidiaNimOptionsPanel(initialState.nvidiaNimOptions)
     private val perplexityUrl = JTextField(initialState.perplexityUrl)
     private val perplexityModel = JTextField(initialState.perplexityModel)
     private val perplexityApiKey = JPasswordField(initialState.perplexityApiKey)
@@ -185,10 +188,10 @@ class BackendConfigPanel(
         openAiCompatHeaders.toolTipText = "Extra headers (one per line: Header: value)."
         openAiCompatTimeout.toolTipText = "Request timeout in seconds."
         nvidiaNimUrl.toolTipText = "Base URL for NVIDIA NIM. Leave the default unless you use a custom endpoint."
-        nvidiaNimModel.toolTipText = "Model name sent to NVIDIA NIM (for example, moonshotai/kimi-k2.5)."
+        nvidiaNimModel.toolTipText = "Full vendor/model identifier, for example nvidia/nemotron-3-ultra-550b-a55b."
         nvidiaNimApiKey.toolTipText = "NVIDIA API key (Authorization: Bearer ...)."
         nvidiaNimHeaders.toolTipText = "Extra headers (one per line: Header: value)."
-        nvidiaNimTimeout.toolTipText = "Request timeout in seconds."
+        nvidiaNimTimeout.toolTipText = "Total deadline including queue, requests, retry backoff: 30–3600 seconds. Default: 900."
         perplexityUrl.toolTipText = "Base URL for Perplexity. Leave the default unless you use a custom endpoint."
         perplexityModel.toolTipText = "Model name sent to Perplexity (for example, sonar, sonar-pro, sonar-reasoning)."
         perplexityApiKey.toolTipText = "Perplexity API key (Authorization: Bearer pplx-...)."
@@ -278,6 +281,7 @@ class BackendConfigPanel(
             nvidiaNimApiKey = String(nvidiaNimApiKey.password).trim(),
             nvidiaNimHeaders = nvidiaNimHeaders.text.trim(),
             nvidiaNimTimeoutSeconds = nvidiaNimTimeout.text.trim(),
+            nvidiaNimOptions = nvidiaNimOptions.currentOptions(),
             perplexityUrl = perplexityUrl.text.trim(),
             perplexityModel = perplexityModel.text.trim(),
             perplexityApiKey = String(perplexityApiKey.password).trim(),
@@ -319,6 +323,7 @@ class BackendConfigPanel(
         nvidiaNimApiKey.text = state.nvidiaNimApiKey
         nvidiaNimHeaders.text = state.nvidiaNimHeaders
         nvidiaNimTimeout.text = state.nvidiaNimTimeoutSeconds
+        nvidiaNimOptions.applyOptions(state.nvidiaNimOptions)
         perplexityUrl.text = state.perplexityUrl
         perplexityModel.text = state.perplexityModel
         perplexityApiKey.text = state.perplexityApiKey
@@ -496,14 +501,43 @@ class BackendConfigPanel(
                 DesignTokens.Spacing.sectionPad,
                 DesignTokens.Spacing.sectionPad,
             )
+        val defaultsButton =
+            JButton("Use Nemotron Ultra defaults").apply {
+                addActionListener {
+                    nvidiaNimUrl.text = "https://integrate.api.nvidia.com"
+                    nvidiaNimModel.text = NvidiaNimOptions.DEFAULT_MODEL
+                    nvidiaNimTimeout.text = NvidiaNimOptions.DEFAULT_TIMEOUT_SECONDS.toString()
+                    nvidiaNimOptions.applyOptions(NvidiaNimOptions())
+                }
+            }
+        addRowFull(panel, "", buildButtonRowPanel(defaultsButton, buildTestConnectionButton("nvidia-nim")))
         addRowFull(panel, "Base URL", nvidiaNimUrl)
-        addRowFull(panel, "", buildButtonRowPanel(buildTestConnectionButton("nvidia-nim")))
-        addRowFull(panel, "Model", nvidiaNimModel)
+        addRowFull(panel, "Model (vendor/model)", nvidiaNimModel)
         addRowFull(panel, "API key (Bearer)", nvidiaNimApiKey)
-        addRowFull(panel, "Extra headers", JScrollPane(nvidiaNimHeaders))
-        addRowFull(panel, "Timeout (seconds)", nvidiaNimTimeout)
+        addRowFull(panel, "Total timeout (seconds)", nvidiaNimTimeout)
+        addRowFull(panel, "Response mode", JLabel("Complete answer after generation (JSON)"))
+        addRowFull(panel, "Generation and limits", nvidiaNimOptions)
+        val advanced =
+            JPanel(BorderLayout()).apply {
+                isOpaque = false
+                add(JScrollPane(nvidiaNimHeaders), BorderLayout.CENTER)
+                isVisible = false
+            }
+        val advancedButton =
+            JButton("Show extra headers").apply {
+                addActionListener {
+                    advanced.isVisible = !advanced.isVisible
+                    text = if (advanced.isVisible) "Hide extra headers" else "Show extra headers"
+                    panel.revalidate()
+                }
+            }
+        addRowFull(panel, "", advancedButton)
+        addRowFull(panel, "", advanced)
         addSpacerRow(panel, DesignTokens.Spacing.sm)
-        return panel
+        return JPanel(BorderLayout()).apply {
+            background = DesignTokens.Colors.surface
+            add(panel, BorderLayout.NORTH)
+        }
     }
 
     private fun buildPerplexityPanel(): JPanel {
@@ -575,4 +609,8 @@ class BackendConfigPanel(
                 }
             }
         }
+
+    private companion object {
+        const val NIM_TEXT_COLUMNS = 48
+    }
 }

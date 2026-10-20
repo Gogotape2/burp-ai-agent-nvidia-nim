@@ -33,6 +33,7 @@ class AiGateMcpToolTest {
         whenever(api.burpSuite().version().edition()).thenReturn(BurpSuiteEdition.PROFESSIONAL)
         val supervisor = mock<AgentSupervisor>()
         whenever(supervisor.isAiEnabled()).thenReturn(false)
+        whenever(supervisor.requiresBurpAiAndDisabled("burp-ai")).thenReturn(true)
 
         val context = buildContext(api, supervisor)
         val result = McpToolExecutor.executeTool("ai_analyze", """{"text":"test"}""", context, ToolCallOrigin.UserSlashCommand)
@@ -50,6 +51,7 @@ class AiGateMcpToolTest {
         whenever(api.burpSuite().version().edition()).thenReturn(BurpSuiteEdition.PROFESSIONAL)
         val supervisor = mock<AgentSupervisor>()
         whenever(supervisor.isAiEnabled()).thenReturn(false)
+        whenever(supervisor.requiresBurpAiAndDisabled("burp-ai")).thenReturn(true)
 
         val context = buildContext(api, supervisor)
         val result = McpToolExecutor.executeTool("ai_passive_scan", """{}""", context, ToolCallOrigin.UserSlashCommand)
@@ -98,5 +100,6 @@ class AiGateMcpToolTest {
             edition = BurpSuiteEdition.PROFESSIONAL,
             maxBodyBytes = 1024,
             supervisor = supervisor,
+            aiBackendId = "burp-ai",
         )
 }

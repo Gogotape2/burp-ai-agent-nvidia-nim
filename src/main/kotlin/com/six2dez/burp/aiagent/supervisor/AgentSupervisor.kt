@@ -15,6 +15,7 @@ import com.six2dez.burp.aiagent.backends.ollama.OllamaBackend
 import com.six2dez.burp.aiagent.backends.openai.OpenAiCompatibleBackend
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
+import com.six2dez.burp.aiagent.config.NvidiaNimOptions
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.util.HeaderParser
 import java.util.UUID
@@ -157,6 +158,17 @@ class AgentSupervisor(
         return requiresBurpAiAndDisabled(running.backendId)
     }
 
+    fun responseWaitTimeoutMs(defaultMs: Long): Long {
+        val running = stateRef.get() as? AgentState.Running
+        val settings = settingsRef.get()
+        val backendId = running?.backendId ?: settings?.preferredBackendId
+        if (backendId != "nvidia-nim") return defaultMs
+        val seconds =
+            running?.launchConfig?.requestTimeoutSeconds?.toInt()
+                ?: settings?.nvidiaNimTimeoutSeconds ?: NvidiaNimOptions.DEFAULT_TIMEOUT_SECONDS
+        return maxOf(defaultMs, NvidiaNimOptions.responseWaitMs(seconds))
+    }
+
     fun currentSessionId(): String? = (stateRef.get() as? AgentState.Running)?.sessionId
 
     fun lastStartError(): String? = lastErrorRef.get()
@@ -282,6 +294,8 @@ class AgentSupervisor(
     fun isBackendHealthy(settings: AgentSettings): Boolean = backendHealth(settings).isHealthy
 
     fun backendHealth(settings: AgentSettings): HealthCheckResult = registry.healthCheck(settings.preferredBackendId, settings)
+
+    fun backgroundBackendHealth(settings: AgentSettings): HealthCheckResult = registry.backgroundHealthCheck(settings.preferredBackendId, settings)
 
     fun stop() {
         lifecycleLock.withLock {
@@ -595,6 +609,29 @@ class AgentSupervisor(
 
     fun getBackend(backendId: String): com.six2dez.burp.aiagent.backends.AiBackend? = registry.get(backendId)
 
+    fun backendRegistry(): BackendRegistry = registry
+
+    fun preferredBackendId(): String? = settingsRef.get()?.preferredBackendId
+
+    fun openToolAnalysisSession(requestedBackendId: String? = null): ToolAnalysisSession {
+        val backendId = requestedBackendId ?: preferredBackendId() ?: error("AI backend is not configured.")
+        check(!requiresBurpAiAndDisabled(backendId)) {
+            "AI features unavailable: enable Burp's Use AI for the burp-ai backend, or select an external backend such as NVIDIA NIM."
+        }
+        val backend = registry.get(backendId) ?: error("AI backend not found: $backendId")
+        val sessionId = "tool-analysis-" + UUID.randomUUID().toString()
+        val config = buildLaunchConfig(backendId, sessionId, embeddedMode = true)
+        val waitMs =
+            if (backendId == "nvidia-nim") {
+                NvidiaNimOptions.responseWaitMs(config.requestTimeoutSeconds?.toInt() ?: NvidiaNimOptions.DEFAULT_TIMEOUT_SECONDS)
+            } else {
+                TimeUnit.MINUTES.toMillis(2)
+            }
+        audit.logEvent("tool_analysis_start", mapOf("backendId" to backendId, "sessionId" to sessionId))
+        val connection = backend.launch(config)
+        return ToolAnalysisSession(backendId, connection, waitMs)
+    }
+
     fun removeChatSession(chatSessionId: String) {
         chatSessionManager.removeSession(chatSessionId)
     }
@@ -828,7 +865,7 @@ class AgentSupervisor(
                 val model = (settings?.nvidiaNimModel ?: prefs.getString("nvidia.nim.model") ?: "").trim()
                 val timeoutSeconds =
                     settings?.nvidiaNimTimeoutSeconds
-                        ?: (prefs.getInteger("nvidia.nim.timeoutSeconds") ?: Defaults.CLI_PROCESS_TIMEOUT_SECONDS)
+                        ?: (prefs.getInteger("nvidia.nim.timeoutSeconds") ?: NvidiaNimOptions.DEFAULT_TIMEOUT_SECONDS)
                 val apiKey = settings?.nvidiaNimApiKey ?: prefs.getString("nvidia.nim.apiKey").orEmpty()
                 val rawHeaders = settings?.nvidiaNimHeaders ?: prefs.getString("nvidia.nim.headers").orEmpty()
                 val headers =
@@ -839,6 +876,7 @@ class AgentSupervisor(
                 BackendLaunchConfig(
                     backendId = backendId,
                     displayName = "NVIDIA NIM",
+                    nvidiaNimOptions = settings?.nvidiaNimOptions ?: NvidiaNimOptions(),
                     baseUrl = url,
                     model = model,
                     headers = headers,

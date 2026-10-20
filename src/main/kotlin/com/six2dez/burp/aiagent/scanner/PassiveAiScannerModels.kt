@@ -17,6 +17,11 @@ data class PassiveAiScannerStatus(
     val issuesFound: Int,
     val lastAnalysisTime: Long,
     val queueSize: Int,
+    val scanChecksReceived: Int = 0,
+    val outOfScopeSkipped: Int = 0,
+    val lastCheckOutsideScope: Boolean = false,
+    val budgetPaused: Boolean = false,
+    val analyzing: Boolean = false,
 )
 
 internal data class LocalFinding(

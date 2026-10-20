@@ -1,0 +1,53 @@
+{
+  "version": "1.0.0-nim.7",
+  "baseTag": "v1.0.0",
+  "baseCommit": "e7d3fc47d224d661e990c28da82dfa3bac50fa6b",
+  "jarSha256": "72ad8eacdc42898e362a55f1dbc32c82ab4821941aa0b6a4f4b0d30036119bf1",
+  "staticChecks": {
+    "ktlintCheck": "passed",
+    "detekt": "passed",
+    "shadowJar": "passed",
+    "processExitCode": 0
+  },
+  "focusedSuite": {
+    "tests": 789,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 2,
+    "nim_tests": 41,
+    "nim_failures": 0,
+    "failed_tests": []
+  },
+  "requiredRegressionSuites": {
+    "mcp.tools.AiToolRuntimeTest": 6,
+    "mcp.tools.AiGateMcpToolTest": 3,
+    "supervisor.ToolAnalysisSessionTest": 2,
+    "ui.AiAnalysisChatRuntimeTest": 1,
+    "mcp.AutomaticToolApprovalTest": 4,
+    "ui.AutomaticToolApprovalChatTest": 3,
+    "ui.ScannerStatusPanelTest": 1
+  },
+  "fullSuiteRerun": false,
+  "fullSuitePassed": null,
+  "baselineFullSuiteReport": "nim6-baseline-full-suite.json",
+  "redactorBytecodeUnchangedFromNim6": true,
+  "changes": {
+    "chatRuntimeDependenciesProvided": true,
+    "toolBackend": "Actual chat backend, falling back to configured preference for standalone MCP",
+    "analysisConnection": "Independent connection; JSON/token options forwarded; closed on completion/error/timeout/interruption",
+    "nimTimeout": "Configured request timeout plus the existing completion margin",
+    "nativeBurpAiPermission": "Required only for burp-ai",
+    "passiveToolRespectsMcpScope": true,
+    "automaticToolApprovalDefault": false
+  },
+  "runtime": {
+    "newJarLoadedIntoBurp": false,
+    "newLiveNvidiaRequests": false
+  },
+  "limits": [
+    "ai_analyze is model inference, not an internet/CVE retrieval tool.",
+    "The full suite was not rerun. The nim.6 baseline has two redaction time-budget failures; its report is explicitly labelled as baseline.",
+    "The live Burp process was not reloaded; no live NVIDIA request was made for nim.7.",
+    "Provider HTTP 429/500 admission and GLM 5.3 availability are not changed by this update."
+  ]
+}

@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.backends
 
 import com.six2dez.burp.aiagent.backends.http.MontoyaHttpTransport
+import com.six2dez.burp.aiagent.config.NvidiaNimOptions
 
 data class BackendLaunchConfig(
     val backendId: String,
@@ -19,6 +20,7 @@ data class BackendLaunchConfig(
     val transport: MontoyaHttpTransport? = null,
     // REL-04: user-configurable CLI process timeout in seconds; null means use Defaults.CLI_PROCESS_TIMEOUT_SECONDS
     val cliTimeoutSeconds: Int? = null,
+    val nvidiaNimOptions: NvidiaNimOptions = NvidiaNimOptions(),
 )
 
 data class ChatMessage(
@@ -86,6 +88,11 @@ interface UsageAwareConnection {
 }
 
 interface JsonModeCapable
+
+/** Optional read-only status path for providers whose explicit health check consumes inference. */
+interface BackgroundHealthCheckCapable {
+    fun backgroundHealthCheck(settings: com.six2dez.burp.aiagent.config.AgentSettings): HealthCheckResult
+}
 
 interface AiBackend {
     val id: String

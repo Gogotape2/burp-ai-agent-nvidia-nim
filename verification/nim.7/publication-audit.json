@@ -1,0 +1,8 @@
+{
+  "testedSourceFilesUnchanged": 364,
+  "stagedFileCount": 83,
+  "credentialScan": "passed",
+  "upstreamLicensePreserved": true,
+  "jarSha256": "72ad8eacdc42898e362a55f1dbc32c82ab4821941aa0b6a4f4b0d30036119bf1",
+  "publicationChanges": "README, public technical notes and version-labelled validation reports only; tested implementation unchanged."
+}

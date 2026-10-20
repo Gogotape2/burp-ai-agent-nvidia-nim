@@ -46,6 +46,7 @@ internal fun SettingsPanel.currentSettings(): AgentSettings {
             toolToggles = collectMcpToolToggles(),
             enabledUnsafeTools = collectEnabledUnsafeTools(),
             unsafeEnabled = mcpUnsafe.isSelected,
+            autoApproveToolCalls = mcpAutoApproveToolCalls.isSelected,
             // 07-03 D-03: persist the global MCP scope toggle on the McpSettings sub-object.
             scopeOnly = mcpScopeOnly.isSelected,
             // Phase 16-05: external server list; bearerToken values are PLAINTEXT here —
@@ -110,6 +111,7 @@ internal fun SettingsPanel.currentSettings(): AgentSettings {
         nvidiaNimApiKey = backendState.nvidiaNimApiKey,
         nvidiaNimHeaders = backendState.nvidiaNimHeaders,
         nvidiaNimTimeoutSeconds = nvidiaNimTimeoutSeconds,
+        nvidiaNimOptions = backendState.nvidiaNimOptions,
         perplexityUrl = backendState.perplexityUrl,
         perplexityModel = backendState.perplexityModel,
         perplexityApiKey = backendState.perplexityApiKey,
@@ -327,6 +329,7 @@ internal fun SettingsPanel.applySettingsToUi(
             nvidiaNimApiKey = updated.nvidiaNimApiKey,
             nvidiaNimHeaders = updated.nvidiaNimHeaders,
             nvidiaNimTimeoutSeconds = updated.nvidiaNimTimeoutSeconds.toString(),
+            nvidiaNimOptions = updated.nvidiaNimOptions,
             perplexityUrl = updated.perplexityUrl,
             perplexityModel = updated.perplexityModel,
             perplexityApiKey = updated.perplexityApiKey,
@@ -384,6 +387,7 @@ internal fun SettingsPanel.applySettingsToUi(
         if (updated.mcpSettings.proxyHistoryNewestFirst) "Newest first" else "Oldest first"
     mcpAllowUnpreprocessedProxyHistory.isSelected = updated.mcpSettings.allowUnpreprocessedProxyHistory
     mcpUnsafe.isSelected = updated.mcpSettings.unsafeEnabled
+    mcpAutoApproveToolCalls.isSelected = updated.mcpSettings.autoApproveToolCalls
     // 07-03 D-03: keep the scope-only toggle in sync with persisted state.
     mcpScopeOnly.isSelected = updated.mcpSettings.scopeOnly
     // Phase 16-05: refresh external server list; bearerToken values are PLAINTEXT (decrypted

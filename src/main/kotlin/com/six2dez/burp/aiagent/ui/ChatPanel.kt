@@ -49,6 +49,7 @@ import java.awt.event.InputEvent
 import java.awt.event.KeyEvent
 import java.net.URI
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
 import javax.swing.BoxLayout
 import javax.swing.DefaultListModel
@@ -620,8 +621,27 @@ class ChatPanel(
             return
         }
         val assistant = sessionPanel.addStreamingMessage("AI")
+        if (backendId == "nvidia-nim") {
+            assistant.setWaitingDescription("NVIDIA NIM: waiting for complete answer")
+        }
         val state = sessionStates.getOrPut(sessionId) { ToolSessionState() }
-        val toolContext = if (state.toolsMode) buildToolContext(settings, sessionId) else null
+        if (backendId == "nvidia-nim" && actionName != "Tool Followup") {
+            state.nimChainRequest = ToolChainRequest(traceId, userText)
+        }
+        if (backendId == "nvidia-nim" && actionName == "Tool Followup") {
+            // Internal followups bypass the Send button; retain their tool result in chat history.
+            // The history builder below excludes this current turn before sending it separately.
+            session?.messages?.add(ChatMessage("user", userText))
+        }
+        // Keep the root question across MCP steps, rather than nesting previous tool results in it.
+        // Capture it now: a late callback must not read a newer chain's request from session state.
+        val toolUserRequest =
+            if (backendId == "nvidia-nim") {
+                state.nimChainRequest?.takeIf { it.traceId == traceId }?.userText ?: userText
+            } else {
+                userText
+            }
+        val toolContext = if (state.toolsMode) buildToolContext(settings, sessionId, backendId) else null
         val toolPreamble = if (state.toolsMode) buildToolPreamble(toolContext, state, mutateState = true) else null
         // Only include context JSON on the first turn — history already carries it
         val effectiveContextJson = if (session != null && session.contextSent) null else contextJson
@@ -669,6 +689,7 @@ class ChatPanel(
                     }
                 trimmed.map { ChatMessage(normalizeRole(it.role), it.content) }
             }
+        if (backendId == "nvidia-nim") retainNimPrompt(session, userText, finalPrompt)
         val callbackConnectionRef = AtomicReference<AgentConnection?>(null)
         val connection =
             supervisor.sendChat(
@@ -681,7 +702,7 @@ class ChatPanel(
                 determinismMode = settings.determinismMode,
                 traceId = traceId,
                 systemPrompt = systemPrompt,
-                maxOutputTokens = Defaults.CHAT_MAX_OUTPUT_TOKENS,
+                maxOutputTokens = if (backendId == "nvidia-nim") settings.nvidiaNimOptions.validated().maxTokens else Defaults.CHAT_MAX_OUTPUT_TOKENS,
                 launchMetadata = session?.launchMetadata,
                 onChunk = { chunk ->
                     responseBuffer.append(chunk)
@@ -784,7 +805,7 @@ class ChatPanel(
                                 val outcome =
                                     maybeExecuteToolCall(
                                         sessionId = sessionId,
-                                        userText = userText,
+                                        userText = toolUserRequest,
                                         responseText = finalResp,
                                         context = toolContext,
                                         remainingToolIterations = toolIterationsLeft,
@@ -814,6 +835,19 @@ class ChatPanel(
             )
         callbackConnectionRef.set(connection)
         inFlightConnection.set(connection)
+    }
+
+    private fun retainNimPrompt(
+        session: ChatSession?,
+        userText: String,
+        finalPrompt: String,
+    ) {
+        if (session == null) return
+        val last = session.messages.lastOrNull() ?: return
+        if (normalizeRole(last.role) == "user" && last.content == userText) {
+            // Preserve once-only context/catalog after taking the preceding-history snapshot.
+            session.messages[session.messages.lastIndex] = ChatMessage("user", finalPrompt)
+        }
     }
 
     /**
@@ -1341,6 +1375,7 @@ class ChatPanel(
         // again — an approval given while reviewing target A must not run silently against target B.
         // A fresh holder drops both session sets and the repeat counter in one assignment.
         state.approvalMemory = ToolApprovalMemory()
+        state.nimChainRequest = null
         // Remove persisted messages for this session
         try {
             projectData().deleteString(sessionMsgKeyPrefix + selected.id)
@@ -2039,9 +2074,16 @@ class ChatPanel(
         val card: ToolApprovalCard,
     )
 
+    private data class ToolChainRequest(
+        val traceId: String,
+        val userText: String,
+    )
+
     private data class ToolSessionState(
         var toolsMode: Boolean = true,
         var toolCatalogSent: Boolean = false,
+        var toolCatalogSnapshot: String? = null,
+        var nimChainRequest: ToolChainRequest? = null,
         // D-10: the SEC-06 approve/deny memory is keyed on the CHAT session and dies with it — no new
         // lifecycle, no persistence. An approval granted while reviewing target A must not silently
         // apply when the user opens a new chat about target B (T-22-20).
@@ -2229,6 +2271,10 @@ class ChatPanel(
             }
             message.append(text)
         }
+
+        fun setWaitingDescription(description: String) {
+            message.setWaitingDescription(description)
+        }
     }
 
     private class ChatMessagePanel(
@@ -2248,6 +2294,8 @@ class ChatPanel(
         private val spinnerFrames =
             listOf("\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F")
         private var spinnerIndex = 0
+        private var waitingDescription = "Thinking..."
+        private val waitingSinceNanos = System.nanoTime()
         private val pendingText = StringBuilder()
         private var coalescingTimer: javax.swing.Timer? = null
         private var copyResetTimer: javax.swing.Timer? = null
@@ -2475,7 +2523,8 @@ class ChatPanel(
                 spinnerTimer =
                     javax.swing.Timer(100) {
                         spinnerIndex = (spinnerIndex + 1) % spinnerFrames.size
-                        spinnerLabel.text = "${spinnerFrames[spinnerIndex]} Thinking..."
+                        val elapsed = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - waitingSinceNanos)
+                        spinnerLabel.text = "${spinnerFrames[spinnerIndex]} $waitingDescription (${elapsed}s)"
                     }
                 spinnerTimer?.start()
             }
@@ -2489,6 +2538,11 @@ class ChatPanel(
             spinnerTimer = null
             spinnerLabel.isVisible = false
             editorPane.isVisible = true
+        }
+
+        fun setWaitingDescription(description: String) {
+            waitingDescription = description
+            spinnerLabel.text = description
         }
 
         fun stopTimers() {
@@ -2645,7 +2699,9 @@ class ChatPanel(
         // MCP tool results), so tool *selection* is attacker-influenceable too. The gate is consulted
         // BEFORE anything here touches McpToolExecutor, and there is no path from this function to Burp
         // that goes around it.
-        return when (val outcome = ToolApprovalGate.evaluate(call.tool, state.approvalMemory)) {
+        return when (
+            val outcome = ToolApprovalGate.evaluate(call.tool, state.approvalMemory, getSettings().mcpSettings.autoApproveToolCalls)
+        ) {
             is ToolApprovalOutcome.Run -> {
                 addSuppressedDecisionRow(panel, call, outcome.decision)
                 executeApprovedToolCall(
@@ -3442,19 +3498,26 @@ IMPORTANT:
 - When making a tool call, output ONLY the JSON block and nothing else in that message.
 - Do NOT say you cannot use tools. You CAN use them by outputting JSON as shown above.
 - After receiving a tool result, continue your analysis or make another tool call.
+- For execution requests, perform the requested work with enabled tools and report observed results.
+- Use the exact IDs in the latest enabled catalog, which replaces earlier catalogs. Do not assume a tool is missing because another extension uses a different name.
+- When listed, http1_request and http2_request send custom HTTP requests. repeater_tab prepares a Repeater tab.
+- If a necessary tool is unavailable or rejected, state the exact limitation.
 - For confirmed vulnerabilities, call `issue_create` with concrete evidence.
         """.trim()
-        if (state.toolCatalogSent) return header
+        val list = McpToolExecutor.describeTools(context, includeSchemas = true, includeDisabled = false)
+        val limits = "\nProxy history count limit per call: ${context.proxyHistoryMaxItemsPerRequest}. Use offset pagination for more records."
+        if (state.toolCatalogSent && state.toolCatalogSnapshot == list) return header + limits
         if (mutateState) {
             state.toolCatalogSent = true
+            state.toolCatalogSnapshot = list
         }
-        val list = McpToolExecutor.describeTools(context, includeSchemas = true, includeDisabled = false)
-        return header + "\n\n" + list
+        return header + limits + "\n\n" + list
     }
 
     private fun buildToolContext(
         settings: AgentSettings,
         sessionId: String,
+        backendId: String = settings.preferredBackendId,
     ): McpToolContext {
         val toggles = McpToolCatalog.mergeWithDefaults(settings.mcpSettings.toolToggles)
         return McpToolContext(
@@ -3469,6 +3532,19 @@ IMPORTANT:
             limiter = McpRequestLimiter(settings.mcpSettings.maxConcurrentRequests),
             edition = api.burpSuite().version().edition(),
             maxBodyBytes = settings.mcpSettings.maxBodyBytes,
+            proxyHistoryMaxItemsPerRequest = settings.mcpSettings.proxyHistoryMaxItemsPerRequest,
+            proxyHistoryNewestFirst = settings.mcpSettings.proxyHistoryNewestFirst,
+            allowUnpreprocessedProxyHistory = settings.mcpSettings.allowUnpreprocessedProxyHistory,
+            scopeOnly = settings.mcpSettings.scopeOnly,
+            supervisor = supervisor,
+            passiveScanner = passiveScanner,
+            aiRequestLogger = supervisor.aiRequestLogger,
+            backendRegistry = supervisor.backendRegistry(),
+            aiBackendId = backendId,
+            preprocessProxyHistory = settings.preprocessProxyHistory,
+            preprocessMaxResponseSizeKb = settings.preprocessMaxResponseSizeKb,
+            preprocessFilterBinaryContent = settings.preprocessFilterBinaryContent,
+            preprocessAllowedContentTypes = settings.preprocessAllowedContentTypes,
         )
     }
 }

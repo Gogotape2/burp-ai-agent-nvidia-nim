@@ -45,6 +45,7 @@ data class McpToolContext(
     // Phase 16 (CAP-02): optional external MCP client manager. Null when no external servers
     // are configured. Defaults to null so all existing construction sites compile unchanged.
     val externalClientManager: ExternalMcpClientManager? = null,
+    val aiBackendId: String? = null,
 ) {
     fun isToolEnabled(name: String): Boolean = toolToggles[name] ?: false
 

@@ -336,6 +336,7 @@ internal class ToolDecisionReporter(
             ToolDecision.APPROVE_ONCE,
             ToolDecision.APPROVE_SESSION,
             ToolDecision.AUTO,
+            ToolDecision.AUTO_APPROVED,
             ToolDecision.SESSION_APPROVED,
             -> false
         }

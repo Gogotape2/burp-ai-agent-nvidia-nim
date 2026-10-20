@@ -1,234 +1,103 @@
-# Custom AI Agent
+# Burp AI Agent - NVIDIA NIM fork
 
-**The bridge between Burp Suite and modern AI.**
+Unofficial NVIDIA NIM compatibility fork of [Custom AI Agent by six2dez](https://github.com/six2dez/burp-ai-agent).
+Based on upstream **v1.0.0**, commit `e7d3fc47d224d661e990c28da82dfa3bac50fa6b`.
+Fork release: **1.0.0-nim.7**. The extension still appears in Burp as **Custom AI Agent**.
 
-> **A note on the name:** This extension is published as **Custom AI Agent** (formerly *Burp AI Agent*). It was renamed to comply with PortSwigger's BApp Store naming requirements and to avoid confusion with Burp Suite's built-in **Burp AI** provider. The GitHub repository (`github.com/six2dez/burp-ai-agent`), the documentation site (`burp-ai-agent.six2dez.com`), and the configuration directory (`~/.burp-ai-agent/`) keep the `burp-ai-agent` identifier for continuity.
+**[Download the release](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.7)** | [Technical notes](docs/nvidia-nim-patch.md) | [Validation](verification/nim.7/verification.json) | [Upstream README](README.upstream.md)
 
-<!-- screenshot: main extension tab with chat and settings visible -->
-![Custom AI Agent Screenshot](screenshots/main-tab.png)
+## What this fork changes
 
-Custom AI Agent is an extension for Burp Suite that integrates AI into your security workflow. Use local models or cloud providers, connect external AI agents via MCP, and let passive/active scanners find vulnerabilities while you focus on manual testing.
+- A dedicated NVIDIA NIM adapter explicitly requests buffered JSON with `stream=false`, avoiding the original SSE/JSON mismatch behind `Streaming response received`.
+- Configurable total timeout, bounded retries, shared concurrency and request-rate limits. Chats, scanners and connection tests use the same NIM request coordinator.
+- Model-aware reasoning settings, configurable completion and conversation-history budgets, UTF-8 requests, and clearer provider errors.
+- Background status reads the last explicit health result instead of submitting a paid or quota-consuming inference every five seconds.
+- Chat retains attached context and tool results without recursively embedding earlier tool followups.
+- Passive scanner batch flushing, manual scan delivery and status labels work without relying on Swing HTML rendering.
+- An optional **Automatically approve tool calls** checkbox, disabled by default.
+- AI tools called from chat receive the actual runtime dependencies. `ai_analyze` uses an independent backend connection with JSON/token options and a bounded wait. `ai_passive_scan` converts proxy history using Montoya's request/response factory.
 
-## What's new in v0.9.0
+## Install
 
-- **Native [Anthropic](docs/anthropic-backend.md) backend** (CAP-01) — direct Anthropic Messages API via Burp's HTTP transport; all traffic appears in Proxy history.
-- **AES-256-GCM secrets at rest** (SEC-01) — all stored API keys and tokens are encrypted with a per-install key using `javax.crypto`. The master key lives in Burp Preferences alongside the ciphertext, so this defends against casual inspection of a preferences file, not against a local attacker — see [Privacy and Security Notes](#privacy-and-security-notes).
-- **Real HKDF host anonymization** (PRIV-01) — STRICT mode now uses genuine HMAC-SHA256 extract/expand (not salted SHA-256) for host anonymization.
-- **Request/response body redaction + custom patterns** (PRIV-02) — redaction pipeline covers body fields and user-configurable regex patterns validated against ReDoS.
-- **Pre-send secret tripwire** (PRIV-03) — warns before high-entropy values leave Burp; allowlist actions are audit-logged.
-- **[External MCP servers](docs/external-mcp-servers.md)** (CAP-02) — connect to external/custom MCP servers (SSE or stdio) so AI agents can call their tools alongside Burp's built-in tools.
-- **Per-session token-budget guardrails** (CAP-04) — `BudgetGuard` caps passive-scanner spend with WARN/CAP/OFF states; passive scanner pauses automatically at the hard cap.
+Requires Java 21 or newer. Burp Community supports the chat workflow; automatic Burp passive-check integration requires Burp Professional.
 
-## Highlights
+1. Download `Custom-AI-Agent-full-1.0.0-nim.7.jar` from this fork's [release](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.7).
+2. Disable the previous Custom AI Agent extension under **Extensions > Installed**.
+3. Add the downloaded file as a **Java** extension. Load one version at a time.
+4. Open **Custom AI Agent > Settings** and select **NVIDIA NIM**.
+5. Enter your NVIDIA API key and a complete model ID, then save settings.
+6. Run **Test connection**, then start a new chat.
 
-- **12 AI Backends** — Burp AI (built-in), Anthropic, Ollama, LM Studio, NVIDIA NIM, Perplexity, Generic OpenAI-compatible, Gemini CLI, Claude CLI, Codex CLI, OpenCode CLI, Copilot CLI.
-- **59 MCP Tools** — Let Claude Desktop (or any MCP client) drive Burp autonomously (8 extension-native AI tools in the store build, all 59 in the full build).
-- **Scoped MCP Access** — Optionally confine every MCP tool to your in-scope hosts, so external AI clients can't reach out-of-scope targets through Burp.
-- **62 Vulnerability Classes** — Passive and Active AI scanners across injection, auth, crypto, and more. The passive scanner runs as a Burp `PassiveScanCheck` (Burp Pro).
-- **Install from Releases** — Download the JAR from [Releases](https://github.com/six2dez/burp-ai-agent/releases). Not on the BApp Store: the [submission](https://github.com/PortSwigger/extension-portal/issues/231) has been open since January 2026.
-- **Theme-Aware UI** — An internal design system styles the settings panel and re-themes automatically with Burp's light/dark switch.
-- **Burp Scan Skill** — Use your preferred AI coding assistant (Claude Code, Gemini CLI, Codex, etc.) as a scanner via MCP.
-- **3 Privacy Modes** — STRICT / BALANCED / OFF. Redact sensitive data before it leaves Burp.
-- **Custom Prompt Library** — Save free-form prompts per context (HTTP request or scanner issue); launch them from the right-click menu or type ad-hoc ones via `Custom…`.
-- **Audit Logging** — JSONL with SHA-256 integrity hashing for compliance; every launch stamped with `promptSource` / `contextKind` for reproducibility.
+The built-in Burp **Use AI** permission is required only for the `burp-ai` backend; NVIDIA NIM uses the external provider configuration.
+Existing settings share the upstream configuration location. Starting a new chat avoids reusing transcripts generated by older builds.
 
-## Quick Start
+## NVIDIA NIM settings
 
-### 1. Install
+| Setting | Default |
+| --- | --- |
+| Base URL | `https://integrate.api.nvidia.com` |
+| Model preset | `nvidia/nemotron-3-ultra-550b-a55b` |
+| Total timeout | 900 seconds |
+| Max tokens, answer plus thinking | 16,384; configurable up to 32,768 in this adapter |
+| Reasoning effort | Auto |
+| Concurrent requests | 5, shared across the extension |
+| Requests per window | 30 |
+| Window | 60 seconds |
+| Additional retries | 2 |
+| Retained history | 1,000,000 characters, up to 200 previous messages |
 
-Download the latest JAR from [Releases](https://github.com/six2dez/burp-ai-agent/releases), or build from source (Java 21):
+These are client settings, not guarantees of model availability, provider quota, or the model's context window.
+The base host, a `/v1` base and a full chat-completions URL are normalized by the adapter.
+The adapter's Auto profile requests no reasoning for Nemotron Ultra and low reasoning for its GLM 5.3 profiles; other models retain provider defaults.
 
-```bash
-git clone https://github.com/six2dez/burp-ai-agent.git
-cd burp-ai-agent
+## Tool confirmations and scanning
 
-# Full build (default, GitHub releases) — all 59 MCP tools
-JAVA_HOME=/path/to/jdk-21 ./gradlew clean shadowJar
-# Output: build/libs/Custom-AI-Agent-full-<version>.jar
+Open **Settings > MCP Server > Tool confirmations**, enable **Automatically approve tool calls**, then save settings to run available model-emitted tools without individual approval cards.
+With this option off, the existing confirmation tiers apply, including **Approve for session** and per-call confirmation.
+In that default mode, bounded tools can run automatically, the middle tier supports session approval, and the strict tier confirms every call.
+Unrecognised names and external `ext:` tool names use the strict tier. Decisions are recorded in the audit/activity output.
+**Unsafe Mode** controls capability availability independently of these confirmation tiers.
+Per-chat denials remain effective, and already pending cards are not accepted retroactively.
+Tool enablement, the unsafe-tool allowlist, MCP Scope and request limits apply independently.
 
-# Store build (BApp Store submission) — 8 extension-native AI MCP tools only
-JAVA_HOME=/path/to/jdk-21 ./gradlew clean shadowJar -PstoreBuild=true
-# Output: build/libs/Custom-AI-Agent-<version>.jar
+Use `/tools` to inspect the current tool catalog. Custom HTTP tools are named `http1_request` and `http2_request`; this extension does not expose `repeater_send`.
+Automatic passive input requires Burp Pro's live passive audit, enabled extension checks, and matching scope.
+Existing proxy history is processed through a manual scan action or `ai_passive_scan`; changing scope does not replay old traffic automatically.
+
+## Validation and known limits
+
+The nim.7 regression task ran **789 tests: 787 passed, 2 skipped, 0 failures/errors** on Windows/JDK 21.
+`ktlintCheck`, `detekt` and `shadowJar` passed.
+The tests include the real Swing ChatPanel tool-call/result continuation with a synthetic backend, timeout cleanup, scope filtering and scanner-session isolation.
+See [the validation record](verification/nim.7/verification.json) and [technical notes](docs/nvidia-nim-patch.md).
+
+- The complete suite was not rerun for nim.7. A nim.6 full-suite run had two existing redaction time-budget test failures. The redactor drops the remaining data when its budget expires; its bytecode is unchanged in nim.7. The baseline report is explicitly labelled [nim6-baseline-full-suite.json](verification/nim.7/nim6-baseline-full-suite.json).
+- The nim.7 JAR was not loaded into a live Burp process during its validation, and no live NVIDIA inference was made for this version. Earlier validation does not substitute for testing this exact build in your environment.
+- HTTP 429 quota/capacity errors and HTTP 500 provider errors remain possible. Client retries and timeouts cannot increase provider capacity.
+- Responses are displayed after generation; this buffered transport does not provide live token streaming. Async HTTP 202 polling is not implemented.
+- Stop discards late results locally. Montoya does not expose an HTTP cancellation handle in the transport path used here, so a submitted inference can continue at the provider.
+- `ai_analyze` performs model inference. It is not web search or CVE retrieval. Web search is not included in this fork release; the upstream external MCP client manager is not wired into the production chat runtime.
+
+## Build
+
+Use JDK 21 and the included Gradle wrapper:
+
+```powershell
+.\gradlew.bat shadowJar
 ```
 
-### 2. Load into Burp
+On macOS/Linux use `./gradlew shadowJar`. The output is `build/libs/Custom-AI-Agent-full-1.0.0-nim.7.jar`.
+The complete test task remains available as `./gradlew test`; known baseline failures are documented above and are not silently excluded from that task.
 
-1. Open Burp Suite (Community or Professional).
-2. Go to **Extensions > Installed > Add**.
-3. Select **Java** as extension type and choose the `.jar` file.
+## Privacy and security notes
 
-The extension registers in Burp as **Custom AI Agent** (the name in the Extensions list and the Suite tab) to distinguish it from Burp's built-in **Burp AI** provider.
+The upstream privacy and [security policy](SECURITY.md) remain relevant to this fork.
+Stored API keys and tokens use AES-256-GCM, but the master key is itself stored in **Burp Preferences**, Base64-encoded alongside the ciphertext, under `secret.master.key.v1`.
+This addresses casual inspection of preferences or an export; it does not protect against someone who can read those preferences and recover the master key.
+Tool confirmation controls and the opt-in automatic mode are described above. See [the UI safety guide](docs/ui-safety-guide.md) for the upstream confirmation design; the checkbox in this fork is an explicit override of per-call approval.
 
-<!-- screenshot: Burp Extensions > Add dialog with the JAR loaded -->
-![Load Extension](screenshots/burp-extensions-add.png)
+## Credits and license
 
-### 3. Agent Profiles
-
-The extension auto-installs the bundled profiles into `~/.burp-ai-agent/AGENTS/` on first run.
-Drop additional `*.md` files in that directory to add custom profiles.
-
-### 4. Configure a Backend
-
-Open the **AI Agent** tab and go to **Settings**. Pick a backend:
-
-| Backend | Type | Setup |
-| :--- | :--- | :--- |
-| **Burp AI (built-in)** | In-process | Use Burp Suite Pro's built-in AI when available; no extra config required. |
-| **Ollama** | Local HTTP | Install [Ollama](https://ollama.com), run `ollama serve`, pull a model (`ollama pull llama3.1`). |
-| **LM Studio** | Local HTTP | Install [LM Studio](https://lmstudio.ai), load a model, start the server. |
-| **NVIDIA NIM** | HTTP | Use the default `https://integrate.api.nvidia.com` endpoint, set your NVIDIA API key, and choose a model such as `moonshotai/kimi-k2.5`. |
-| **Perplexity** | HTTP | Use the default `https://api.perplexity.ai` endpoint, set your `pplx-...` API key, and choose a model such as `sonar`, `sonar-pro`, or `sonar-reasoning`. |
-| **Generic OpenAI-compatible** | HTTP | Provide a base URL and model for any OpenAI-compatible provider. |
-| **Gemini CLI** | Cloud CLI | Install `gemini`, run `gemini auth login`. |
-| **Claude CLI** | Cloud CLI | Install `claude`, set `ANTHROPIC_API_KEY` or run `claude login`. |
-| **Codex CLI** | Cloud CLI | Install `codex`, set `OPENAI_API_KEY`. |
-| **OpenCode CLI** | Cloud CLI | Install `opencode`, configure provider credentials. |
-| **Copilot CLI** | Cloud CLI | Install `copilot` and sign in with your GitHub account. |
-| **Anthropic** | Cloud API | Enter your Anthropic API key in Settings. API traffic routes through Burp's proxy. See [docs/anthropic-backend.md](docs/anthropic-backend.md). |
-
-For **NVIDIA NIM**, the backend expects the same chat-completions style flow as the NVIDIA hosted endpoint. A working configuration is:
-
-```text
-Backend: NVIDIA NIM
-Base URL: https://integrate.api.nvidia.com
-Model: moonshotai/kimi-k2.5
-API Key: <your nvapi token>
-```
-
-Leave extra headers empty unless your gateway requires them. The extension sends requests to `/v1/chat/completions` and uses the configured bearer token automatically.
-
-### 5. Run Your First Analysis
-
-1. Browse a target through Burp Proxy.
-2. Right-click any request in **Proxy > HTTP History**.
-3. Select **Extensions > Custom AI Agent > Analyze this request**.
-4. A chat session opens with the AI analysis.
-
-<!-- screenshot: right-click context menu showing Custom AI Agent actions -->
-![Context Menu](screenshots/context-menu-request.png)
-
-### 6. Connect Claude Desktop via MCP (Optional)
-
-Enable the MCP server in **Settings > MCP Server** and add this to your Claude Desktop config:
-
-**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
-**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
-
-```json
-{
-  "mcpServers": {
-    "burp-ai-agent": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "supergateway",
-        "--sse",
-        "http://127.0.0.1:9876/sse"
-      ]
-    }
-  }
-}
-```
-
-> Requires Node.js 18+. If you enable **External Access**, the MCP client must send `Authorization: Bearer <token>` on every request.
-
-You can also register external or custom MCP servers in **Settings > MCP > External Servers** (SSE or stdio transports). External server auth tokens are stored encrypted at rest, with the caveat described in [Privacy and Security Notes](#privacy-and-security-notes). See [docs/external-mcp-servers.md](docs/external-mcp-servers.md) for setup details and security notes.
-
-## Burp Scan Skill (Terminal AI Scanning)
-
-The `burp-scan` skill lets you use any AI coding assistant (Claude Code, Gemini CLI, Codex, etc.) as a Burp scanner from your terminal. Instead of the plugin's built-in AI, **your terminal AI becomes the reasoning engine** while Burp provides the tools via MCP.
-
-### What It Contains
-
-- MCP tool reference (up to all 59 tools in the full build) organized by scanning action
-- Passive analysis protocol (traffic analysis without sending requests)
-- Active testing payload library (200+ payloads for 62 vuln classes with detection patterns)
-- End-to-end scanning workflow (scope -> passive -> active -> OOB -> report)
-- Issue creation protocol with severity/confidence mapping
-
-### Install for Claude Code
-
-Copy the skill to your Claude Code skills directory:
-
-```bash
-# Global (available in all projects)
-cp -r skills/burp-scan ~/.claude/skills/burp-scan
-
-# Or project-specific
-cp -r skills/burp-scan .claude/skills/burp-scan
-```
-
-Then use `/burp-scan` in Claude Code or let it trigger automatically when you mention Burp scanning.
-
-### Install for Other AI Assistants
-
-The skill is a standalone Markdown file at [`skills/burp-scan/SKILL.md`](skills/burp-scan/SKILL.md). You can use it with any AI assistant that supports system prompts or context files:
-
-- **Gemini CLI / Codex / OpenCode**: Add as a context file or paste into your system prompt
-- **Custom MCP clients**: Include the skill content as system context alongside your MCP connection
-- **Any LLM**: The file is self-contained — feed it as context along with your MCP tool definitions
-
-### Usage Example
-
-```
-You: Connect to Burp MCP at localhost:9876 and scan the proxy history for IDOR vulnerabilities
-
-AI: [Uses proxy_http_history to pull traffic]
-    [Identifies endpoints with numeric IDs]
-    [Sends http1_request with ID+1, ID-1 payloads]
-    [Compares responses for different user data]
-    [Creates issue_create for confirmed IDOR]
-```
-
-> The skill and the plugin's built-in scanner are complementary: the plugin runs automated background scanning, while the skill enables interactive, analyst-guided scanning from your terminal.
-
-## Documentation
-
-Full documentation is available at **[burp-ai-agent.six2dez.com](https://burp-ai-agent.six2dez.com)**.
-
-- [Installation](https://burp-ai-agent.six2dez.com/getting-started/installation)
-- [Quick Start](https://burp-ai-agent.six2dez.com/getting-started/quick-start)
-- [UI Tour](https://burp-ai-agent.six2dez.com/user-guide/ui-tour)
-- [Agent Profiles](https://burp-ai-agent.six2dez.com/user-guide/agent-profiles)
-- [Passive Scanner](https://burp-ai-agent.six2dez.com/scanners/passive)
-- [Active Scanner](https://burp-ai-agent.six2dez.com/scanners/active)
-- [MCP Overview](https://burp-ai-agent.six2dez.com/mcp/overview)
-- [Privacy Modes](https://burp-ai-agent.six2dez.com/privacy/privacy-modes)
-- [Settings Reference](https://burp-ai-agent.six2dez.com/reference/settings-reference)
-- [Troubleshooting](https://burp-ai-agent.six2dez.com/reference/troubleshooting)
-- [Burp Scan Skill](https://burp-ai-agent.six2dez.com/user-guide/burp-scan-skill)
-
-## Operator Playbooks
-
-- [MCP Hardening](docs/mcp-hardening.md)
-- [UI Safety Guide](docs/ui-safety-guide.md)
-- [Backend Troubleshooting](docs/backend-troubleshooting.md)
-- [Anthropic Backend Setup](docs/anthropic-backend.md)
-- [External MCP Servers](docs/external-mcp-servers.md)
-
-### Privacy and Security Notes
-
-- **Secrets at rest — what the encryption does and does not do.** All stored API keys and tokens (Anthropic, MCP bearer token, TLS keystore password, etc.) are encrypted with AES-256-GCM using a per-install random master key (`SecretCipher`). **That master key is itself stored in Burp Preferences, Base64-encoded, beside the ciphertext it protects** (preference `secret.master.key.v1`). Anyone who can read your Burp Preferences can therefore also read the key and decrypt the secrets. It does **not** protect against a local attacker or a malicious process running as your user; treat it as obfuscation against casual inspection of a preferences file or an exported project. If a credential must survive that threat model, keep it in a dedicated secret store and paste it per session.
-- **Model-emitted tool calls need your approval.** A tool call that the extension parses out of *model output* does not execute against Burp until you decide. Every tool carries a required security tier: run automatically (read-only and bounded output), confirm with an **Approve for session** option, or confirm on every single call. A tool name the catalog does not recognise resolves to confirm-every-time, never to automatic, and external `ext:`-namespaced tools always confirm every call. The decision appears as a card inline in the chat transcript rather than as a modal dialog, and each decision is recorded — an audit event plus a line in Burp's Output tab, since audit logging is off by default. Denying returns a neutral "not authorised, do not retry" result to the model rather than an error. This tier is independent of the **Unsafe Mode** switch: Unsafe Mode governs whether a tool may *ever* run, the tier governs whether the model may run it *without asking*. Design rationale: [`DECISIONS.md`](DECISIONS.md) ADR-15. Operator runbook: [docs/ui-safety-guide.md](docs/ui-safety-guide.md).
-- STRICT privacy mode anonymizes hosts using real HKDF (HMAC-SHA256 extract/expand). BALANCED mode redacts cookies, tokens, and auth headers. OFF mode sends traffic as-is.
-- External MCP server outputs are wrapped in a trust-boundary marker before entering the AI prompt, preventing prompt injection from untrusted server responses.
-
-Settings are schema-versioned internally (`settings.schema.version`) and migrated additively on load for safe upgrades.
-
-## Requirements
-
-- **Burp Suite** Community or Professional (2023.12+)
-- **Java 21** (bundled with modern Burp for runtime; required separately for building from source)
-- At least one AI backend configured (see table above)
-
-## License
-
-This project is licensed under the [MIT License](LICENSE).
-
-## Disclaimer
-
-Usage of Custom AI Agent for attacking targets without prior consent is illegal. It is the user's responsibility to obey all applicable laws. The developers assume no liability for misuse or damage caused by this tool. Use responsibly.
-
-## Contributing
-
-Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines, or the [Developer docs](https://burp-ai-agent.six2dez.com/developer/architecture) for architecture details.
+Original project: [six2dez/burp-ai-agent](https://github.com/six2dez/burp-ai-agent), published as Custom AI Agent.
+This is an independent fork and is not an official release by six2dez, NVIDIA or PortSwigger.
+The original MIT [LICENSE](LICENSE) and copyright notice are preserved.

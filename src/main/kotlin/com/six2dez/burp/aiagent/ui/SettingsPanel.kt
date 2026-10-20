@@ -124,6 +124,7 @@ class SettingsPanel(
                 nvidiaNimApiKey = settings.nvidiaNimApiKey,
                 nvidiaNimHeaders = settings.nvidiaNimHeaders,
                 nvidiaNimTimeoutSeconds = settings.nvidiaNimTimeoutSeconds.toString(),
+                nvidiaNimOptions = settings.nvidiaNimOptions,
                 perplexityUrl = settings.perplexityUrl,
                 perplexityModel = settings.perplexityModel,
                 perplexityApiKey = settings.perplexityApiKey,
@@ -298,6 +299,10 @@ class SettingsPanel(
             settings.mcpSettings.allowUnpreprocessedProxyHistory,
         )
     internal val mcpUnsafe = JCheckBox("Unsafe mode (allow write/mutation tools)", settings.mcpSettings.unsafeEnabled)
+    internal val mcpAutoApproveToolCalls =
+        JCheckBox("Automatically approve tool calls", settings.mcpSettings.autoApproveToolCalls).apply {
+            toolTipText = "Run enabled tools without confirmation cards. Tool permissions, scope and request limits still apply."
+        }
 
     // 07-03 D-03: global "Restrict MCP tools to in-scope hosts" toggle. Mirrors the JCheckBox
     // pattern used by mcpExternal / mcpUnsafe / passiveAiScopeOnly / activeAiScopeOnly so it stays

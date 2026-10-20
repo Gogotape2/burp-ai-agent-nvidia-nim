@@ -99,6 +99,9 @@ internal enum class ToolDecision(
     /** The tool's tier is [SecTier.AUTO]; it ran with no user decision at all (D-02). */
     AUTO("auto"),
 
+    /** The user's persisted opt-in approved this call without a per-call card. */
+    AUTO_APPROVED("auto_approved"),
+
     /** An EARLIER click was applied to this call. No human saw this invocation. */
     SESSION_APPROVED("session_approved"),
 
@@ -395,31 +398,28 @@ internal object ToolApprovalGate {
     /**
      * The pre-card branch: decides whether this call runs, is refused outright, or needs a human.
      *
-     * **These two parameters are the whole signature, and the omissions are the control.** There is no
-     * settings object, no on/off flag and no bypass argument, because D-09 ships neither an opt-out nor
-     * a tier downgrade — and a parameter that does not exist cannot be passed `false` by a future edit,
-     * a malicious settings import, or a call site that just wants the tests to go green (T-22-21). The
-     * absence of the parameter is what keeps ADR-15 a rule rather than a default. The escape hatch
-     * already exists and is the correct one: `ToolSessionState.toolsMode` stops the model calling tools
-     * at all, rather than un-gating the ones it calls.
+     * The optional automatic mode is a user preference, disabled by default. It changes confirmation
+     * handling, while the executor still checks availability, scope and limits.
+     * Each automatic approval carries its own audit decision; no session grants are written.
      *
-     * Order is fixed: canonicalise, resolve the tier, then consult memory — never the reverse. Session
-     * memory is only ever read for [SecTier.CONFIRM].
+     * In manual mode session memory applies only to [SecTier.CONFIRM]. Automatic mode also preserves
+     * explicit session denials and does not create new session grants.
      */
     internal fun evaluate(
         rawToolName: String,
         memory: ToolApprovalMemory,
+        autoApprove: Boolean = false,
     ): ToolApprovalOutcome {
         val canonical = McpToolExecutor.canonicalToolId(rawToolName)
         val tier = tierFor(rawToolName)
-        // One `when`, so the branch order below IS the evaluation order: a later branch cannot run
-        // unless every earlier one was false. That is what makes "CONFIRM_EACH touches no session set"
-        // a structural property of this function rather than a claim about it.
+        // The automatic preference is evaluated before the manual confirmation policy.
         return when {
             // D-02: AUTO runs with no decision and no record of one. D-05 makes it read-only AND
             // bounded-output, so there is nothing for a human to weigh.
             tier == SecTier.AUTO ->
                 ToolApprovalOutcome.Run(approvedOrigin(tier, ToolDecision.AUTO), tier, ToolDecision.AUTO)
+            autoApprove && !memory.isDeniedForSession(canonical) ->
+                ToolApprovalOutcome.Run(approvedOrigin(tier, ToolDecision.AUTO_APPROVED), tier, ToolDecision.AUTO_APPROVED)
             // D-02: this tier consults NEITHER session set and writes to NEITHER, which is the whole
             // reason a third tier exists. One click must not hand the model unlimited http1_request /
             // http2_request / intruder / scan_audit_start for a whole chat (T-22-18). It also means an
@@ -454,7 +454,7 @@ internal object ToolApprovalGate {
         memory: ToolApprovalMemory,
         action: ToolDecision,
     ): ToolApprovalOutcome {
-        require(action != ToolDecision.AUTO && action != ToolDecision.SESSION_APPROVED && action != ToolDecision.SESSION_DENIED) {
+        require(action !in setOf(ToolDecision.AUTO, ToolDecision.AUTO_APPROVED, ToolDecision.SESSION_APPROVED, ToolDecision.SESSION_DENIED)) {
             "$action is derived by the gate, not clickable; resolve() accepts only the four D-11 actions plus IMPLICIT_DENY."
         }
         val canonical = McpToolExecutor.canonicalToolId(rawToolName)
@@ -481,7 +481,7 @@ internal object ToolApprovalGate {
                 ToolApprovalOutcome.Denied(tier, action, DENIAL_RESULT)
             // Exhaustive rather than `else`, so adding a ninth ToolDecision fails the build here instead
             // of silently falling into a default. Unreachable: the first require above rejects all three.
-            ToolDecision.AUTO, ToolDecision.SESSION_APPROVED, ToolDecision.SESSION_DENIED ->
+            ToolDecision.AUTO, ToolDecision.AUTO_APPROVED, ToolDecision.SESSION_APPROVED, ToolDecision.SESSION_DENIED ->
                 error("Unreachable: $action was rejected by the clickable-action precondition.")
         }
     }

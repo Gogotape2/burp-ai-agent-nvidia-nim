@@ -162,14 +162,18 @@ internal fun PassiveAiScanner.extractAndLogJsEndpoints(
 // ---- analysis flow ----
 
 internal fun PassiveAiScanner.analyzeManually(requestResponse: HttpRequestResponse) {
+    analysisInProgress.set(true)
     try {
-        doAnalysis(requestResponse)
+        doAnalysis(requestResponse, allowBatch = false)
     } catch (e: Exception) {
         api.logging().logToError("[PassiveAiScanner] Manual scan error: ${e.message}")
+    } finally {
+        analysisInProgress.set(false)
     }
 }
 
 internal fun PassiveAiScanner.analyzeInBackground(requestResponse: HttpRequestResponse) {
+    analysisInProgress.set(true)
     try {
         doAnalysis(requestResponse)
         // Flush batch if timeout expired (handles case where no new requests arrive)
@@ -178,11 +182,18 @@ internal fun PassiveAiScanner.analyzeInBackground(requestResponse: HttpRequestRe
         }
     } catch (e: Exception) {
         api.logging().logToError("[PassiveAiScanner] Error: ${e.message}")
+    } finally {
+        analysisInProgress.set(false)
     }
 }
 
-@Suppress("CyclomaticComplexMethod", "LongMethod")
-internal fun PassiveAiScanner.doAnalysis(requestResponse: HttpRequestResponse) {
+// The added batching flag changes the baseline signature; the existing early exits and nesting
+// remain unchanged. Keep those two pre-existing findings local instead of growing the baseline.
+@Suppress("CyclomaticComplexMethod", "LongMethod", "ReturnCount", "NestedBlockDepth")
+internal fun PassiveAiScanner.doAnalysis(
+    requestResponse: HttpRequestResponse,
+    allowBatch: Boolean = true,
+) {
     try {
         val settings = getSettings()
         applyOptimizationSettings(settings)
@@ -411,7 +422,7 @@ internal fun PassiveAiScanner.doAnalysis(requestResponse: HttpRequestResponse) {
 
         // Batch mode: enqueue and flush when ready
         val batchSize = settings.passiveAiBatchSize.coerceIn(1, 5)
-        if (batchSize > 1) {
+        if (allowBatch && batchSize > 1) {
             batchQueue.enqueue(
                 PendingAnalysis(
                     metadata = safeMetadataText,
@@ -473,7 +484,7 @@ internal fun PassiveAiScanner.doAnalysis(requestResponse: HttpRequestResponse) {
                 ),
         )
 
-        val completed = completionLatch.await(Defaults.PASSIVE_SCAN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+        val completed = completionLatch.await(supervisor.responseWaitTimeoutMs(Defaults.PASSIVE_SCAN_TIMEOUT_MS), TimeUnit.MILLISECONDS)
         val durationMs = System.currentTimeMillis() - sendStartMs
 
         requestsAnalyzed.incrementAndGet()
@@ -625,7 +636,7 @@ internal fun PassiveAiScanner.flushBatch(settings: AgentSettings) {
         maxOutputTokens = Defaults.SCANNER_BATCH_MAX_OUTPUT_TOKENS,
     )
 
-    val completed = completionLatch.await(Defaults.PASSIVE_SCAN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+    val completed = completionLatch.await(supervisor.responseWaitTimeoutMs(Defaults.PASSIVE_SCAN_TIMEOUT_MS), TimeUnit.MILLISECONDS)
     val durationMs = System.currentTimeMillis() - sendStartMs
 
     if (!completed) {
@@ -719,7 +730,7 @@ internal fun PassiveAiScanner.sendSingleAnalysis(
         maxOutputTokens = Defaults.SCANNER_MAX_OUTPUT_TOKENS,
     )
 
-    val completed = completionLatch.await(Defaults.PASSIVE_SCAN_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+    val completed = completionLatch.await(supervisor.responseWaitTimeoutMs(Defaults.PASSIVE_SCAN_TIMEOUT_MS), TimeUnit.MILLISECONDS)
     requestsAnalyzed.incrementAndGet()
     lastAnalysisTime.set(System.currentTimeMillis())
 

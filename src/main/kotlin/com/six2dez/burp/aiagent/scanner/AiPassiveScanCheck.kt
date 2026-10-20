@@ -43,11 +43,11 @@ class AiPassiveScanCheck(
      */
     override fun doCheck(httpRequestResponse: HttpRequestResponse): AuditResult {
         val settings = getSettings()
-
-        // Scope check — mirror of AiScanCheck.activeAudit lines 44-46
-        if (settings.passiveAiScopeOnly &&
-            !api.scope().isInScope(httpRequestResponse.request().url())
-        ) {
+        val inScope =
+            settings.passiveAiEnabled &&
+                (!settings.passiveAiScopeOnly || api.scope().isInScope(httpRequestResponse.request().url()))
+        if (settings.passiveAiEnabled) passiveScanner.recordScanCheck(inScope)
+        if (!inScope) {
             return AuditResult.auditResult(emptyList())
         }
 

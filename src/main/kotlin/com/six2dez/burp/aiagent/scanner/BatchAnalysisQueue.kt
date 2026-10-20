@@ -51,6 +51,8 @@ internal class BatchAnalysisQueue(
 
     fun isEmpty(): Boolean = queue.isEmpty()
 
+    fun size(): Int = queue.size
+
     fun clear() {
         queue.clear()
         oldestEnqueueMs.set(0L)

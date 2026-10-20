@@ -8,8 +8,11 @@ import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.util.BudgetGuard
+import com.six2dez.burp.aiagent.util.scheduleGuarded
 import java.util.LinkedHashMap
-import java.util.concurrent.Executors
+import java.util.concurrent.RunnableScheduledFuture
+import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -63,9 +66,16 @@ class PassiveAiScanner(
     internal val lastAnalysisTime = AtomicLong(0)
     internal val aiBackoffUntilMs = AtomicLong(0)
     internal val lastBackoffLogTime = AtomicLong(0)
+    internal val analysisInProgress = AtomicBoolean(false)
+    private val scanChecksReceived = AtomicInteger(0)
+    private val outOfScopeSkipped = AtomicInteger(0)
+    private val lastCheckOutsideScope = AtomicBoolean(false)
     internal val executor =
-        Executors.newSingleThreadExecutor { r ->
+        ScheduledThreadPoolExecutor(1) { r ->
             Thread(r, "PassiveAiScanner").apply { isDaemon = true }
+        }.apply {
+            removeOnCancelPolicy = true
+            executeExistingDelayedTasksAfterShutdownPolicy = false
         }
     internal val findings = ArrayDeque<PassiveAiFinding>(Defaults.FINDINGS_BUFFER_SIZE)
 
@@ -238,11 +248,42 @@ class PassiveAiScanner(
     internal val batchQueue = BatchAnalysisQueue()
     internal var persistentCache: com.six2dez.burp.aiagent.cache.PersistentPromptCache? = null
 
+    init {
+        // The timeout must advance without another request arriving. Keep flushing on the same
+        // worker as analysis so batch draining and provider sends remain serialized.
+        executor.scheduleGuarded(
+            component = "PassiveAiScanner",
+            task = "batch flush",
+            logError = { api.logging().logToError(it) },
+            initialDelay = 1,
+            delay = 1,
+            unit = TimeUnit.SECONDS,
+        ) {
+            if (enabled.get() && !budgetPaused.get() && !supervisor.isBlockedByBurpAiGate()) {
+                if (batchQueue.shouldFlush()) {
+                    analysisInProgress.set(true)
+                    try {
+                        flushBatch(getSettings())
+                    } finally {
+                        analysisInProgress.set(false)
+                    }
+                }
+            }
+        }
+    }
+
+    fun recordScanCheck(inScope: Boolean) {
+        scanChecksReceived.incrementAndGet()
+        lastCheckOutsideScope.set(!inScope)
+        if (!inScope) outOfScopeSkipped.incrementAndGet()
+    }
+
     fun setEnabled(on: Boolean) {
         val wasEnabled = enabled.getAndSet(on)
         if (on) {
             api.logging().logToOutput("[PassiveAiScanner] Enabled - Burp Scanner passive check active (Pro only)")
         } else if (wasEnabled) {
+            batchQueue.clear()
             // Clear accumulated knowledge to prevent cross-scope contamination
             ScanKnowledgeBase.clear()
             api.logging().logToOutput("[PassiveAiScanner] Disabled — knowledge base cleared")
@@ -258,7 +299,11 @@ class PassiveAiScanner(
         if (!enabled.get()) return
         if (budgetPaused.get()) return // CAP-04: no-op when paused (does NOT clear KB or flip enabled)
         if (supervisor.isBlockedByBurpAiGate()) return
-        executor.submit { analyzeManually(requestResponse) }
+        executor.submit {
+            if (enabled.get() && !budgetPaused.get() && !supervisor.isBlockedByBurpAiGate()) {
+                analyzeInBackground(requestResponse)
+            }
+        }
     }
 
     /**
@@ -286,7 +331,12 @@ class PassiveAiScanner(
             requestsAnalyzed = requestsAnalyzed.get(),
             issuesFound = issuesFound.get(),
             lastAnalysisTime = lastAnalysisTime.get(),
-            queueSize = 0, // Single-threaded executor
+            queueSize = executor.queue.count { it !is RunnableScheduledFuture<*> || !it.isPeriodic } + batchQueue.size(),
+            scanChecksReceived = scanChecksReceived.get(),
+            outOfScopeSkipped = outOfScopeSkipped.get(),
+            lastCheckOutsideScope = lastCheckOutsideScope.get(),
+            budgetPaused = budgetPaused.get(),
+            analyzing = analysisInProgress.get(),
         )
 
     fun getLastFindings(n: Int): List<PassiveAiFinding> {
@@ -298,10 +348,6 @@ class PassiveAiScanner(
 
     fun shutdown() {
         enabled.set(false)
-        try {
-            flushBatch(getSettings())
-        } catch (_: Exception) {
-        }
         batchQueue.clear()
         executor.shutdown()
         try {
@@ -316,6 +362,9 @@ class PassiveAiScanner(
     fun resetStats() {
         requestsAnalyzed.set(0)
         issuesFound.set(0)
+        scanChecksReceived.set(0)
+        outOfScopeSkipped.set(0)
+        lastCheckOutsideScope.set(false)
         synchronized(findings) { findings.clear() }
     }
 

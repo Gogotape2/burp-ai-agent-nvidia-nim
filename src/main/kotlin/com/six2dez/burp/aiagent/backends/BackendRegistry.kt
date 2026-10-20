@@ -107,12 +107,23 @@ class BackendRegistry(
     fun healthCheck(
         backendId: String,
         settings: AgentSettings,
+    ): HealthCheckResult = checkHealth(backendId, settings, background = false)
+
+    fun backgroundHealthCheck(
+        backendId: String,
+        settings: AgentSettings,
+    ): HealthCheckResult = checkHealth(backendId, settings, background = true)
+
+    private fun checkHealth(
+        backendId: String,
+        settings: AgentSettings,
+        background: Boolean,
     ): HealthCheckResult {
         val backend =
             backends[backendId]
                 ?: return HealthCheckResult.Unavailable("Backend not found: $backendId")
         return try {
-            val result = backend.healthCheck(settings)
+            val result = if (background && backend is BackgroundHealthCheckCapable) backend.backgroundHealthCheck(settings) else backend.healthCheck(settings)
             if (result is HealthCheckResult.Unknown) {
                 if (backend.isAvailable(settings)) {
                     HealthCheckResult.Healthy

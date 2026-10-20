@@ -27,7 +27,8 @@ class CliSupervisionTest {
         // Platform guard: use the correct argv for "sleep forever" on each OS
         val sleepCmd =
             if (System.getProperty("os.name").lowercase().contains("win")) {
-                listOf("cmd", "/c", "timeout", "/t", "60")
+                // Windows timeout.exe exits immediately when the CLI runner redirects stdin.
+                listOf("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 60")
             } else {
                 listOf("sleep", "60")
             }

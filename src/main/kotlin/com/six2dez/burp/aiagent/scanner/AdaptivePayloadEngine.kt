@@ -77,7 +77,7 @@ class AdaptivePayloadEngine(
                 maxOutputTokens = com.six2dez.burp.aiagent.config.Defaults.PAYLOAD_MAX_OUTPUT_TOKENS,
             )
 
-            if (!latch.await(TIMEOUT_MS, TimeUnit.MILLISECONDS)) return emptyList()
+            if (!latch.await(supervisor.responseWaitTimeoutMs(TIMEOUT_MS), TimeUnit.MILLISECONDS)) return emptyList()
             if (errorRef.get() != null) return emptyList()
 
             val payloads = parsePayloadResponse(responseBuffer.toString(), vulnClass)

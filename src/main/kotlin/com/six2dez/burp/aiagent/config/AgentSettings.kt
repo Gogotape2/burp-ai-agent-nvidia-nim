@@ -53,10 +53,11 @@ data class AgentSettings(
     val openAiCompatibleHeaders: String,
     val openAiCompatibleTimeoutSeconds: Int,
     val nvidiaNimUrl: String = "https://integrate.api.nvidia.com",
-    val nvidiaNimModel: String = "",
+    val nvidiaNimModel: String = NvidiaNimOptions.DEFAULT_MODEL,
     val nvidiaNimApiKey: String = "",
     val nvidiaNimHeaders: String = "",
-    val nvidiaNimTimeoutSeconds: Int = 60,
+    val nvidiaNimTimeoutSeconds: Int = NvidiaNimOptions.DEFAULT_TIMEOUT_SECONDS,
+    val nvidiaNimOptions: NvidiaNimOptions = NvidiaNimOptions(),
     val perplexityUrl: String = "https://api.perplexity.ai",
     val perplexityModel: String = "",
     val perplexityApiKey: String = "",
@@ -282,12 +283,16 @@ class AgentSettingsRepository(
                 (prefs.getString(KEY_NVIDIA_NIM_URL) ?: DEFAULT_NVIDIA_NIM_URL).trim().ifBlank {
                     DEFAULT_NVIDIA_NIM_URL
                 },
-            nvidiaNimModel = prefs.getString(KEY_NVIDIA_NIM_MODEL).orEmpty().trim(),
+            nvidiaNimModel =
+                prefs
+                    .getString(KEY_NVIDIA_NIM_MODEL)
+                    .orEmpty()
+                    .trim()
+                    .ifBlank { NvidiaNimOptions.DEFAULT_MODEL },
             nvidiaNimApiKey = cipher.decrypt(prefs.getString(KEY_NVIDIA_NIM_API_KEY).orEmpty().trim(), KEY_NVIDIA_NIM_API_KEY),
             nvidiaNimHeaders = prefs.getString(KEY_NVIDIA_NIM_HEADERS).orEmpty(),
-            nvidiaNimTimeoutSeconds =
-                (prefs.getInteger(KEY_NVIDIA_NIM_TIMEOUT) ?: defaultNvidiaNimTimeoutSeconds())
-                    .coerceIn(30, 3600),
+            nvidiaNimTimeoutSeconds = loadNvidiaNimTimeout(),
+            nvidiaNimOptions = loadNvidiaNimOptions(),
             perplexityUrl =
                 (prefs.getString(KEY_PERPLEXITY_URL) ?: DEFAULT_PERPLEXITY_URL).trim().ifBlank {
                     DEFAULT_PERPLEXITY_URL
@@ -464,7 +469,7 @@ class AgentSettingsRepository(
             openAiCompatibleHeaders = "",
             openAiCompatibleTimeoutSeconds = defaultOpenAiCompatTimeoutSeconds(),
             nvidiaNimUrl = DEFAULT_NVIDIA_NIM_URL,
-            nvidiaNimModel = "",
+            nvidiaNimModel = NvidiaNimOptions.DEFAULT_MODEL,
             nvidiaNimApiKey = "",
             nvidiaNimHeaders = "",
             nvidiaNimTimeoutSeconds = defaultNvidiaNimTimeoutSeconds(),
@@ -575,6 +580,8 @@ class AgentSettingsRepository(
             prefs.setString(KEY_NVIDIA_NIM_API_KEY, cipher.encrypt(settings.nvidiaNimApiKey, KEY_NVIDIA_NIM_API_KEY))
             prefs.setString(KEY_NVIDIA_NIM_HEADERS, settings.nvidiaNimHeaders)
             prefs.setInteger(KEY_NVIDIA_NIM_TIMEOUT, settings.nvidiaNimTimeoutSeconds.coerceIn(30, 3600))
+            prefs.setString(KEY_NVIDIA_NIM_OPTIONS, externalServerMapper.writeValueAsString(settings.nvidiaNimOptions.validated()))
+            prefs.setInteger(KEY_NVIDIA_NIM_PATCH_VERSION, 1)
             prefs.setString(KEY_PERPLEXITY_URL, settings.perplexityUrl)
             prefs.setString(KEY_PERPLEXITY_MODEL, settings.perplexityModel)
             prefs.setString(KEY_PERPLEXITY_API_KEY, cipher.encrypt(settings.perplexityApiKey, KEY_PERPLEXITY_API_KEY))
@@ -840,6 +847,8 @@ class AgentSettingsRepository(
         private const val KEY_NVIDIA_NIM_API_KEY = "nvidia.nim.apiKey"
         private const val KEY_NVIDIA_NIM_HEADERS = "nvidia.nim.headers"
         private const val KEY_NVIDIA_NIM_TIMEOUT = "nvidia.nim.timeoutSeconds"
+        private const val KEY_NVIDIA_NIM_OPTIONS = "nvidia.nim.options"
+        private const val KEY_NVIDIA_NIM_PATCH_VERSION = "nvidia.nim.patchVersion"
         private const val KEY_PERPLEXITY_URL = "perplexity.url"
         private const val KEY_PERPLEXITY_MODEL = "perplexity.model"
         private const val KEY_PERPLEXITY_API_KEY = "perplexity.apiKey"
@@ -893,6 +902,7 @@ class AgentSettingsRepository(
         private const val KEY_MCP_TOOL_TOGGLES = "mcp.tools.toggles"
         private const val KEY_MCP_UNSAFE_TOOLS = "mcp.unsafe.tools"
         private const val KEY_MCP_UNSAFE = "mcp.unsafe.enabled"
+        private const val KEY_MCP_AUTO_APPROVE_TOOLS = "mcp.tools.auto.approve"
 
         // 07-03 D-03: global "Restrict MCP tools to in-scope hosts" toggle. Stored on the
         // McpSettings sub-object via this key. Default false on absence.
@@ -1007,7 +1017,7 @@ class AgentSettingsRepository(
 
         private fun defaultPerplexityTimeoutSeconds(): Int = Defaults.CLI_PROCESS_TIMEOUT_SECONDS
 
-        private fun defaultNvidiaNimTimeoutSeconds(): Int = Defaults.CLI_PROCESS_TIMEOUT_SECONDS
+        private fun defaultNvidiaNimTimeoutSeconds(): Int = NvidiaNimOptions.DEFAULT_TIMEOUT_SECONDS
 
         private const val DEFAULT_COPILOT_CMD = "copilot"
 
@@ -1254,6 +1264,22 @@ Response Language: English.
         }
     }
 
+    private fun loadNvidiaNimTimeout(): Int {
+        val stored = prefs.getInteger(KEY_NVIDIA_NIM_TIMEOUT) ?: defaultNvidiaNimTimeoutSeconds()
+        // Upgrade legacy stock timeouts once; subsequent explicit user values remain intact.
+        return if (prefs.getInteger(KEY_NVIDIA_NIM_PATCH_VERSION) == null && stored in listOf(60, 120)) {
+            defaultNvidiaNimTimeoutSeconds()
+        } else {
+            stored.coerceIn(30, 3600)
+        }
+    }
+
+    private fun loadNvidiaNimOptions(): NvidiaNimOptions =
+        runCatching {
+            val raw = prefs.getString(KEY_NVIDIA_NIM_OPTIONS).orEmpty()
+            if (raw.isBlank()) NvidiaNimOptions() else externalServerMapper.readValue(raw, NvidiaNimOptions::class.java).validated()
+        }.getOrElse { NvidiaNimOptions() }
+
     private fun loadMcpSettings(): McpSettings {
         val token =
             cipher.decrypt((prefs.getString(KEY_MCP_TOKEN) ?: "").trim(), KEY_MCP_TOKEN).ifBlank {
@@ -1322,6 +1348,7 @@ Response Language: English.
             toolToggles = toolToggles,
             enabledUnsafeTools = enabledUnsafeTools,
             unsafeEnabled = prefs.getBoolean(KEY_MCP_UNSAFE) ?: false,
+            autoApproveToolCalls = prefs.getBoolean(KEY_MCP_AUTO_APPROVE_TOOLS) ?: false,
             // 07-03 D-03: absent → false preserves bytewise behaviour for legacy installs.
             scopeOnly = prefs.getBoolean(KEY_MCP_SCOPE_ONLY) ?: false,
             // PHASE 16: load external server list with per-field bearerToken decryption.
@@ -1358,6 +1385,7 @@ Response Language: English.
         prefs.setString(KEY_MCP_TOOL_TOGGLES, McpSettings.serializeToolToggles(settings.toolToggles))
         prefs.setString(KEY_MCP_UNSAFE_TOOLS, McpSettings.serializeUnsafeToolSet(settings.enabledUnsafeTools))
         prefs.setBoolean(KEY_MCP_UNSAFE, settings.unsafeEnabled)
+        prefs.setBoolean(KEY_MCP_AUTO_APPROVE_TOOLS, settings.autoApproveToolCalls)
         // 07-03 D-03: persist the global MCP scope toggle.
         prefs.setBoolean(KEY_MCP_SCOPE_ONLY, settings.scopeOnly)
         // PHASE 16: persist external server list with per-field bearerToken encryption.

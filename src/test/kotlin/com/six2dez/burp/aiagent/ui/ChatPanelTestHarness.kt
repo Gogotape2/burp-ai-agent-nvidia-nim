@@ -95,6 +95,7 @@ object ChatPanelTestHarness {
         // a default is how a future test silently asserts against the wrong model output.
         modelResponse: String,
         settings: AgentSettings = TestSettings.baselineSettings(),
+        settingsProvider: (() -> AgentSettings)? = null,
     ): Harness {
         val api: MontoyaApi = mock(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
         whenever(api.burpSuite().version().edition()).thenReturn(BurpSuiteEdition.COMMUNITY_EDITION)
@@ -135,7 +136,7 @@ object ChatPanelTestHarness {
             ChatPanel(
                 api = api,
                 supervisor = supervisor,
-                getSettings = { settings },
+                getSettings = { settingsProvider?.invoke() ?: settings },
                 applySettings = { },
                 validateBackend = { null },
                 ensureBackendReady = { true },

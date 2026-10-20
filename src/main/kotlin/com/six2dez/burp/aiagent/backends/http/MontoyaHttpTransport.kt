@@ -1,6 +1,7 @@
 package com.six2dez.burp.aiagent.backends.http
 
 import burp.api.montoya.MontoyaApi
+import burp.api.montoya.core.ByteArray
 import burp.api.montoya.http.RequestOptions
 import burp.api.montoya.http.message.requests.HttpRequest
 import burp.api.montoya.http.message.responses.HttpResponse
@@ -14,11 +15,14 @@ data class TransportResponse(
     val statusCode: Int,
     val body: String,
     val isSuccessful: Boolean,
+    val headers: Map<String, String> = emptyMap(),
 )
 
 class MontoyaHttpTransport(
     private val api: MontoyaApi,
 ) {
+    // Montoya exposes the byte-array overload as Java varargs; explicit bytes avoid Burp's text encoding.
+    @Suppress("SpreadOperator")
     fun post(
         url: String,
         headers: Map<String, String>,
@@ -29,7 +33,7 @@ class MontoyaHttpTransport(
             HttpRequest
                 .httpRequestFromUrl(url)
                 .withMethod("POST")
-                .withBody(jsonBody)
+                .withBody(ByteArray.byteArray(*jsonBody.toByteArray(Charsets.UTF_8)))
                 .withAddedHeader("Content-Type", "application/json")
         headers.forEach { (name, value) ->
             request = request.withAddedHeader(name, value)
@@ -109,6 +113,7 @@ class MontoyaHttpTransport(
                 statusCode = code,
                 body = body,
                 isSuccessful = code in 200..299,
+                headers = response?.headers()?.associate { it.name() to it.value() }.orEmpty(),
             )
         }
     }

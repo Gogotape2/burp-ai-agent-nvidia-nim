@@ -12,6 +12,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Answers
 import org.mockito.kotlin.any
 import org.mockito.kotlin.mock
+import org.mockito.kotlin.never
 import org.mockito.kotlin.verify
 import org.mockito.kotlin.whenever
 
@@ -70,6 +71,37 @@ class AiPassiveScanCheckTest {
 
         // After doCheck(), the async AI analysis must have been enqueued
         verify(passiveScanner).enqueueForScanCheck(reqResp)
+    }
+
+    @Test
+    fun outsideScopeIsReportedWithoutQueueingOrRunningHeuristics() {
+        val api = mock<MontoyaApi>(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
+        val scanner = mock<PassiveAiScanner>()
+        val exchange = mock<HttpRequestResponse>(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
+        val check = AiPassiveScanCheck(api, scanner) { testSettings().copy(passiveAiScopeOnly = true) }
+        try {
+            check.doCheck(exchange)
+        } catch (_: NullPointerException) {
+            // Burp's AuditResult factory is unavailable outside Burp.
+        }
+        verify(scanner).recordScanCheck(false)
+        verify(scanner, never()).localChecks(any(), any())
+        verify(scanner, never()).enqueueForScanCheck(any())
+    }
+
+    @Test
+    fun disabledPassiveCheckDoesNotEmitLocalIssues() {
+        val api = mock<MontoyaApi>(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
+        val scanner = mock<PassiveAiScanner>()
+        val exchange = mock<HttpRequestResponse>(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
+        val check = AiPassiveScanCheck(api, scanner) { testSettings().copy(passiveAiEnabled = false) }
+        try {
+            check.doCheck(exchange)
+        } catch (_: NullPointerException) {
+            // Burp's AuditResult factory is unavailable outside Burp.
+        }
+        verify(scanner, never()).localChecks(any(), any())
+        verify(scanner, never()).enqueueForScanCheck(any())
     }
 
     private fun testSettings(): AgentSettings =
@@ -137,7 +169,7 @@ class AiPassiveScanCheckTest {
                     unsafeEnabled = false,
                 ),
             // passiveAiScopeOnly = false so scope check does not short-circuit doCheck()
-            passiveAiEnabled = false,
+            passiveAiEnabled = true,
             passiveAiRateSeconds = 5,
             passiveAiScopeOnly = false,
             passiveAiMaxSizeKb = 96,

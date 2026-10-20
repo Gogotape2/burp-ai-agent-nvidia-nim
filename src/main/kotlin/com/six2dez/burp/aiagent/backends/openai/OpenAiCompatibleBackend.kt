@@ -7,6 +7,7 @@ import com.six2dez.burp.aiagent.backends.AgentConnection
 import com.six2dez.burp.aiagent.backends.AiBackend
 import com.six2dez.burp.aiagent.backends.BackendDiagnostics
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
+import com.six2dez.burp.aiagent.backends.BackgroundHealthCheckCapable
 import com.six2dez.burp.aiagent.backends.HealthCheckResult
 import com.six2dez.burp.aiagent.backends.JsonModeCapable
 import com.six2dez.burp.aiagent.backends.TokenUsage
@@ -41,10 +42,22 @@ class OpenAiCompatibleBackend(
     // OpenAI-style {"type":"json_object"} response_format. Perplexity's Sonar API rejects this
     // field, so set false there; the scanner prompts still ask the model for JSON in plain text.
     private val supportsJsonObjectResponseFormat: Boolean = true,
-) : AiBackend {
+) : AiBackend,
+    BackgroundHealthCheckCapable {
     override val supportsSystemRole: Boolean = true
 
     private val mapper = ObjectMapper().registerKotlinModule()
+
+    private var connectionFactory: ((BackendLaunchConfig) -> AgentConnection)? = null
+    private var backgroundHealthCheckProvider: ((AgentSettings) -> HealthCheckResult)? = null
+
+    fun setBackgroundHealthCheckProvider(provider: (AgentSettings) -> HealthCheckResult) {
+        backgroundHealthCheckProvider = provider
+    }
+
+    fun setConnectionFactory(factory: (BackendLaunchConfig) -> AgentConnection) {
+        connectionFactory = factory
+    }
 
     /**
      * Optional, supervisor-injected [MontoyaHttpTransport] used by [healthCheck] (and exposed to
@@ -62,7 +75,10 @@ class OpenAiCompatibleBackend(
 
     fun healthCheckTransport(): MontoyaHttpTransport? = healthCheckTransport
 
+    override fun backgroundHealthCheck(settings: AgentSettings): HealthCheckResult = backgroundHealthCheckProvider?.invoke(settings) ?: healthCheck(settings)
+
     override fun launch(config: BackendLaunchConfig): AgentConnection {
+        connectionFactory?.let { return it(config) }
         val baseUrl = effectiveBaseUrl(config.baseUrl)
         val model = config.model?.ifBlank { "" } ?: ""
         val timeoutSeconds = (config.requestTimeoutSeconds ?: 120L).coerceIn(30L, 3600L)

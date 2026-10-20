@@ -9,6 +9,7 @@ import burp.api.montoya.core.Range
 import burp.api.montoya.http.HttpMode
 import burp.api.montoya.http.RequestOptions
 import burp.api.montoya.http.message.HttpHeader
+import burp.api.montoya.http.message.HttpRequestResponse
 import burp.api.montoya.http.message.requests.HttpRequest
 import burp.api.montoya.intruder.HttpRequestTemplate
 import burp.api.montoya.intruder.HttpRequestTemplateGenerationOptions
@@ -37,9 +38,6 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.decodeFromJsonElement
 import java.security.MessageDigest
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicReference
 import java.util.regex.Pattern
 import javax.swing.SwingUtilities
 
@@ -934,51 +932,22 @@ object McpToolExecutor {
                         }
                         "ai_analyze" -> {
                             val input = decode<AiAnalyzeInput>(normalizedArgs)
-                            val supervisor =
-                                context.supervisor
-                                    ?: return@runTool "AI tools not initialized."
-                            if (!supervisor.isAiEnabled()) {
-                                return@runTool "AI features unavailable: check that your Burp edition supports AI " +
-                                    "and the 'Use AI' toggle is enabled. Non-AI backends remain usable via the chat panel."
-                            }
-                            val responseBuffer = StringBuilder()
-                            val completionLatch = CountDownLatch(1)
-                            val errorRef = AtomicReference<String?>(null)
-                            supervisor.send(
-                                text = input.text,
-                                history = emptyList(),
-                                contextJson = null,
-                                privacyMode = context.privacyMode,
-                                determinismMode = context.determinismMode,
-                                onChunk = { chunk -> responseBuffer.append(chunk) },
-                                onComplete = { err ->
-                                    errorRef.set(err?.message)
-                                    completionLatch.countDown()
-                                },
-                                jsonMode = input.jsonMode,
-                                maxOutputTokens = input.maxOutputTokens,
-                            )
-                            val completed = completionLatch.await(120_000L, TimeUnit.MILLISECONDS)
-                            if (!completed) return@runTool "AI request timed out after 120 seconds."
-                            val error = errorRef.get()
-                            if (error != null) return@runTool "AI error: $error"
-                            responseBuffer.toString().trim()
+                            executeAiAnalysis(input, context)
                         }
                         "ai_passive_scan" -> {
                             val input = decode<AiPassiveScanInput>(normalizedArgs)
                             val supervisor = context.supervisor
-                            // B2 fix: check AI gate BEFORE passiveScanner null check
-                            if (supervisor == null || !supervisor.isAiEnabled()) {
-                                return@runTool "AI features unavailable: check that your Burp edition supports AI " +
-                                    "and the 'Use AI' toggle is enabled. Non-AI backends remain usable via the chat panel."
+                            if (supervisor == null) return@runTool "Error: AI tool runtime is not initialized."
+                            val backendId = context.aiBackendId ?: supervisor.preferredBackendId()
+                            if (backendId == null) return@runTool "Error: AI backend is not configured."
+                            if (supervisor.requiresBurpAiAndDisabled(backendId)) {
+                                return@runTool "AI features unavailable: enable Use AI for the burp-ai backend or select an external backend."
                             }
                             val scanner =
                                 context.passiveScanner
                                     ?: return@runTool "Passive scanner not available."
 
-                            @Suppress("UNCHECKED_CAST")
-                            val allHistory: List<burp.api.montoya.http.message.HttpRequestResponse> =
-                                api.proxy().history() as List<burp.api.montoya.http.message.HttpRequestResponse>
+                            val allHistory = api.proxy().history()
                             val filtered =
                                 if (input.siteMapUrl != null) {
                                     allHistory.filter { reqRes ->
@@ -987,7 +956,12 @@ object McpToolExecutor {
                                 } else {
                                     allHistory
                                 }
-                            val requests = filtered.take(input.maxRequests)
+                            val requests =
+                                McpScopeFilter
+                                    .filterInScope(filtered.asSequence(), { it.request().url() }, context)
+                                    .take(input.maxRequests)
+                                    .map { HttpRequestResponse.httpRequestResponse(it.request(), it.response()) }
+                                    .toList()
                             if (requests.isEmpty()) return@runTool "No matching requests found."
                             val count = scanner.manualScan(requests)
                             "Queued $count requests for AI passive scan."

@@ -16,7 +16,8 @@ import org.junit.jupiter.api.Test
 import org.mockito.Answers
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
-import java.lang.reflect.Field
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 
 /**
  * SC4b: The budget pause gate is a no-op on enqueueForScanCheck that does NOT
@@ -26,8 +27,11 @@ import java.lang.reflect.Field
  * which would clear the knowledge base and change the user's visible toggle.
  */
 class PassiveAiScannerBudgetPauseTest {
+    private val scanners = mutableListOf<PassiveAiScanner>()
+
     @AfterEach
     fun clearTokenTracker() {
+        scanners.forEach { it.shutdown() }
         // TokenTracker is a process-wide singleton; reset its counters so per-session token sums
         // do not bleed across tests (the budget tests below assert on currentSessionTokens()).
         val countersField = TokenTracker::class.java.getDeclaredField("counters")
@@ -43,7 +47,7 @@ class PassiveAiScannerBudgetPauseTest {
                     whenever(sup.isBlockedByBurpAiGate()).thenReturn(false)
                 },
             audit = mock<AuditLogger>(),
-        ) { TestSettings.baselineSettings() }
+        ) { TestSettings.baselineSettings() }.also { scanners.add(it) }
 
     private fun mockRequestResponse(): HttpRequestResponse {
         val request = mock<HttpRequest>()
@@ -57,18 +61,7 @@ class PassiveAiScannerBudgetPauseTest {
         }
     }
 
-    /** Read the private executor field to inspect submission count via task count. */
-    private fun executorSubmitCount(scanner: PassiveAiScanner): Int {
-        // Access the underlying executor's task count via the thread pool interface
-        val field: Field = scanner.javaClass.getDeclaredField("executor")
-        field.isAccessible = true
-        val executor = field.get(scanner) as java.util.concurrent.ExecutorService
-        // Cast to thread pool executor to inspect task count
-        if (executor is java.util.concurrent.ThreadPoolExecutor) {
-            return executor.taskCount.toInt()
-        }
-        return -1
-    }
+    private fun executorSubmitCount(scanner: PassiveAiScanner): Int = scanner.getStatus().queueSize
 
     @Test
     fun budgetPaused_enqueueIsNoOp_executorNotSubmitted() {
@@ -139,15 +132,19 @@ class PassiveAiScannerBudgetPauseTest {
         scanner.setEnabled(true)
         scanner.setBudgetPaused(false) // explicitly not paused
 
-        val countBefore = executorSubmitCount(scanner)
-        scanner.enqueueForScanCheck(mockRequestResponse())
-        val countAfter = executorSubmitCount(scanner)
-
-        if (countBefore >= 0 && countAfter >= 0) {
-            assertTrue(
-                countAfter > countBefore,
-                "When not paused, enqueueForScanCheck SHOULD submit to the executor",
-            )
+        val workerStarted = CountDownLatch(1)
+        val releaseWorker = CountDownLatch(1)
+        scanner.executor.submit {
+            workerStarted.countDown()
+            releaseWorker.await(5, TimeUnit.SECONDS)
+        }
+        assertTrue(workerStarted.await(2, TimeUnit.SECONDS))
+        try {
+            val countBefore = executorSubmitCount(scanner)
+            scanner.enqueueForScanCheck(mockRequestResponse())
+            assertEquals(countBefore + 1, executorSubmitCount(scanner), "An unpaused scanner must enqueue the analysis")
+        } finally {
+            releaseWorker.countDown()
         }
         assertFalse(scanner.isBudgetPaused(), "isBudgetPaused() must return false")
     }

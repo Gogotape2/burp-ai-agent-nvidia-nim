@@ -944,6 +944,8 @@ private fun outcomeFor(
             )
         ToolDecision.SESSION_APPROVED ->
             Outcome(GLYPH_APPROVED, "Ran without asking — approved for this chat", "($time)", approved = true)
+        ToolDecision.AUTO_APPROVED ->
+            Outcome(GLYPH_APPROVED, "Ran without asking — automatic approval enabled", "($time)", approved = true)
         ToolDecision.SESSION_DENIED ->
             Outcome(GLYPH_DENIED, "Blocked automatically — you denied this tool for this chat", "($time)", approved = false)
         // D-02: an AUTO-tier call runs with no card at all, so no AUTO outcome row can exist and the

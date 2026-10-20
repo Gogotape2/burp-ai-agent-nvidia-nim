@@ -18,6 +18,7 @@ import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JPanel
 import javax.swing.JSpinner
+import javax.swing.JTextArea
 import javax.swing.JTextField
 import javax.swing.border.EmptyBorder
 import javax.swing.border.LineBorder
@@ -58,12 +59,12 @@ class PassiveScanConfigPanel(
         passiveAiEnabled.font = DesignTokens.Typography.body
         passiveAiEnabled.background = DesignTokens.Colors.surface
         passiveAiEnabled.foreground = DesignTokens.Colors.onSurface
-        passiveAiEnabled.toolTipText = "Automatically analyze proxy traffic using AI and create Burp issues for findings."
+        passiveAiEnabled.toolTipText = "Analyze requests delivered by Burp live passive audit (Pro), or use AI Passive Scan from the context menu."
 
         passiveAiScopeOnly.font = DesignTokens.Typography.body
         passiveAiScopeOnly.background = DesignTokens.Colors.surface
         passiveAiScopeOnly.foreground = DesignTokens.Colors.onSurface
-        passiveAiScopeOnly.toolTipText = "Only analyze requests that are in the defined target scope."
+        passiveAiScopeOnly.toolTipText = "Only analyze requests in Target > Scope. An empty scope skips all automatic requests."
 
         passiveAiMinSeverityCombo.font = DesignTokens.Typography.body
         passiveAiMinSeverityCombo.background = DesignTokens.Colors.surface
@@ -113,7 +114,7 @@ class PassiveScanConfigPanel(
             "Comma-separated file extensions to skip (e.g. css,js,png,woff,ico). Leave empty to disable."
 
         passiveAiBatchSizeSpinner.font = DesignTokens.Typography.body
-        passiveAiBatchSizeSpinner.toolTipText = "Group N requests per AI call (1 = disabled). Reduces API calls by 60-70%."
+        passiveAiBatchSizeSpinner.toolTipText = "Group N automatic requests per AI call (1 = disabled). Partial batches flush after 5 seconds; manual scans send immediately."
 
         passiveAiEndpointDedupSpinner.font = DesignTokens.Typography.body
         passiveAiEndpointDedupSpinner.toolTipText = "Skip repeated endpoint analysis within this number of minutes."
@@ -177,6 +178,23 @@ class PassiveScanConfigPanel(
         addRowFull(gridA, "Enable scanner", passiveAiEnabled)
         addSpacerRow(gridA, DesignTokens.Spacing.xs)
         addRowFull(gridA, "In-scope only", passiveAiScopeOnly)
+        addSpacerRow(gridA, DesignTokens.Spacing.xs)
+        addRowFull(
+            gridA,
+            "Automatic input",
+            JTextArea(
+                "Requires Burp Pro live passive audit with extension checks enabled.\n" +
+                    "With In-scope only on, add your target in Target > Scope. An empty scope skips all requests.",
+            ).apply {
+                isEditable = false
+                isOpaque = false
+                lineWrap = true
+                wrapStyleWord = true
+                rows = 2
+                font = DesignTokens.Typography.caption
+                foreground = DesignTokens.Colors.onSurfaceVariant
+            },
+        )
         addSpacerRow(gridA, DesignTokens.Spacing.xs)
         addRowFull(gridA, "Min severity", passiveAiMinSeverityCombo)
         addSpacerRow(gridA, DesignTokens.Spacing.xs)

@@ -14,6 +14,7 @@ import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.scanner.ScanKnowledgeBase
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.components.DependencyBanner
+import com.six2dez.burp.aiagent.ui.components.ScannerStatusPanel
 import com.six2dez.burp.aiagent.ui.components.ToggleSwitch
 import java.awt.BorderLayout
 import java.awt.Dimension
@@ -71,7 +72,7 @@ class MainTab(
     private val mcpLabel = JLabel("MCP")
     private val mcpStatusLabel = JLabel("MCP: -")
     private val backendStatusLabel = JLabel("AI: ?")
-    private val activeScanStatsLabel = JLabel("Scans: 0 | Vulns: 0")
+    private val scannerStatusPanel = ScannerStatusPanel()
     private val safetyIndicator =
         com.six2dez.burp.aiagent.ui.components
             .SafetyIndicator()
@@ -92,6 +93,7 @@ class MainTab(
             updateMcpControls()
             updateBackendBadge()
             updateActiveScanStats()
+            renderStatus()
             updateSafetySummary()
         }
     private val baseTabCaption = "Custom AI Agent"
@@ -199,7 +201,7 @@ class MainTab(
             Timer(5000) {
                 val settings = settingsPanel.currentSettings()
                 Thread {
-                    val health = supervisor.backendHealth(settings)
+                    val health = supervisor.backgroundBackendHealth(settings)
                     SwingUtilities.invokeLater {
                         when (health) {
                             is HealthCheckResult.Healthy -> {
@@ -245,9 +247,7 @@ class MainTab(
         scannerGroup.add(javax.swing.Box.createRigidArea(Dimension(6, 0)))
         scannerGroup.add(activeToggle)
         scannerGroup.add(javax.swing.Box.createRigidArea(Dimension(10, 0)))
-        activeScanStatsLabel.font = UiTheme.Typography.body
-        activeScanStatsLabel.foreground = UiTheme.Colors.onSurfaceVariant
-        scannerGroup.add(activeScanStatsLabel)
+        scannerGroup.add(scannerStatusPanel)
 
         val clientGroup = JPanel()
         clientGroup.layout = BoxLayout(clientGroup, BoxLayout.X_AXIS)
@@ -604,7 +604,10 @@ class MainTab(
     private fun renderStatus() {
         SwingUtilities.invokeLater {
             val s = supervisor.status()
-            statusLabel.text = "Status: ${s.state} | Backend: ${s.backendId ?: "-"}"
+            statusLabel.text = workerStatusText(s.state, s.backendId, settingsRepo.load().preferredBackendId)
+            statusLabel.toolTipText =
+                "Background scanner/MCP worker session. Chat uses separate connections. " +
+                "NIM connects on demand; this label does not test provider availability. See the AI badge for the last health test."
             val sessionId = supervisor.currentSessionId() ?: "-"
             sessionLabel.text = "Session: $sessionId"
             updateStatusColor(s.state)
@@ -722,18 +725,7 @@ class MainTab(
     }
 
     private fun updateActiveScanStats() {
-        if (!activeAiScanner.isEnabled()) {
-            activeScanStatsLabel.text = "Active Scanner Disabled"
-            return
-        }
-        val status = activeAiScanner.getStatus()
-        val text =
-            if (status.scanning) {
-                "Scanning: ${status.queueSize} queued | ${status.scansCompleted} done | ${status.vulnsConfirmed} confirmed"
-            } else {
-                "Queue: ${status.queueSize} | Done: ${status.scansCompleted} | Confirmed: ${status.vulnsConfirmed}"
-            }
-        activeScanStatsLabel.text = text
+        scannerStatusPanel.showStatus(passiveAiScanner.getStatus(), activeAiScanner.getStatus())
     }
 
     private fun isBindFailure(exception: Throwable): Boolean {

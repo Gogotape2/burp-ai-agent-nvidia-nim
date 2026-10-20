@@ -43,6 +43,10 @@ class McpConfigPanel(
     private val tokenPanelFactory: () -> JPanel,
     private val quickActionsFactory: () -> JPanel,
 ) : ConfigPanel {
+    private var mcpAutoApproveToolCalls: JComponent = javax.swing.JCheckBox("Automatically approve tool calls")
+
+    fun withAutomaticApprovalControl(control: JComponent): McpConfigPanel = apply { mcpAutoApproveToolCalls = control }
+
     override fun build(): JPanel {
         val body = JPanel(BorderLayout())
         body.background = DesignTokens.Colors.surface
@@ -56,6 +60,8 @@ class McpConfigPanel(
         // ── Core grid: everything except the proxy-history preprocessing knobs.
         val grid = formGrid()
         addRowPair(grid, "Enabled", mcpEnabled, "Unsafe mode", mcpUnsafe)
+        addSpacerRow(grid, DesignTokens.Spacing.xs)
+        addRowFull(grid, "Tool confirmations", mcpAutoApproveToolCalls)
         addSpacerRow(grid, DesignTokens.Spacing.xs)
         addRowPair(grid, "Host", mcpHost, "Port", mcpPort)
         addSpacerRow(grid, DesignTokens.Spacing.xs)

@@ -519,7 +519,7 @@ object McpToolCatalog {
             McpToolDescriptor(
                 id = "ai_analyze",
                 title = "AI Analyze",
-                description = "Sends text to the active AI backend and returns the analysis result.",
+                description = "Runs a separate model analysis using the selected AI backend. External lookup requires a retrieval tool.",
                 category = "AI",
                 defaultEnabled = true,
                 // CONFIRM_EACH while NOT unsafeOnly — D-01's independence claim made concrete: binding the trust boundary to unsafeOnly would leave this ungated.

@@ -1,0 +1,18 @@
+{
+  "tests": 1193,
+  "failures": 2,
+  "errors": 0,
+  "skipped": 2,
+  "nim_tests": 41,
+  "nim_failures": 0,
+  "failed_tests": [
+    {
+      "name": "com.six2dez.burp.aiagent.redact.RedactionTest: windowedScanRedactsJsonPairWhoseValueStraddlesTheCut()",
+      "message": "org.opentest4j.AssertionFailedError: shift=22: the sweep must prove the pair was REDACTED, not that the window was DROPPED ==> expected: <false> but was: <true>"
+    },
+    {
+      "name": "com.six2dez.burp.aiagent.redact.RedactionTest: jsonPairWithBlankLineBetweenKeyAndValueIsRedacted()",
+      "message": "org.opentest4j.AssertionFailedError: shift=8: the sweep must prove the pair was REDACTED, not that the window was DROPPED ==> expected: <false> but was: <true>"
+    }
+  ]
+}

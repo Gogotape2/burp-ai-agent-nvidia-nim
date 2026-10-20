@@ -13,6 +13,19 @@ import org.mockito.kotlin.whenever
 
 class AgentSettingsMigrationTest {
     @Test
+    fun automaticToolApprovalIsOptInAndPersistsBothValues() {
+        val prefs = InMemoryPrefs()
+        val repo = AgentSettingsRepository(apiWith(prefs.mock))
+        assertFalse(repo.load().mcpSettings.autoApproveToolCalls)
+        for (enabled in listOf(true, false)) {
+            val settings = repo.defaultSettings()
+            repo.save(settings.copy(mcpSettings = settings.mcpSettings.copy(autoApproveToolCalls = enabled)))
+            val loaded = AgentSettingsRepository(apiWith(prefs.mock)).load()
+            assertEquals(enabled, loaded.mcpSettings.autoApproveToolCalls)
+        }
+    }
+
+    @Test
     fun load_migratesLegacySchemaAndUpdatesVersionMarker() {
         val prefs = InMemoryPrefs()
         prefs.strings["gemini.cmd"] = "gemini --output-format text --model gemini-2.5-flash"
@@ -198,6 +211,32 @@ class AgentSettingsMigrationTest {
             val loaded = reader.load()
             assertEquals(false, loaded.mcpSettings.scopeOnly, "absent preference must default to false")
         }
+    }
+
+    @Test
+    fun nimUpgrade_migratesStockTimeoutAndPreservesLaterExplicitValue() {
+        val prefs = InMemoryPrefs()
+        prefs.integers["nvidia.nim.timeoutSeconds"] = 120
+        val repo = AgentSettingsRepository(apiWith(prefs.mock))
+        val loaded = repo.load()
+        assertEquals(900, loaded.nvidiaNimTimeoutSeconds)
+        assertEquals(NvidiaNimOptions.DEFAULT_MODEL, loaded.nvidiaNimModel)
+        repo.save(loaded.copy(nvidiaNimTimeoutSeconds = 60, nvidiaNimOptions = NvidiaNimOptions(reasoningEffort = "high", maxRetries = 4, historyMaxChars = 800_000)))
+        val reloaded = AgentSettingsRepository(apiWith(prefs.mock)).load()
+        assertEquals(60, reloaded.nvidiaNimTimeoutSeconds)
+        assertEquals("high", reloaded.nvidiaNimOptions.reasoningEffort)
+        assertEquals(4, reloaded.nvidiaNimOptions.maxRetries)
+        assertEquals(800_000, reloaded.nvidiaNimOptions.historyMaxChars)
+    }
+
+    @Test
+    fun nimUpgrade_preservesCustomTimeoutAndHandlesMalformedOptions() {
+        val prefs = InMemoryPrefs()
+        prefs.integers["nvidia.nim.timeoutSeconds"] = 700
+        prefs.strings["nvidia.nim.options"] = "broken-json"
+        val loaded = AgentSettingsRepository(apiWith(prefs.mock)).load()
+        assertEquals(700, loaded.nvidiaNimTimeoutSeconds)
+        assertEquals(NvidiaNimOptions(), loaded.nvidiaNimOptions)
     }
 
     private fun apiWith(preferences: Preferences): MontoyaApi {
