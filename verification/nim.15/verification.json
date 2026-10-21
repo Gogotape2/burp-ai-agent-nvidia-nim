@@ -1,0 +1,69 @@
+{
+  "version": "1.0.0-nim.15",
+  "published": false,
+  "jarSha256": "981f9b5b5369863a2eefeed378682797cbabdc5a6c5100f250d277135ca53b7b",
+  "scope": "Persisted NVIDIA NIM tool-call limit, 1-128, default 24; captured per root request",
+  "selectedSuite": {
+    "tests": 589,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 9
+  },
+  "additionalPersistenceTest": {
+    "tests": 1,
+    "passed": 1,
+    "failures": 0
+  },
+  "staticChecks": {
+    "ktlintCheck": "passed",
+    "detekt": "passed",
+    "shadowJar": "passed"
+  },
+  "checks": [
+    "Legacy options default and persistence with bounds",
+    "Typed spinner commits and invalid edit retention",
+    "Real ChatPanel native tool chains at limits 1, 12 and 24",
+    "Mid-chain settings change retains the starting limit; next request uses the saved limit",
+    "Existing approvals, cancellation and final-answer repair regressions"
+  ],
+  "fullSuiteRun": false,
+  "separateLiveEndpointSuiteRepeated": false,
+  "burpUi": {
+    "installed": true,
+    "tested": true,
+    "version": "1.0.0-nim.15",
+    "loadedExtensionCount": 1,
+    "extensionErrorsEmpty": true,
+    "savedFinalToolCallLimit": 24,
+    "sameChatAfterSave": true,
+    "targetRequestsSent": 0,
+    "finalMarkersObserved": [
+      "NIM15_LOW_OK",
+      "NIM15_HIGH_OK"
+    ],
+    "cases": [
+      {
+        "traceId": "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+        "toolResults": 3,
+        "http200": 2,
+        "toolLimits": [
+          {
+            "step": 4,
+            "detail": "Automatic tool-call limit (3) reached; preparing the final answer from collected evidence"
+          }
+        ],
+        "elapsedMs": 5579,
+        "modelErrors": 0
+      },
+      {
+        "traceId": "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+        "toolResults": 9,
+        "http200": 2,
+        "toolLimits": [],
+        "elapsedMs": 12007,
+        "modelErrors": 0
+      }
+    ],
+    "journalSha256": "55c14f00facde8f27d682452f5b25c8fe9820f1128afa34e775ac11783f9902a"
+  }
+}

@@ -11,6 +11,8 @@ internal object McpToolRegistrations {
     val utility =
         listOf(
             "status",
+            "web_search",
+            "web_fetch",
             "url_encode",
             "url_decode",
             "base64_encode",
@@ -99,6 +101,7 @@ internal object McpToolRegistrations {
 
     val native =
         listOf(
+            "context_read",
             "ai_analyze",
             "ai_passive_scan",
             "ai_findings_recent",
@@ -128,7 +131,7 @@ internal fun Server.registerToolHandler(
             val startMs = System.currentTimeMillis()
             val result = McpToolExecutor.executeToolResult(descriptor.id, argsJson, context)
             val durationMs = System.currentTimeMillis() - startMs
-            val argsSummary = argsJson?.take(120) ?: "(none)"
+            val argsSummary = if (toolId in setOf("web_search", "web_fetch")) "(web research arguments omitted)" else argsJson?.take(120) ?: "(none)"
             val resultText =
                 result.content
                     .filterIsInstance<TextContent>()

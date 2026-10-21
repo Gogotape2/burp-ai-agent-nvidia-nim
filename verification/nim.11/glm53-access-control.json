@@ -1,0 +1,8 @@
+{
+  "utc": "2026-10-21T01:37:55.191264+00:00",
+  "model": "z-ai/glm-5.3",
+  "scope": "One direct API access control through system proxy settings; synthetic prompt, no Burp or target traffic",
+  "attempts": 1,
+  "errorType": "TimeoutError",
+  "elapsedSeconds": 120.34
+}

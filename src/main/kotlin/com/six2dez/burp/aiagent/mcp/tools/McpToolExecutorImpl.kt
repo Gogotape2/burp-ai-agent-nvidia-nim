@@ -47,6 +47,18 @@ object McpToolExecutor {
     // Phase 16 (CAP-02): expected part count for ext:<server>:<tool> tool names.
     private const val EXT_TOOL_NAME_PARTS = 3
 
+    fun functionTools(context: McpToolContext): List<com.six2dez.burp.aiagent.backends.FunctionTool> =
+        McpToolCatalog
+            .all()
+            .filter { descriptor ->
+                context.isToolEnabled(descriptor.id) &&
+                    context.isUnsafeToolAllowed(descriptor.id) &&
+                    (!descriptor.proOnly || context.edition == BurpSuiteEdition.PROFESSIONAL)
+            }.map { descriptor ->
+                com.six2dez.burp.aiagent.backends
+                    .FunctionTool(descriptor.id, descriptor.description, schemaString(descriptor.id, context))
+            }
+
     fun describeTools(
         context: McpToolContext,
         includeSchemas: Boolean,
@@ -182,6 +194,11 @@ object McpToolExecutor {
             runTool(context, resolvedName, normalizedArgs) {
                 val output =
                     when (resolvedName) {
+                        "web_search", "web_fetch" -> WebResearchTools.execute(resolvedName, normalizedArgs, context)
+                        "context_read" -> {
+                            val args = decodeJson.decodeFromString<ReadChatContext>(normalizedArgs.orEmpty())
+                            context.redactIfNeeded(checkNotNull(context.chatContextStore) { "Chat context is unavailable for this MCP session" }.read(args.id, args.offset, args.count, args.query))
+                        }
                         "status" -> {
                             val version = api.burpSuite().version()
                             buildString {
@@ -1002,8 +1019,10 @@ object McpToolExecutor {
                             val status = supervisor.status()
                             buildString {
                                 appendLine("Available backends: ${ids.joinToString(", ")}")
-                                appendLine("Current backend: ${status.backendId ?: "none"}")
-                                append("State: ${status.state}")
+                                appendLine("Selected backend: ${context.aiBackendId ?: status.backendId ?: "none"}")
+                                appendLine("Worker backend: ${status.backendId ?: "none"}")
+                                append("Worker state: ${status.state}")
+                                if (context.aiBackendId == "nvidia-nim") append("\nNVIDIA NIM chat connections run on demand, separately from the worker. Worker Idle does not mean NIM is unavailable.")
                             }
                         }
                         else -> "Unknown tool: $name"
@@ -1251,6 +1270,7 @@ object McpToolExecutor {
     ): Tool.Input {
         val allowUnpreprocessed = context?.allowUnpreprocessedProxyHistory ?: true
         return when (toolName) {
+            "context_read" -> ReadChatContext::class.asInputSchema()
             "status",
             "editor_get",
             "project_options_get",
@@ -1323,12 +1343,15 @@ object McpToolExecutor {
             "redact_preview" -> RedactPreviewInput::class.asInputSchema()
             "ai_audit_query" -> AiAuditQueryInput::class.asInputSchema()
             "ai_backends_list" -> Tool.Input()
-            else -> Tool.Input()
+            else -> WebResearchTools.schema(toolName)
         }
     }
 
-    private fun schemaString(toolName: String): String {
-        val input = inputSchema(toolName)
+    private fun schemaString(
+        toolName: String,
+        context: McpToolContext? = null,
+    ): String {
+        val input = inputSchema(toolName, context)
         val props = input.properties.toString()
         val requiredList = input.required ?: emptyList()
         val required = if (requiredList.isEmpty()) "[]" else requiredList.joinToString(prefix = "[", postfix = "]") { "\"$it\"" }

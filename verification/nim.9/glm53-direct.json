@@ -1,0 +1,136 @@
+{
+  "utc": "2026-10-20T20:11:20.466057+00:00",
+  "model": "z-ai/glm-5.3",
+  "scope": "Direct API, synthetic prompts and a local echo function; no Burp traffic or Burp runtime",
+  "stream": false,
+  "reasoningEffort": "low",
+  "clearThinking": true,
+  "requests": [
+    {
+      "case": "short_plain",
+      "model": "z-ai/glm-5.3",
+      "messages": 1,
+      "inputChars": 34,
+      "toolCount": 0,
+      "status": 200,
+      "headersAfterSeconds": 78.93,
+      "contentType": "application/json",
+      "finishReason": "stop",
+      "answerChars": 14,
+      "reasoningChars": 0,
+      "returnedTools": 0,
+      "usage": {
+        "prompt_tokens": 24,
+        "completion_tokens": 10,
+        "total_tokens": 34,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      },
+      "okMarker": true,
+      "largeMarker": false,
+      "toolMarker": false,
+      "elapsedSeconds": 78.93
+    },
+    {
+      "case": "native_tool_call",
+      "model": "z-ai/glm-5.3",
+      "messages": 1,
+      "inputChars": 88,
+      "toolCount": 1,
+      "status": 200,
+      "headersAfterSeconds": 153.35,
+      "contentType": "application/json",
+      "finishReason": "tool_calls",
+      "answerChars": 0,
+      "reasoningChars": 0,
+      "returnedTools": 1,
+      "usage": {
+        "prompt_tokens": 178,
+        "completion_tokens": 17,
+        "total_tokens": 195,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 0
+        }
+      },
+      "okMarker": false,
+      "largeMarker": false,
+      "toolMarker": false,
+      "elapsedSeconds": 153.35,
+      "validToolCall": true
+    },
+    {
+      "case": "native_tool_result",
+      "model": "z-ai/glm-5.3",
+      "messages": 3,
+      "inputChars": 116,
+      "toolCount": 1,
+      "status": 200,
+      "headersAfterSeconds": 95.38,
+      "contentType": "application/json",
+      "finishReason": "stop",
+      "answerChars": 121,
+      "reasoningChars": 5,
+      "returnedTools": 0,
+      "usage": {
+        "prompt_tokens": 63,
+        "completion_tokens": 35,
+        "total_tokens": 98,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 5
+        }
+      },
+      "okMarker": false,
+      "largeMarker": false,
+      "toolMarker": true,
+      "elapsedSeconds": 95.38
+    },
+    {
+      "case": "large_context",
+      "model": "z-ai/glm-5.3",
+      "messages": 1,
+      "inputChars": 43145,
+      "toolCount": 0,
+      "status": 200,
+      "headersAfterSeconds": 82.68,
+      "contentType": "application/json",
+      "finishReason": "stop",
+      "answerChars": 18,
+      "reasoningChars": 45,
+      "returnedTools": 0,
+      "usage": {
+        "prompt_tokens": 11460,
+        "completion_tokens": 17,
+        "total_tokens": 11477,
+        "prompt_tokens_details": {
+          "cached_tokens": 0
+        },
+        "completion_tokens_details": {
+          "reasoning_tokens": 17
+        }
+      },
+      "okMarker": false,
+      "largeMarker": true,
+      "toolMarker": false,
+      "elapsedSeconds": 82.68
+    }
+  ],
+  "network": {
+    "proxyHosts": {
+      "http": "127.0.0.1",
+      "https": "127.0.0.1"
+    },
+    "tlsConnected": true,
+    "tlsVersion": "TLSv1.3",
+    "tlsSeconds": 0.57
+  }
+}

@@ -1,12 +1,15 @@
 package com.six2dez.burp.aiagent.backends.nvidia
 
 import com.fasterxml.jackson.core.JsonProcessingException
+import com.six2dez.burp.aiagent.backends.AgentChatRequest
 import com.six2dez.burp.aiagent.backends.AgentConnection
+import com.six2dez.burp.aiagent.backends.AgentTurnEvent
 import com.six2dez.burp.aiagent.backends.BackendDiagnostics
 import com.six2dez.burp.aiagent.backends.BackendLaunchConfig
 import com.six2dez.burp.aiagent.backends.ChatMessage
 import com.six2dez.burp.aiagent.backends.JsonModeCapable
 import com.six2dez.burp.aiagent.backends.TokenUsage
+import com.six2dez.burp.aiagent.backends.ToolCallingConnection
 import com.six2dez.burp.aiagent.backends.UsageAwareConnection
 import com.six2dez.burp.aiagent.backends.http.ConversationHistory
 import com.six2dez.burp.aiagent.backends.http.HttpBackendSupport
@@ -27,6 +30,7 @@ internal class NvidiaNimConnection(
     private val coordinator: NimRequestCoordinator = NimRequestCoordinator.shared,
 ) : AgentConnection,
     UsageAwareConnection,
+    ToolCallingConnection,
     JsonModeCapable {
     private val options = config.nvidiaNimOptions.validated()
     private val timeoutSeconds = (config.requestTimeoutSeconds ?: NvidiaNimOptions.DEFAULT_TIMEOUT_SECONDS.toLong()).coerceIn(NvidiaNimOptions.MIN_TIMEOUT_SECONDS.toLong(), NvidiaNimOptions.MAX_TIMEOUT_SECONDS.toLong())
@@ -37,6 +41,9 @@ internal class NvidiaNimConnection(
     private val pending = AtomicReference<Pending?>(null)
     private val usage = AtomicReference<TokenUsage?>(null)
     private val history = ConversationHistory(NvidiaNimOptions.MAX_HISTORY_MESSAGES, options.historyMaxChars)
+    private val nativeSession = NimNativeSession()
+    private val encoder = NimTurnEncoder(config)
+    private var nativeUnsupported = false
     private val executor =
         ThreadPoolExecutor(
             1,
@@ -86,13 +93,26 @@ internal class NvidiaNimConnection(
         systemPrompt: String?,
         jsonMode: Boolean,
         maxOutputTokens: Int?,
+    ) = sendAgentTurn(
+        AgentChatRequest(config.sessionId.orEmpty(), "nvidia-nim", text, history = history, systemPrompt = systemPrompt, jsonMode = jsonMode, maxOutputTokens = maxOutputTokens),
+        onChunk,
+        onComplete,
+        {},
+    )
+
+    @Suppress("TooGenericExceptionCaught")
+    override fun sendAgentTurn(
+        request: AgentChatRequest,
+        onChunk: (String) -> Unit,
+        onComplete: (Throwable?) -> Unit,
+        onEvent: (AgentTurnEvent) -> Unit,
     ) {
         if (!alive.get()) {
             onComplete(CancellationException("NVIDIA NIM connection is closed"))
             return
         }
-        val request = Pending(onChunk, onComplete)
-        if (!pending.compareAndSet(null, request)) {
+        val pendingRequest = Pending(onChunk, onComplete)
+        if (!pending.compareAndSet(null, pendingRequest)) {
             onComplete(IllegalStateException("NVIDIA NIM session is busy. Wait for its current answer or open another chat."))
             return
         }
@@ -100,14 +120,14 @@ internal class NvidiaNimConnection(
         try {
             executor.execute {
                 try {
-                    val completion = completeTurn(text, history, systemPrompt, jsonMode, maxOutputTokens, deadline)
-                    request.finish(null, completion.content)
+                    val completion = completeTurn(request, deadline) { event -> runCatching { onEvent(event) } }
+                    pendingRequest.finish(null, completion.content)
                 } catch (_: JsonProcessingException) {
                     // Do not retain Jackson's body excerpt in the exception cause or logs.
-                    request.finish(IllegalStateException("NVIDIA NIM returned malformed JSON / SSE; response discarded"))
+                    pendingRequest.finish(IllegalStateException("NVIDIA NIM returned malformed JSON / SSE; response discarded"))
                 } catch (_: InterruptedException) {
                     Thread.currentThread().interrupt()
-                    request.finish(CancellationException("NVIDIA NIM request cancelled"))
+                    pendingRequest.finish(CancellationException("NVIDIA NIM request cancelled"))
                 } catch (e: Exception) {
                     val safeError =
                         if (e.message.orEmpty().contains("Streaming response received", true)) {
@@ -115,79 +135,125 @@ internal class NvidiaNimConnection(
                         } else {
                             e
                         }
-                    request.finish(safeError)
+                    pendingRequest.finish(safeError)
                 }
             }
         } catch (e: RejectedExecutionException) {
-            request.finish(CancellationException("NVIDIA NIM connection stopped before the request started").apply { initCause(e) })
+            pendingRequest.finish(CancellationException("NVIDIA NIM connection stopped before the request started").apply { initCause(e) })
         }
     }
 
     private fun completeTurn(
-        text: String,
-        history: List<ChatMessage>?,
-        systemPrompt: String?,
-        jsonMode: Boolean,
-        maxOutputTokens: Int?,
+        request: AgentChatRequest,
         deadline: Long,
+        event: (AgentTurnEvent) -> Unit,
     ): NimProtocol.Completion {
         usage.set(null)
         require(model.isNotBlank()) { "NVIDIA NIM model is empty; use the full vendor/model identifier" }
-        if (history != null) this.history.setHistory(history)
-        this.history.setSystemPrompt(systemPrompt)
-        // Build one immutable request; retries must never duplicate the user turn.
-        val prepared = NimConversation.prepare(this.history.snapshot(), text)
-        val messages = prepared.messages
-        val tokens = (maxOutputTokens ?: options.maxTokens).coerceIn(1, NvidiaNimOptions.MAX_COMPLETION_TOKENS)
-        val payload =
-            mutableMapOf<String, Any?>(
-                "model" to model,
-                "messages" to messages,
-                "stream" to false,
-                "temperature" to if (config.determinismMode) 0.0 else 1.0,
-                "max_tokens" to tokens,
-            )
-        NimProtocol.applyReasoning(payload, model, options, tokens)
-        if (jsonMode) payload["response_format"] = mapOf("type" to "json_object")
-        val json = NimProtocol.mapper.writeValueAsString(payload)
-        val shape =
-            "messages=${messages.size} roles=${prepared.roles} input_chars=${prepared.inputChars} max_tokens=$tokens " +
-                "reasoning=${payload["reasoning_effort"] ?: "provider-default"} json_mode=$jsonMode"
+        val native =
+            !request.jsonMode &&
+                options.toolCallingMode != "text" &&
+                !nativeUnsupported &&
+                (request.tools.isNotEmpty() || request.previousToolResult != null)
+        request.history?.let { history.setHistory(it) }
+        history.setSystemPrompt(encoder.textContract(request, native))
+        val prepared = NimConversation.prepare(history.snapshot(), request.text)
+        event(AgentTurnEvent("protocol", if (native) "Native function calling" else "Text/JSON response protocol"))
+        val nativeTurn = nativeSession.prepare(request.copy(systemPrompt = encoder.textContract(request, native)), prepared.messages, native)
+        nativeTurn.queuedCall?.let { call ->
+            usage.set(TokenUsage(0, 0))
+            event(AgentTurnEvent("tool_call", "Queued function call; no provider inference", call, TokenUsage(0, 0)))
+            return NimProtocol.Completion(NimNativeTools.envelope(call), null)
+        }
+        val messages = nativeTurn.messages
+        val json = encoder.requestJson(request, messages, native, nativeSession.definitions)
+        val shape = NimRequestShape.describe(config, request, messages, native, json.length)
         BackendDiagnostics.log("[nvidia-nim] request shape: $shape merged_turns=${prepared.mergedTurns} orphan_assistants_dropped=${prepared.droppedOrphanAssistantTurns}")
-        val body = execute(json, deadline, shape)
-        val completion = NimProtocol.parse(body)
+        val body =
+            try {
+                execute(json, deadline, shape, native && options.toolCallingMode == "auto", event)
+            } catch (_: NimErrorInfo.NativeToolsUnsupported) {
+                nativeUnsupported = true
+                event(AgentTurnEvent("fallback", "Endpoint rejected native tools; using the text protocol for this connection"))
+                null
+            }
+        return if (body == null) {
+            completeTurn(request, deadline, event)
+        } else {
+            val completion = NimProtocol.parse(body)
+            val final =
+                if (request.tools.isEmpty() && completion.calls.isNotEmpty()) {
+                    // Some endpoints ignore tool_choice=none. Repair once without exposing another call.
+                    event(AgentTurnEvent("final_answer_retry", "Provider ignored disabled tools; requesting one final answer without function definitions"))
+                    val finalMessages = NimFinalAnswer.messages(messages)
+                    val finalJson = encoder.requestJson(request, finalMessages, false, emptyList())
+                    val finalShape = NimRequestShape.describe(config, request, finalMessages, false, finalJson.length)
+                    val answer = NimProtocol.parse(execute(finalJson, deadline, finalShape, false, event))
+                    check(NimFinalAnswer.isAnswer(answer)) { "Provider still requested tools after the final-answer retry; no extra tools were executed. Collected results remain in the conversation." }
+                    answer.copy(usage = NimFinalAnswer.combinedUsage(completion.usage, answer.usage))
+                } else {
+                    completion
+                }
+            finishTurn(request, final, native, deadline, event)
+        }
+    }
+
+    private fun finishTurn(
+        request: AgentChatRequest,
+        completion: NimProtocol.Completion,
+        native: Boolean,
+        deadline: Long,
+        event: (AgentTurnEvent) -> Unit,
+    ): NimProtocol.Completion {
         checkActive(deadline)
-        this.history.addUser(text)
-        this.history.addAssistant(completion.content)
+        check(native || completion.calls.isEmpty()) { "Endpoint returned native tool calls while the text protocol was selected" }
+        val decoded = NimTextTools.recover(completion, request, native, event)
+        val content =
+            if (decoded.calls.isNotEmpty()) {
+                check(request.tools.isNotEmpty()) { "Provider returned tool calls while tools were disabled" }
+                val call = checkNotNull(nativeSession.accept(decoded))
+                event(AgentTurnEvent("tool_call", "Function call (${decoded.calls.size} in batch)", call))
+                NimNativeTools.envelope(call)
+            } else {
+                decoded.content
+            }
+        history.addUser(request.text)
+        history.addAssistant(content)
         usage.set(completion.usage)
-        BackendDiagnostics.log("[nvidia-nim] response complete: chars=${completion.content.length}")
-        return completion
+        completion.usage?.let { event(AgentTurnEvent("usage", "Provider tokens: input ${it.inputTokens}, output ${it.outputTokens}", usage = it)) }
+        BackendDiagnostics.log("[nvidia-nim] response complete: chars=${content.length}")
+        return decoded.copy(content = content)
     }
 
     private fun execute(
         json: String,
         deadline: Long,
         shape: String,
+        allowToolFallback: Boolean,
+        event: (AgentTurnEvent) -> Unit,
     ): String {
         val transport = checkNotNull(config.transport) { "NVIDIA NIM requires Burp's Montoya HTTP transport" }
+        val statuses = mutableListOf<String>()
         for (attempt in 0..options.maxRetries) {
             checkActive(deadline)
             BackendDiagnostics.log("[nvidia-nim] POST attempt=${attempt + 1} stream=false")
-            val (result, failure) = postAttempt(transport, json, deadline)
+            event(AgentTurnEvent("queue", "Attempt ${attempt + 1}/${options.maxRetries + 1}: waiting for a NIM request slot"))
+            val (result, failure) = postAttempt(transport, json, deadline, event)
+            statuses.add(NimHttpStatus.attemptLabel(result))
+            result?.let { event(AgentTurnEvent("http", "Provider returned HTTP ${it.statusCode}")) }
             checkActive(deadline)
-            if (result != null && result.isSuccessful && result.statusCode != NimHttpStatus.ASYNC) return result.body
-            check(result?.statusCode != NimHttpStatus.ASYNC) {
-                "NVIDIA NIM returned async HTTP 202. This backend requires synchronous chat completions; use a synchronous NIM endpoint."
-            }
+            val accepted = NimErrorInfo.acceptedBody(result, allowToolFallback)
+            if (accepted != null) return accepted
             val retryable = result == null || NimHttpStatus.retryable(result.statusCode)
             val delay = NimRetryPolicy.delayMs(result, attempt)
             if (result != null && NimHttpStatus.retryable(result.statusCode)) coordinator.deferFor(delay)
-            if (!retryable || attempt == options.maxRetries) throw failure ?: httpError(checkNotNull(result), attempt + 1, shape)
+            if (!retryable || attempt == options.maxRetries) throw failure ?: NimErrorInfo.httpError(checkNotNull(result), attempt + 1, shape, statuses)
             if (TimeUnit.MILLISECONDS.toNanos(delay) >= deadline - System.nanoTime()) {
                 throw SocketTimeoutException("NVIDIA NIM retry would exceed the ${timeoutSeconds}s total deadline")
             }
             BackendDiagnostics.log("[nvidia-nim] retry=${attempt + 1} status=${result?.statusCode ?: "connection"} wait_ms=$delay")
             BackendDiagnostics.logRetry("nvidia-nim", attempt + 1, delay, "HTTP ${result?.statusCode ?: "connection"}")
+            event(AgentTurnEvent("retry", "HTTP ${result?.statusCode ?: "connection"}; retry ${attempt + 1} after ${delay}ms"))
             Thread.sleep(delay)
         }
         error("NVIDIA NIM retry loop exhausted")
@@ -199,9 +265,12 @@ internal class NvidiaNimConnection(
         transport: MontoyaHttpTransport,
         json: String,
         deadline: Long,
+        event: (AgentTurnEvent) -> Unit,
     ): Pair<TransportResponse?, Exception?> =
         try {
-            NimHttpCall(coordinator).post(transport, endpoint, headers, json, options, deadline) { !alive.get() } to null
+            NimHttpCall(coordinator).post(transport, endpoint, headers, json, options, deadline, onSending = {
+                event(AgentTurnEvent("provider", "Request sent; waiting for the provider response"))
+            }, cancelled = { !alive.get() }) to null
         } catch (e: InterruptedException) {
             throw e
         } catch (e: Exception) {
@@ -212,25 +281,6 @@ internal class NvidiaNimConnection(
     private fun checkActive(deadline: Long) {
         if (!alive.get() || Thread.currentThread().isInterrupted) throw CancellationException("NVIDIA NIM request cancelled")
         if (System.nanoTime() >= deadline) throw SocketTimeoutException("NVIDIA NIM exceeded the ${timeoutSeconds}s total deadline")
-    }
-
-    private fun httpError(
-        response: TransportResponse,
-        attempts: Int,
-        shape: String,
-    ): Exception {
-        val hint =
-            when (response.statusCode) {
-                0 -> "Burp received no HTTP response. Check network/proxy settings and the total timeout."
-                NimHttpStatus.UNAUTHORIZED, NimHttpStatus.FORBIDDEN -> "Check your NVIDIA API key and model access."
-                NimHttpStatus.NOT_FOUND -> "Check Base URL and the complete vendor/model identifier, including nvidia/."
-                NimHttpStatus.BAD_REQUEST, NimHttpStatus.UNPROCESSABLE -> "Check model parameters; for a different model, leave Reasoning effort on Auto."
-                NimHttpStatus.RATE_LIMITED -> "NVIDIA rejected this attempt due to rate, quota or capacity limits. Wait before retrying; this can occur even with one request. Lower request limits if several chats or scanners are active."
-                else -> NimErrorInfo.description(response)
-            }
-        // Provider bodies can echo prompts or credentials. Keep logs and UI errors metadata-only.
-        val requestId = NimErrorInfo.requestId(response)?.let { " provider_request_id=$it" }.orEmpty()
-        return IllegalStateException("NVIDIA NIM HTTP ${response.statusCode} after $attempts attempt(s). $hint\n$shape$requestId")
     }
 
     override fun stop() {

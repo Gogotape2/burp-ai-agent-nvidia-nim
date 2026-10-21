@@ -4,11 +4,19 @@ import burp.api.montoya.MontoyaApi
 import com.six2dez.burp.aiagent.agents.AgentProfileLoader
 import com.six2dez.burp.aiagent.audit.ActivityType
 import com.six2dez.burp.aiagent.audit.AuditLogger
+import com.six2dez.burp.aiagent.audit.ExecutionEntry
+import com.six2dez.burp.aiagent.audit.ExecutionJournal
+import com.six2dez.burp.aiagent.backends.AgentChatRequest
 import com.six2dez.burp.aiagent.backends.AgentConnection
+import com.six2dez.burp.aiagent.backends.AgentTurnEvent
 import com.six2dez.burp.aiagent.backends.ChatMessage
+import com.six2dez.burp.aiagent.backends.FunctionCall
+import com.six2dez.burp.aiagent.backends.FunctionResult
 import com.six2dez.burp.aiagent.backends.UsageAwareConnection
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
+import com.six2dez.burp.aiagent.context.ChatContextPlanner
+import com.six2dez.burp.aiagent.context.ChatContextStore
 import com.six2dez.burp.aiagent.context.ContextCapture
 import com.six2dez.burp.aiagent.mcp.ImplicitDenyReason
 import com.six2dez.burp.aiagent.mcp.McpRequestLimiter
@@ -27,6 +35,7 @@ import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.components.ActionCard
 import com.six2dez.burp.aiagent.ui.components.ContextPreviewDialog
+import com.six2dez.burp.aiagent.ui.components.ExecutionJournalDialog
 import com.six2dez.burp.aiagent.ui.components.PrivacyPill
 import com.six2dez.burp.aiagent.ui.components.SubtleNotice
 import com.six2dez.burp.aiagent.ui.components.ToolApprovalCard
@@ -124,6 +133,7 @@ class ChatPanel(
     private val passiveScanner: PassiveAiScanner? = null,
 ) {
     val root: JComponent = JPanel(BorderLayout())
+    private val contextEstimate = JLabel("Input estimate appears here before sending.")
     private val sessionsModel = DefaultListModel<ChatSession>()
     private val sessionsList = JList(sessionsModel)
     private val sessionsPanel = JPanel(BorderLayout())
@@ -540,14 +550,37 @@ class ChatPanel(
         cancelBtn.addActionListener { cancelInFlightRequest() }
 
         actions.add(privacyPill)
+        actions.add(journalButton())
         actions.add(toolsBtn)
         actions.add(clearChatBtn)
         actions.add(cancelBtn)
         actions.add(sendBtn)
 
         panel.add(inputScroll, BorderLayout.CENTER)
-        panel.add(actions, BorderLayout.SOUTH)
+        panel.add(chatFooter(actions), BorderLayout.SOUTH)
         return panel
+    }
+
+    private fun journalButton(): JButton =
+        JButton("Execution log").apply {
+            addActionListener {
+                val state = activeSessionId?.let { sessionStates[it] } ?: return@addActionListener
+                if (state.journalWindow?.isDisplayable == true) {
+                    state.journalWindow?.toFront()
+                } else {
+                    state.journalWindow = ExecutionJournalDialog.show(root, state.journal)
+                }
+            }
+        }
+
+    private fun chatFooter(actions: JPanel): JPanel {
+        contextEstimate.font = UiTheme.Typography.label
+        contextEstimate.toolTipText = "Approximate tokens, not the model tokenizer. Includes history, system and schemas; answer reserve is separate."
+        return JPanel(BorderLayout()).apply {
+            isOpaque = false
+            add(contextEstimate, BorderLayout.NORTH)
+            add(actions, BorderLayout.SOUTH)
+        }
     }
 
     private fun sendFromInput() {
@@ -579,6 +612,8 @@ class ChatPanel(
         )
     }
 
+    // Keep established EDT/callback ownership here; native transport, context and diagnostics are separate components.
+    @Suppress("LongMethod", "CyclomaticComplexMethod", "ReturnCount")
     private fun sendMessage(
         sessionId: String,
         userText: String,
@@ -586,8 +621,9 @@ class ChatPanel(
         allowToolCalls: Boolean,
         actionName: String? = null,
         onCompleted: ((String, Throwable?) -> Unit)? = null,
-        toolIterationsLeft: Int = MAX_AUTO_TOOL_ITERATIONS,
+        toolIterationsLeft: Int = initialToolCallLimit(),
         traceId: String = "chat-turn-" + UUID.randomUUID().toString(),
+        nativeResult: FunctionResult? = null,
     ) {
         val settings = getSettings()
         updatePrivacyPill()
@@ -621,12 +657,17 @@ class ChatPanel(
             return
         }
         val assistant = sessionPanel.addStreamingMessage("AI")
-        if (backendId == "nvidia-nim") {
-            assistant.setWaitingDescription("NVIDIA NIM: waiting for complete answer")
-        }
         val state = sessionStates.getOrPut(sessionId) { ToolSessionState() }
-        if (backendId == "nvidia-nim" && actionName != "Tool Followup") {
-            state.nimChainRequest = ToolChainRequest(traceId, userText)
+        if (actionName != "Tool Followup") {
+            state.toolChainRequest = ToolChainRequest(traceId, userText, toolIterationsLeft)
+        }
+        if (backendId == "nvidia-nim") {
+            val chain = state.toolChainRequest?.takeIf { it.traceId == traceId }
+            val step = chainStepFor(sessionId, traceId, toolIterationsLeft)
+            assistant.setWaitingDescription(
+                "NVIDIA NIM: step $step, waiting for complete answer; total",
+                chain?.startedAtNanos ?: System.nanoTime(),
+            )
         }
         if (backendId == "nvidia-nim" && actionName == "Tool Followup") {
             // Internal followups bypass the Send button; retain their tool result in chat history.
@@ -637,14 +678,28 @@ class ChatPanel(
         // Capture it now: a late callback must not read a newer chain's request from session state.
         val toolUserRequest =
             if (backendId == "nvidia-nim") {
-                state.nimChainRequest?.takeIf { it.traceId == traceId }?.userText ?: userText
+                state.toolChainRequest?.takeIf { it.traceId == traceId }?.userText ?: userText
             } else {
                 userText
             }
-        val toolContext = if (state.toolsMode) buildToolContext(settings, sessionId, backendId) else null
-        val toolPreamble = if (state.toolsMode) buildToolPreamble(toolContext, state, mutateState = true) else null
+        val chainLimit = state.toolChainRequest?.takeIf { it.traceId == traceId }?.maxToolCalls ?: toolIterationsLeft
+        val toolsEnabled = state.toolsMode && allowToolCalls
+        val toolLimitReached = state.toolsMode && !allowToolCalls && toolIterationsLeft == 0
+        val backendObj = supervisor.getBackend(backendId)
+        val nimSystemTools = backendId == "nvidia-nim" && backendObj?.supportsSystemRole == true
+        val toolContext = if (toolsEnabled) buildToolContext(settings, sessionId, backendId) else null
+        val toolPreamble =
+            if (toolsEnabled) buildToolPreamble(toolContext, state, mutateState = true, repeatCatalog = nimSystemTools, nativeProtocol = backendId == "nvidia-nim" && settings.nvidiaNimOptions.toolCallingMode != "text") else null
         // Only include context JSON on the first turn — history already carries it
-        val effectiveContextJson = if (session != null && session.contextSent) null else contextJson
+        val compactContext = backendId == "nvidia-nim" && settings.nvidiaNimOptions.compactContext && toolContext?.isToolEnabled("context_read") == true
+        val effectiveContextJson =
+            if (session != null && session.contextSent) {
+                null
+            } else {
+                contextJson?.let {
+                    if (compactContext) ChatContextPlanner.compact(it, state.contextStore, userText, "Attached context") else it
+                }
+            }
         if (effectiveContextJson != null && session != null) {
             session.contextSent = true
         }
@@ -652,12 +707,23 @@ class ChatPanel(
         val agentBlock =
             com.six2dez.burp.aiagent.agents.AgentProfileLoader
                 .buildInstructionBlock(actionName)
-        val backendObj = supervisor.getBackend(backendId)
+        val systemInstructions =
+            listOfNotNull(
+                agentBlock?.takeIf { it.isNotBlank() },
+                toolPreamble?.takeIf { nimSystemTools },
+                if (nimSystemTools && !toolsEnabled) {
+                    (if (toolLimitReached) "Automatic tool-call limit ($chainLimit) reached. " else "") +
+                        "Tool calls are disabled for this completion. Give the final answer from existing evidence; do not emit tool invocations. " +
+                        "State which checks were completed and which remain unverified."
+                } else {
+                    null
+                },
+            ).joinToString("\n\n")
         val systemPrompt: String?
         val prompt: String
-        if (backendObj != null && backendObj.supportsSystemRole && !agentBlock.isNullOrBlank()) {
-            // Send agent instructions via system role, not in user prompt
-            systemPrompt = agentBlock
+        if (backendObj?.supportsSystemRole == true && systemInstructions.isNotBlank()) {
+            // NIM receives the current tool contract on every request, outside retained user history.
+            systemPrompt = systemInstructions
             prompt = buildContextPayloadNoAgent(userText, effectiveContextJson)
         } else {
             systemPrompt = null
@@ -665,7 +731,7 @@ class ChatPanel(
         }
         val finalPrompt =
             listOfNotNull(
-                toolPreamble?.takeIf { it.isNotBlank() },
+                toolPreamble?.takeIf { it.isNotBlank() && !nimSystemTools },
                 prompt.takeIf { it.isNotBlank() },
             ).joinToString("\n\n")
         val promptChars = finalPrompt.length
@@ -676,7 +742,7 @@ class ChatPanel(
         }
 
         val responseBuffer = StringBuilder()
-        val history =
+        val rawHistory =
             session?.messages?.let { msgs ->
                 val trimmed =
                     if (msgs.isNotEmpty() &&
@@ -687,28 +753,99 @@ class ChatPanel(
                     } else {
                         msgs
                     }
-                trimmed.map { ChatMessage(normalizeRole(it.role), it.content) }
+                trimmed.map { ChatMessage(normalizeRole(it.role), if (compactContext) ChatContextPlanner.compact(it.content, state.contextStore, userText, "Previous ${it.role} message") else it.content) }
             }
+        val functions = if (backendId == "nvidia-nim" && toolsEnabled && toolContext != null) McpToolExecutor.functionTools(toolContext) else emptyList()
         if (backendId == "nvidia-nim") retainNimPrompt(session, userText, finalPrompt)
+        val history =
+            if (backendId == "nvidia-nim") {
+                val planned =
+                    runCatching {
+                        ChatContextPlanner.budget(
+                            rawHistory.orEmpty(),
+                            finalPrompt,
+                            systemPrompt.orEmpty().length,
+                            functions.sumOf {
+                                it.parametersJson.length + it.description.length + it.name.length + FUNCTION_SCHEMA_OVERHEAD
+                            },
+                            settings.nvidiaNimOptions.validated().inputTokenBudget,
+                            settings.nvidiaNimOptions.validated().historyMaxChars,
+                        )
+                    }.getOrElse { failure ->
+                        assistant.finish("[Error] ${failure.message}")
+                        state.journal.add(ExecutionEntry(System.currentTimeMillis(), traceId, chainStepFor(sessionId, traceId, toolIterationsLeft), "context_error", failure.message.orEmpty()))
+                        setSendingState(false)
+                        onCompleted?.invoke("", failure)
+                        return
+                    }
+                contextEstimate.text =
+                    "Estimated input ~${planned.estimatedInputTokens}/${settings.nvidiaNimOptions.inputTokenBudget} tokens | " +
+                    "answer reserve ${settings.nvidiaNimOptions.maxTokens} | ${planned.removedMessages} history messages omitted | " +
+                    "${state.contextStore.size()} context snapshots"
+                planned.history
+            } else {
+                rawHistory
+            }
         val callbackConnectionRef = AtomicReference<AgentConnection?>(null)
+        val nativeCallRef = AtomicReference<FunctionCall?>(null)
+        val eventUsageRef = AtomicReference<com.six2dez.burp.aiagent.backends.TokenUsage?>(null)
+        val step = chainStepFor(sessionId, traceId, toolIterationsLeft)
+        state.currentStep = step
+        if (backendId == "nvidia-nim" && toolLimitReached) {
+            state.journal.add(ExecutionEntry(System.currentTimeMillis(), traceId, step, "tool_limit", "Automatic tool-call limit ($chainLimit) reached; preparing the final answer from collected evidence"))
+        }
+        state.journal.add(ExecutionEntry(System.currentTimeMillis(), traceId, step, "prepared", "Prompt ${finalPrompt.length} chars; history ${history?.size ?: 0}; tools ${functions.size}"))
         val connection =
-            supervisor.sendChat(
-                chatSessionId = sessionId,
-                backendId = backendId,
-                text = finalPrompt,
-                history = history,
-                contextJson = contextJson,
-                privacyMode = settings.privacyMode,
-                determinismMode = settings.determinismMode,
-                traceId = traceId,
-                systemPrompt = systemPrompt,
-                maxOutputTokens = if (backendId == "nvidia-nim") settings.nvidiaNimOptions.validated().maxTokens else Defaults.CHAT_MAX_OUTPUT_TOKENS,
-                launchMetadata = session?.launchMetadata,
+            dispatchChatRequest(
+                request =
+                    AgentChatRequest(
+                        chatSessionId = sessionId,
+                        backendId = backendId,
+                        text = finalPrompt,
+                        history = history,
+                        contextJson = contextJson,
+                        privacyMode = settings.privacyMode,
+                        determinismMode = settings.determinismMode,
+                        traceId = traceId,
+                        systemPrompt = systemPrompt,
+                        maxOutputTokens = if (backendId == "nvidia-nim") settings.nvidiaNimOptions.validated().maxTokens else Defaults.CHAT_MAX_OUTPUT_TOKENS,
+                        launchMetadata = session?.launchMetadata,
+                        tools = functions,
+                        previousToolResult = nativeResult,
+                    ),
+                onEvent = { event ->
+                    event.usage?.let { eventUsageRef.set(it) }
+                    event.call?.let { nativeCallRef.set(it) }
+                    SwingUtilities.invokeLater {
+                        if (sessionStates[sessionId] === state && state.currentStep == step && state.toolChainRequest?.traceId == traceId) {
+                            state.journal.add(ExecutionEntry(System.currentTimeMillis(), traceId, step, event.stage, event.detail, event.call?.argumentsJson))
+                            assistant.setWaitingDescription("NVIDIA NIM: step $step, ${event.detail}; total", state.toolChainRequest?.startedAtNanos ?: System.nanoTime())
+                        }
+                    }
+                },
                 onChunk = { chunk ->
                     responseBuffer.append(chunk)
                     SwingUtilities.invokeLater { assistant.appendChunk(chunk) }
                 },
                 onComplete = { err ->
+                    SwingUtilities.invokeLater {
+                        state.journal.add(
+                            ExecutionEntry(
+                                System.currentTimeMillis(),
+                                traceId,
+                                step,
+                                if (err ==
+                                    null
+                                ) {
+                                    "model_complete"
+                                } else {
+                                    "model_error"
+                                },
+                                err?.message ?: "Response received (${responseBuffer.length} chars)",
+                                result = if (err == null) responseBuffer.toString() else null,
+                            ),
+                        )
+                    }
                     val callbackConnection = callbackConnectionRef.get()
                     val shouldSetIdle =
                         if (callbackConnection == null) {
@@ -719,7 +856,7 @@ class ChatPanel(
                     if (shouldSetIdle) {
                         SwingUtilities.invokeLater { setSendingState(false) }
                     }
-                    val usage = (callbackConnection as? UsageAwareConnection)?.lastTokenUsage()
+                    val usage = eventUsageRef.get() ?: (callbackConnection as? UsageAwareConnection)?.lastTokenUsage()
                     TokenTracker.record(
                         flow = "chat",
                         backendId = backendId,
@@ -811,6 +948,7 @@ class ChatPanel(
                                         remainingToolIterations = toolIterationsLeft,
                                         traceId = traceId,
                                         onCompleted = onCompleted,
+                                        nativeCall = nativeCallRef.get(),
                                     )
                                 // sendMessage (called inside maybeExecuteToolCall when CHAINED)
                                 // submits work to a backend executor — it does not block the EDT.
@@ -836,6 +974,32 @@ class ChatPanel(
         callbackConnectionRef.set(connection)
         inFlightConnection.set(connection)
     }
+
+    private fun dispatchChatRequest(
+        request: AgentChatRequest,
+        onChunk: (String) -> Unit,
+        onComplete: (Throwable?) -> Unit,
+        onEvent: (AgentTurnEvent) -> Unit,
+    ): AgentConnection? =
+        if (request.backendId == "nvidia-nim") {
+            supervisor.sendAgentChat(request, onChunk, onComplete, onEvent)
+        } else {
+            supervisor.sendChat(
+                request.chatSessionId,
+                request.backendId,
+                request.text,
+                request.history,
+                request.contextJson,
+                request.privacyMode,
+                request.determinismMode,
+                onChunk,
+                onComplete,
+                request.traceId,
+                request.systemPrompt,
+                request.maxOutputTokens,
+                request.launchMetadata,
+            )
+        }
 
     private fun retainNimPrompt(
         session: ChatSession?,
@@ -1006,7 +1170,11 @@ class ChatPanel(
                 chatCards.remove(removedPanel.root)
             }
         } finally {
-            sessionStates.remove(session.id)
+            sessionStates.remove(session.id)?.let {
+                it.journalWindow?.dispose()
+                it.contextStore.clear()
+                it.journal.clear()
+            }
             sessionsById.remove(session.id)
             sessionDrafts.remove(session.id)
             sessionsModel.removeElement(session)
@@ -1120,6 +1288,16 @@ class ChatPanel(
         val toolToken = runningTool.take() as? RunningToolToken
         val conn = inFlightConnection.take()
         if (toolToken == null && conn == null) return false
+        activeSessionId?.let { id ->
+            sessionStates[id]?.let { state ->
+                state.currentStep = -1
+                state.journal.add(ExecutionEntry(System.currentTimeMillis(), state.toolChainRequest?.traceId.orEmpty(), 0, "cancelled", "Stopped locally; an HTTP request already submitted to Burp may still finish."))
+                // End the abandoned turn: adjacent user messages otherwise merge with its tool-result instructions.
+                sessionsById[id]?.takeIf { it.lastBackendId == "nvidia-nim" }?.messages?.add(
+                    ChatMessage("assistant", "[Local cancellation: the previous request was stopped by the user. Do not resume it unless the user asks. Treat the next user message as a new request.]"),
+                )
+            }
+        }
         // S0 immediately. The user does not wait for the worker: Montoya's sendRequest takes no
         // cancellation token, so the worker runs to completion and its return lands in S4 instead
         // (finishApprovedToolCall's supersede branch — the token it holds no longer matches).
@@ -1375,7 +1553,11 @@ class ChatPanel(
         // again — an approval given while reviewing target A must not run silently against target B.
         // A fresh holder drops both session sets and the repeat counter in one assignment.
         state.approvalMemory = ToolApprovalMemory()
-        state.nimChainRequest = null
+        state.toolChainRequest = null
+        state.contextStore.clear()
+        state.journalWindow?.dispose()
+        state.journalWindow = null
+        state.journal.clear()
         // Remove persisted messages for this session
         try {
             projectData().deleteString(sessionMsgKeyPrefix + selected.id)
@@ -1558,6 +1740,9 @@ class ChatPanel(
     private fun persistActiveSessionDraft() {
         val id = activeSessionId ?: return
         sessionDrafts[id] = inputArea.text
+        val options = getSettings().nvidiaNimOptions.validated()
+        val historyChars = sessionsById[id]?.messages?.sumOf { it.content.length.toLong() } ?: 0L
+        contextEstimate.text = "Draft input ~${ChatContextPlanner.estimateTokens(historyChars + inputArea.text.length)} tokens before compaction | input budget ${options.inputTokenBudget} | answer reserve ${options.maxTokens}"
     }
 
     private fun restoreDraftForSession(id: String) {
@@ -1591,6 +1776,7 @@ class ChatPanel(
         // module-scoped, so it stays invisible to any consumer of the shipped JAR. Do not narrow it
         // back without reading that test first.
         internal const val MAX_AUTO_TOOL_ITERATIONS = 8
+        private const val FUNCTION_SCHEMA_OVERHEAD = 64
 
         /**
          * SC3 run status for a call whose result was discarded (UI-SPEC S4).
@@ -1751,6 +1937,11 @@ class ChatPanel(
             resolveAllPending(ImplicitDenyReason.UNLOAD)
             cancelInFlightRequest()
             sessionPanels.values.forEach { it.stopAllTimers() }
+            sessionStates.values.forEach {
+                it.journalWindow?.dispose()
+                it.contextStore.clear()
+                it.journal.clear()
+            }
         }
         if (SwingUtilities.isEventDispatchThread()) {
             work()
@@ -1784,6 +1975,11 @@ class ChatPanel(
         resolveAllPending(ImplicitDenyReason.PROJECT_CHANGED)
         cancelInFlightRequest()
         sessionPanels.values.forEach { it.stopAllTimers() }
+        sessionStates.values.forEach {
+            it.journalWindow?.dispose()
+            it.contextStore.clear()
+            it.journal.clear()
+        }
         sessionsById.clear()
         sessionPanels.clear()
         sessionStates.clear()
@@ -2077,13 +2273,19 @@ class ChatPanel(
     private data class ToolChainRequest(
         val traceId: String,
         val userText: String,
+        val maxToolCalls: Int,
+        val startedAtNanos: Long = System.nanoTime(),
     )
 
     private data class ToolSessionState(
+        val contextStore: ChatContextStore = ChatContextStore(),
+        val journal: ExecutionJournal = ExecutionJournal(),
+        var journalWindow: javax.swing.JDialog? = null,
+        var currentStep: Int = 0,
         var toolsMode: Boolean = true,
         var toolCatalogSent: Boolean = false,
         var toolCatalogSnapshot: String? = null,
-        var nimChainRequest: ToolChainRequest? = null,
+        var toolChainRequest: ToolChainRequest? = null,
         // D-10: the SEC-06 approve/deny memory is keyed on the CHAT session and dies with it — no new
         // lifecycle, no persistence. An approval granted while reviewing target A must not silently
         // apply when the user opens a new chat about target B (T-22-20).
@@ -2272,8 +2474,11 @@ class ChatPanel(
             message.append(text)
         }
 
-        fun setWaitingDescription(description: String) {
-            message.setWaitingDescription(description)
+        fun setWaitingDescription(
+            description: String,
+            startedAtNanos: Long = System.nanoTime(),
+        ) {
+            message.setWaitingDescription(description, startedAtNanos)
         }
     }
 
@@ -2295,7 +2500,7 @@ class ChatPanel(
             listOf("\u280B", "\u2819", "\u2839", "\u2838", "\u283C", "\u2834", "\u2826", "\u2827", "\u2807", "\u280F")
         private var spinnerIndex = 0
         private var waitingDescription = "Thinking..."
-        private val waitingSinceNanos = System.nanoTime()
+        private var waitingSinceNanos = System.nanoTime()
         private val pendingText = StringBuilder()
         private var coalescingTimer: javax.swing.Timer? = null
         private var copyResetTimer: javax.swing.Timer? = null
@@ -2540,8 +2745,12 @@ class ChatPanel(
             editorPane.isVisible = true
         }
 
-        fun setWaitingDescription(description: String) {
+        fun setWaitingDescription(
+            description: String,
+            startedAtNanos: Long = System.nanoTime(),
+        ) {
             waitingDescription = description
+            waitingSinceNanos = startedAtNanos
             spinnerLabel.text = description
         }
 
@@ -2675,6 +2884,20 @@ class ChatPanel(
         return false
     }
 
+    private fun bindNativeCall(
+        parsed: ParsedToolCall?,
+        native: FunctionCall?,
+    ): ParsedToolCall? =
+        when {
+            parsed == null -> null
+            native == null -> parsed
+            parsed.tool == native.name &&
+                runCatching {
+                    Json.parseToJsonElement(parsed.argsJson.orEmpty()) == Json.parseToJsonElement(native.argumentsJson)
+                }.getOrDefault(false) -> parsed.copy(invocationId = native.id)
+            else -> null
+        }
+
     private fun maybeExecuteToolCall(
         sessionId: String,
         userText: String,
@@ -2683,6 +2906,7 @@ class ChatPanel(
         remainingToolIterations: Int,
         traceId: String,
         onCompleted: ((String, Throwable?) -> Unit)?,
+        nativeCall: FunctionCall? = null,
     ): ToolCallOutcome {
         // REL-01: this function reads EDT-confined maps and calls panel.addMessage (Swing), so every
         // caller must ALREADY be on the EDT; one that is not must marshal with invokeAndWait first.
@@ -2690,10 +2914,15 @@ class ChatPanel(
         // every shipped Burp — so treat it as a development-time aid and read its KDoc before
         // relying on it.
         assertEdt()
-        val call = if (remainingToolIterations > 0) ToolCallParser.extractFirst(responseText) else null
+        val parsed = if (remainingToolIterations > 0) ToolCallParser.extractFirst(responseText) else null
         val panel = sessionPanels[sessionId]
-        if (call == null || panel == null) return ToolCallOutcome.NOT_CHAINED
+        val call = bindNativeCall(parsed, nativeCall)
+        if (call == null || panel == null) {
+            if (nativeCall != null && remainingToolIterations > 0) panel?.addMessage("AI", "[Error] Native tool invocation does not match its execution envelope; discarded.")
+            return ToolCallOutcome.NOT_CHAINED
+        }
         val state = sessionStates.getOrPut(sessionId) { ToolSessionState() }
+        state.journal.add(ExecutionEntry(System.currentTimeMillis(), traceId, chainStepFor(sessionId, traceId, remainingToolIterations), "tool_requested", call.tool, call.argsJson))
         // SEC-06 / T-22-01 — THE trust boundary this whole phase exists to install. Model context is
         // attacker-influenceable (proxy traffic sent via "Send to AI", passive-scan findings, external
         // MCP tool results), so tool *selection* is attacker-influenceable too. The gate is consulted
@@ -2818,8 +3047,20 @@ class ChatPanel(
      */
     private fun backendIdFor(sessionId: String): String = sessionsById[sessionId]?.lastBackendId ?: getSettings().preferredBackendId
 
-    /** SC3's 1-based chain step. Derived once so no two telemetry branches can compute it differently. */
-    private fun chainStepFor(remainingToolIterations: Int): Int = (MAX_AUTO_TOOL_ITERATIONS - remainingToolIterations + 1).coerceAtLeast(1)
+    private fun initialToolCallLimit(): Int {
+        val settings = getSettings()
+        return if (settings.preferredBackendId == "nvidia-nim") settings.nvidiaNimOptions.validated().maxToolCalls else MAX_AUTO_TOOL_ITERATIONS
+    }
+
+    /** SC3's 1-based chain step uses the chain's starting budget, not settings saved mid-request. */
+    private fun chainStepFor(
+        sessionId: String,
+        traceId: String,
+        remainingToolIterations: Int,
+    ): Int {
+        val limit = sessionStates[sessionId]?.toolChainRequest?.takeIf { it.traceId == traceId }?.maxToolCalls ?: MAX_AUTO_TOOL_ITERATIONS
+        return (limit - remainingToolIterations + 1).coerceAtLeast(1)
+    }
 
     /**
      * Puts the decision in front of the user and PARKS the chain (D-06, SC2).
@@ -2957,7 +3198,7 @@ class ChatPanel(
                 decision = decision,
                 argsJson = pending.call.argsJson,
                 traceId = pending.traceId,
-                chainStep = chainStepFor(pending.remainingToolIterations),
+                chainStep = chainStepFor(pending.sessionId, pending.traceId, pending.remainingToolIterations),
                 runStatus = "error",
             )
             pending.onCompleted?.invoke(ToolApprovalGate.DENIAL_RESULT, null)
@@ -3042,7 +3283,7 @@ class ChatPanel(
             decision = ToolDecision.IMPLICIT_DENY,
             argsJson = pending.call.argsJson,
             traceId = pending.traceId,
-            chainStep = chainStepFor(pending.remainingToolIterations),
+            chainStep = chainStepFor(pending.sessionId, pending.traceId, pending.remainingToolIterations),
             implicitDenyReason = reason,
         )
         // The parked continuation, discharged rather than dropped (T-22-31). Same shape as the
@@ -3143,7 +3384,7 @@ class ChatPanel(
                 decision = denied.decision,
                 argsJson = call.argsJson,
                 traceId = traceId,
-                chainStep = chainStepFor(remainingToolIterations),
+                chainStep = chainStepFor(sessionId, traceId, remainingToolIterations),
             )
         supervisor.aiRequestLogger?.log(
             type = ActivityType.MCP_TOOL_CALL,
@@ -3156,6 +3397,7 @@ class ChatPanel(
         )
         // The user sees the outcome in the transcript whether or not a card was ever shown.
         panel.addMessage("Tool result: ${call.tool}", ToolApprovalGate.DENIAL_RESULT)
+        sessionStates[sessionId]?.journal?.add(ExecutionEntry(System.currentTimeMillis(), traceId, chainStepFor(sessionId, traceId, remainingToolIterations), "tool_denied", call.tool, call.argsJson, ToolApprovalGate.DENIAL_RESULT))
         val followup =
             buildString {
                 appendLine("The tool call to ${call.tool} was not authorised and did not run.")
@@ -3183,6 +3425,7 @@ class ChatPanel(
             onCompleted = onCompleted,
             toolIterationsLeft = ToolApprovalGate.nextIterationBudget(remainingToolIterations),
             traceId = traceId,
+            nativeResult = call.invocationId?.let { FunctionResult(it, ToolApprovalGate.DENIAL_RESULT) },
         )
         return ToolCallOutcome.CHAINED
     }
@@ -3220,6 +3463,7 @@ class ChatPanel(
                 remainingToolIterations = remainingToolIterations,
                 startedAt = System.currentTimeMillis(),
             )
+        sessionStates[sessionId]?.journal?.add(ExecutionEntry(System.currentTimeMillis(), traceId, chainStepFor(sessionId, traceId, remainingToolIterations), "tool_running", call.tool, call.argsJson))
         // REL-05 / AI-SPEC E5 — THE LAST EDT READ OF GUARDED STATE ON THIS PATH. `panel` was resolved
         // from `sessionPanels` by the caller and is frozen into the capture here. Below the dispatch the
         // work runs on a worker thread, which must read NONE of sessionPanels, sessionStates,
@@ -3235,7 +3479,7 @@ class ChatPanel(
             // identity it reports one.
             label = traceId,
             logError = { message -> api.logging().logToError(message) },
-            work = { McpToolExecutor.executeTool(call.tool, call.argsJson, captured.context, approved.origin) },
+            work = { McpToolExecutor.executeTool(call.tool, call.argsJson, captured.context.copy(webCancelled = { runningTool.current() !== token }), approved.origin) },
             onEdt = { result -> finishApprovedToolCall(captured, token, result, onCompleted) },
         )
         return ToolCallOutcome.EXECUTING
@@ -3302,7 +3546,7 @@ class ChatPanel(
         val superseded = !runningTool.clearIfMatches(token)
         val durationMs = System.currentTimeMillis() - captured.startedAt
         val canonicalId = McpToolExecutor.canonicalToolId(captured.call.tool)
-        val chainStep = chainStepFor(captured.remainingToolIterations)
+        val chainStep = chainStepFor(captured.sessionId, captured.traceId, captured.remainingToolIterations)
         if (superseded) {
             discardSupersededToolResult(captured, canonicalId, result, durationMs)
             // The parked continuation is the "Send to AI" caller's resume hook, not a second audit sink
@@ -3333,7 +3577,8 @@ class ChatPanel(
             return
         }
         val toolResult = result.getOrThrow()
-        val status = if (toolResult.startsWith("Error:")) "error" else "ok"
+        val knownTool = isKnownTool(canonicalId, captured.context)
+        val status = if (!knownTool || toolResult.startsWith("Error:")) "error" else "ok"
         // SC3, and this is the branch that makes "which calls ran with no decision at all?" answerable
         // from a historical log: an AUTO run reports too, carrying its tier and its AUTO decision, so
         // it is distinguishable from a pre-gate call that nobody classified. Reported before the log
@@ -3342,7 +3587,7 @@ class ChatPanel(
             toolDecisionReporter.report(
                 rawToolName = captured.call.tool,
                 canonicalId = canonicalId,
-                knownTool = isKnownTool(canonicalId, captured.context),
+                knownTool = knownTool,
                 tier = captured.approved.tier,
                 decision = captured.approved.decision,
                 argsJson = captured.call.argsJson,
@@ -3361,11 +3606,13 @@ class ChatPanel(
             metadata = metadata,
         )
         captured.panel.addMessage("Tool result: ${captured.call.tool}", toolResult)
+        sessionStates[captured.sessionId]?.journal?.add(ExecutionEntry(System.currentTimeMillis(), captured.traceId, chainStep, "tool_result", captured.call.tool, captured.call.argsJson, toolResult))
+        val compactResult = compactToolResult(captured.sessionId, toolResult, captured.userText, captured.call.tool)
         setSendingState(false)
         val followup =
             buildString {
                 appendLine("Tool result for ${captured.call.tool}:")
-                appendLine(toolResult)
+                appendLine(compactResult)
                 appendLine()
                 appendLine("User request:")
                 appendLine(captured.userText)
@@ -3378,12 +3625,27 @@ class ChatPanel(
             captured.sessionId,
             followup,
             contextJson = null,
-            allowToolCalls = ToolApprovalGate.allowsFurtherToolCalls(captured.remainingToolIterations),
+            allowToolCalls = knownTool && ToolApprovalGate.allowsFurtherToolCalls(captured.remainingToolIterations),
             actionName = "Tool Followup",
             onCompleted = onCompleted,
             toolIterationsLeft = ToolApprovalGate.nextIterationBudget(captured.remainingToolIterations),
             traceId = captured.traceId,
+            nativeResult = captured.call.invocationId?.let { FunctionResult(it, compactResult) },
         )
+    }
+
+    private fun compactToolResult(
+        sessionId: String,
+        result: String,
+        question: String,
+        toolId: String,
+    ): String {
+        val settings = getSettings()
+        val state = sessionStates[sessionId]
+        val enabled = McpToolCatalog.mergeWithDefaults(settings.mcpSettings.toolToggles)["context_read"] == true
+        val compactEnabled = settings.nvidiaNimOptions.compactContext && state?.toolsMode == true && enabled
+        val eligible = settings.preferredBackendId == "nvidia-nim" && McpToolExecutor.canonicalToolId(toolId) != "context_read"
+        return if (eligible && compactEnabled) ChatContextPlanner.compact(result, state.contextStore, question, "Tool result") else result
     }
 
     /**
@@ -3413,7 +3675,7 @@ class ChatPanel(
                 decision = captured.approved.decision,
                 argsJson = captured.call.argsJson,
                 traceId = captured.traceId,
-                chainStep = chainStepFor(captured.remainingToolIterations),
+                chainStep = chainStepFor(captured.sessionId, captured.traceId, captured.remainingToolIterations),
                 resultChars = result.getOrNull()?.length,
                 runStatus = SUPERSEDED_RUN_STATUS,
             ) + ("supersedeReason" to "result discarded before it was applied")
@@ -3482,36 +3744,19 @@ class ChatPanel(
         context: McpToolContext?,
         state: ToolSessionState,
         mutateState: Boolean,
+        repeatCatalog: Boolean = false,
+        nativeProtocol: Boolean = false,
     ): String? {
         if (context == null) return null
-        val header =
-            """
-You have access to MCP tools via a text-based protocol. To call a tool, output ONLY a JSON code block in this exact format:
-
-```json
-{"tool": "tool_name", "args": {"param1": "value1"}}
-```
-
-The system will parse your JSON, execute the tool, and return the result. Then you continue your analysis using that result.
-
-IMPORTANT:
-- When making a tool call, output ONLY the JSON block and nothing else in that message.
-- Do NOT say you cannot use tools. You CAN use them by outputting JSON as shown above.
-- After receiving a tool result, continue your analysis or make another tool call.
-- For execution requests, perform the requested work with enabled tools and report observed results.
-- Use the exact IDs in the latest enabled catalog, which replaces earlier catalogs. Do not assume a tool is missing because another extension uses a different name.
-- When listed, http1_request and http2_request send custom HTTP requests. repeater_tab prepares a Repeater tab.
-- If a necessary tool is unavailable or rejected, state the exact limitation.
-- For confirmed vulnerabilities, call `issue_create` with concrete evidence.
-        """.trim()
-        val list = McpToolExecutor.describeTools(context, includeSchemas = true, includeDisabled = false)
+        val header = ChatToolInstructions.header(nativeProtocol)
+        val list = McpToolExecutor.describeTools(context, includeSchemas = !nativeProtocol, includeDisabled = false)
         val limits = "\nProxy history count limit per call: ${context.proxyHistoryMaxItemsPerRequest}. Use offset pagination for more records."
-        if (state.toolCatalogSent && state.toolCatalogSnapshot == list) return header + limits
-        if (mutateState) {
+        val includeCatalog = repeatCatalog || !state.toolCatalogSent || state.toolCatalogSnapshot != list
+        if (mutateState && includeCatalog) {
             state.toolCatalogSent = true
             state.toolCatalogSnapshot = list
         }
-        return header + limits + "\n\n" + list
+        return header + limits + if (includeCatalog) "\n\n" + list else ""
     }
 
     private fun buildToolContext(
@@ -3541,6 +3786,7 @@ IMPORTANT:
             aiRequestLogger = supervisor.aiRequestLogger,
             backendRegistry = supervisor.backendRegistry(),
             aiBackendId = backendId,
+            chatContextStore = sessionStates[sessionId]?.contextStore,
             preprocessProxyHistory = settings.preprocessProxyHistory,
             preprocessMaxResponseSizeKb = settings.preprocessMaxResponseSizeKb,
             preprocessFilterBinaryContent = settings.preprocessFilterBinaryContent,

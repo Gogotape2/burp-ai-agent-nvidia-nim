@@ -1,7 +1,97 @@
-# NVIDIA NIM patch notes - 1.0.0-nim.7
+# NVIDIA NIM patch notes - 1.0.0-nim.15
 
 Upstream base: [v1.0.0](https://github.com/six2dez/burp-ai-agent/releases/tag/v1.0.0), commit `e7d3fc47d224d661e990c28da82dfa3bac50fa6b`.
 This document describes the cumulative unofficial patch. It contains no runtime credentials or captured target traffic.
+
+Release: [1.0.0-nim.15](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.15). Current validation and Burp UI results are recorded in [nim.15 verification](../verification/nim.15/verification.json). The older sections below retain their original version-specific scope; statements about loading and testing a development snapshot refer to that snapshot.
+
+## Local nim.15 configurable tool limit
+
+Under Settings > AI Backend > NVIDIA NIM, **Tool calls per analysis** accepts 1-128, default 24. The value persists in the existing NIM options object, with missing legacy fields receiving the default. Save affects the next user request; an active chain keeps its original budget and step numbering. Each individual tool attempt, including a batch member or denial, consumes the same monotone budget as before. Exhaustion still disables tools and requests a final verdict; the nim.14 bounded repair remains available. Other backends retain their existing eight-call budget. This setting does not increase HTTP timeouts, rate limits or permissions.
+
+## Local nim.14 final answer after the tool limit
+
+An actual Burp issue-analysis trace reached its eight-call limit. Step 9 correctly had zero enabled tools and received HTTP 200, but the provider still emitted a native function call. The adapter previously failed with `Provider returned tool calls while tools were disabled`, losing the final verdict.
+
+The UI now identifies exhaustion explicitly in its system instruction and execution journal. If an endpoint ignores disabled tools, the adapter makes one final-answer repair under the same deadline and coordinator. It removes function definitions and converts prior native metadata into plain evidence, preserving observed results and skipped batch members. Returned native or standalone textual calls cannot execute or become the repaired final answer. Repeated noncompliance stops without another inference repair. Token usage includes both responses when both are available. No target traffic or provider response bodies are included in the release diagnostics.
+
+## Local nim.13 cancellation regression
+
+Burp UI checks reproduced a fresh request receiving an answer to the cancelled tool task. Conversation normalization had merged the unfinished user/tool-result text with the next user request. An explicit client-side cancellation boundary now ends the abandoned turn, retaining its earlier evidence while keeping the next question in its own user turn. Two regression tests fail on the previous implementation and pass with the boundary. The backend-list tool now reports selected backend and worker state separately. The settings documentation uses the actual Burp Integration tab.
+
+
+## Local nim.12 free web research
+
+The full JAR adds optional `web_search` and `web_fetch` tools backed by DuckDuckGo Lite and an anonymous public HTTP client. A synchronized master checkbox in MCP Tools controls the existing persisted tool toggles. Research remains behind the existing approval mode, and tools default to off on upgrade. The NIM inference protocol and model profiles are unchanged from nim.11.
+
+See [web research](web-research.md) for the exact reading, pagination, privacy, cancellation, network and cache limits. Opt-in compiled workflow checks and deterministic regression results are recorded separately in `verification/nim.12/`. These development snapshots are included in the cumulative nim.15 release.
+
+## Local nim.11 tool-only text batches and HTTP 451
+
+The NIM adapter decodes complete adjacent tool JSON objects, arrays and sole fences as an ordered bounded batch. It validates all members and enabled names before exposing any call. Native mode normalizes recovered calls into assistant/tool protocol records; forced/fallback text mode carries the same call IDs in text history and merges consecutive result turns. Existing confirmation, allowlist, scope, audit and iteration limits remain in force. JSON inside prose and reports is not executed. Incomplete/mixed batches never expose a partial call.
+
+A native capability fallback during a result followup converts the prepared conversation once and preserves each result. Remaining queued calls are skipped when tools are disabled. Tests exercise the exact reported history/search payload, escaped braces, malformed later members, ID correlation in both protocols, mid-chain fallback and denial cleanup.
+
+HTTP 451 is not a 5xx failure and remains non-retryable. The diagnostic classifies explicit terms/content-policy, account-entitlement and regional phrases into controlled categories, otherwise states that the exact reason is unknown. Raw provider bodies can echo prompts or credentials and remain excluded. Request metadata now includes a bounded model ID, actual native/text protocol and attempt-status sequence. This separates an earlier transient error from the final refusal. The patch cannot change provider access decisions. Standard status semantics: [RFC 7725](https://www.rfc-editor.org/rfc/rfc7725.html).
+
+The separate access probe sends only a short synthetic marker request to GLM and does not replay target traffic. Its result is recorded separately from synthetic regression success; a timeout is not proof of access or of the cause of the user's 451. The new JAR is not automatically loaded into Burp.
+
+## Local nim.10 GLM preset button
+
+The NVIDIA NIM settings card adds Use GLM 5.3 defaults beside the existing Nemotron preset. Both use one shared field-update action; GLM selects z-ai/glm-5.3 and its Auto reasoning profile. The preset applies the NVIDIA base URL, 900-second total timeout and standard NIM options (including 16,384 completion tokens and Auto tool calling). It retains the API key and extra headers. Changes are saved through the existing Save action and apply to a new chat connection.
+
+The existing settings-panel and model-profile tests are used for this UI update. Native runtime validation remains the nim.9 baseline; it is not reported as a new live inference run. The delivery includes the rendered settings card and a separate nim.10 verification report.
+
+## Local nim.9 native functions, context and execution journal
+
+Native NIM turns now carry enabled function schemas in `tools`, assistant `tool_calls` and correlated `tool` results. The adapter validates the whole batch before exposing any call and drains it sequentially through the existing UI gate without additional model inference between queued calls. Scope, allowlists, approval settings and chain limits still apply. Stopping tools supplies skipped results for remaining batch calls before a final `tool_choice=none` completion.
+
+Auto fallback is restricted to explicit unsupported-tools HTTP 400/422 errors. Ordinary failures and missing function calls do not silently select another protocol. Text mode preserves the nim.8 standalone-payload parser. Duplicate IDs, malformed or oversized arguments, incomplete streams and calls returned with tools disabled fail explicitly.
+
+Approved capture snapshots and large results can be compacted into bounded summaries with per-chat references. `context_read` pages exact captured data or searches a literal substring and reapplies the current privacy policy. Storage is in memory, limited to 48 entries and two million characters per chat, and cleared with the chat. Snapshot collection still has request/response body limits; retrieval cannot recover data absent from the capture. Scanner issue captures now include bounded associated HTTP evidence and redact issue descriptions.
+
+A separate estimated input budget includes system instructions, schemas and serialized protocol overhead. Older history is removed in complete turns; current input is rejected if it cannot fit. Character-based estimates are not exact tokenizer counts. Answer/thinking tokens remain a separate provider parameter.
+
+The per-chat execution journal records preparation, queueing, HTTP outcomes, retries, provider usage, tool decisions/results and cancellation. It retains at most 250 events and one million characters, with bounded per-field detail. The dialog sanitizes displayed details; export generates a sanitized preview off the EDT, then writes a new file on explicit Save. Header, structured-key, query/form and provider-token masking applies regardless of chat privacy. Incomplete structured records fail closed during export.
+
+Start a new chat after changing model or protocol options: existing supervisor connections retain their launch configuration. Native reasoning text is excluded from visible answers and the journal. Buffered SSE decoding remains a compatibility path; live SSE transport is not implemented.
+
+## Local nim.9 validation
+
+The final focused Windows/JDK 21 task ran 833 tests: 831 passed, 2 skipped, zero failures/errors. ktlintCheck, detekt and shadowJar passed. It covers UI, MCP, configuration, supervisor, scanner, context, journal and NIM behavior, including invalid argument types and trailing JSON tokens. This is a selected regression set; the full-suite caveat below remains in force.
+
+Live GLM 5.3 checks passed a short answer, a native function/result exchange and 43,145 characters of synthetic context. The compiled adapter also completed a correlated roundtrip and selected scope_check from 35 actual enabled Burp schemas using the stock max_tokens=16384 limit. Test functions use synthetic markers or example.test metadata; they do not send target traffic. The compiled tests use an OkHttp bridge and do not establish live Montoya/Burp UI behavior. The new JAR was not automatically loaded into Burp.
+
+GLM's Auto profile follows the documented low reasoning and clear_thinking=true chat settings; the provider documents OpenAI-compatible tool calls. See the [NVIDIA GLM 5.3 reference](https://docs.api.nvidia.com/nim/reference/z-ai-glm-5-3).
+
+The initial regression reports are retained with their final corrections. Deterministic capture ordering is computed before host anonymization, catalog/EDT ledgers account for the added tool and journal callbacks, URL query metadata follows the current privacy policy, and the legacy HTTP fixture now contains real CRLF delimiters. See [local verification](../verification/nim.9/verification.json) and the separately included intermediate reports. Provider-side delays, quotas and capacity remain outside the patch's control.
+
+## Local nim.8 issue-analysis and tool-chain correction
+
+The parser previously scanned JSON fragments anywhere in an assistant response and accepted an arbitrary `name` field as a tool name.
+An issue report such as `{"name":"Authentication Bypass: Login Accepts Arbitrary Credentials"}` could therefore run an unknown tool and trigger another inference after the answer appeared complete.
+The whole assistant turn must now be a standalone call, optionally inside a sole `json` or `tool` fence.
+Legacy name-plus-arguments and OpenAI-style wrappers remain supported. Report objects with domain fields, name-only objects and examples inside prose are not calls.
+
+Explicit unknown tool calls are recorded with error status and receive one final completion with tools disabled.
+Known tools retain bounded recovery for errors such as an excessive history count.
+Disabled-tool completions no longer advertise executable tools. Existing approval settings, scope, allowlists and the chain iteration cap remain in force.
+
+NIM receives the current enabled schemas and protocol in the system role on every request, outside retained user history.
+Issue analysis requests relevant captured evidence through enabled tools and separates observations from suspected causes and unverified impact.
+The unchanged upstream issue-analysis default migrates to this workflow; custom prompts are preserved verbatim.
+Model compliance is not guaranteed, and a tool cannot run if it is unavailable or disabled.
+
+The spinner previously restarted for each new assistant bubble rather than wrapping at 60 seconds.
+NIM bubbles now share the root request's monotonic start time and show the current chain step.
+No provider retry or timeout setting is changed in nim.8.
+Validation for this local build is recorded separately from nim.7. No live Burp reload or NVIDIA inference is implied.
+
+The final focused regression task ran 796 tests: 794 passed, two skipped, zero failures/errors; ktlintCheck, detekt and shadowJar passed.
+The first run exposed a pre-existing asynchronous test race: a global settle event from another panel could release a failure-path assertion too early.
+The harness now supports trace-filtered waits; that assertion and the new NIM chain tests await their own trace. Production assertions were retained.
+Report JSON checks also assert that no tool worker was dispatched, so a delayed false invocation cannot pass unnoticed.
+See [nim.8 verification](../verification/nim.8/verification.json) and the separately retained [initial run](../verification/nim.8/initial-focused-suite.json).
 
 ## Transport, retries and settings
 
@@ -93,4 +183,4 @@ See [verification.json](../verification/nim.7/verification.json), [focused-suite
 ## Build
 
 Use JDK 21 and the included Gradle wrapper. Run `./gradlew shadowJar` or `.\gradlew.bat shadowJar` on Windows.
-Output: `build/libs/Custom-AI-Agent-full-1.0.0-nim.7.jar`.
+Output for the current local build: `build/libs/Custom-AI-Agent-full-1.0.0-nim.11.jar`.

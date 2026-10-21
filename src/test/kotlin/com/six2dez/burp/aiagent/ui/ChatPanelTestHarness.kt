@@ -102,6 +102,24 @@ object ChatPanelTestHarness {
 
         val supervisor: AgentSupervisor = mock(defaultAnswer = Answers.RETURNS_DEEP_STUBS)
         whenever(supervisor.requiresBurpAiAndDisabled(any())).thenReturn(false)
+        whenever(supervisor.sendAgentChat(any(), any(), any(), any())).thenAnswer { invocation ->
+            val request = invocation.getArgument<com.six2dez.burp.aiagent.backends.AgentChatRequest>(0)
+            supervisor.sendChat(
+                request.chatSessionId,
+                request.backendId,
+                request.text,
+                request.history,
+                request.contextJson,
+                request.privacyMode,
+                request.determinismMode,
+                invocation.getArgument(1),
+                invocation.getArgument(2),
+                request.traceId,
+                request.systemPrompt,
+                request.maxOutputTokens,
+                request.launchMetadata,
+            )
+        }
         whenever(
             // 13 matchers, one per parameter of AgentSupervisor.sendChat; nullable parameters use
             // anyOrNull() so an omitted optional argument still matches.
@@ -365,11 +383,18 @@ object ChatPanelTestHarness {
     fun awaitToolSettled(
         count: Int,
         failsafeSeconds: Long = DEFAULT_SETTLE_FAILSAFE_SECONDS,
+        traceId: String? = null,
     ) {
         repeat(count) { index ->
-            requireNotNull(settled.poll(failsafeSeconds, TimeUnit.SECONDS)) {
-                "Tool worker ${index + 1} of $count never settled within ${failsafeSeconds}s — the async " +
-                    "dispatch or its EDT tail is broken. Settled so far: ${settledLabels()}; dispatched: ${dispatchedLabels()}."
+            val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(failsafeSeconds)
+            var matched = false
+            while (!matched) {
+                val label =
+                    requireNotNull(settled.poll((deadline - System.nanoTime()).coerceAtLeast(0L), TimeUnit.NANOSECONDS)) {
+                        "Tool worker ${index + 1} of $count for trace $traceId never settled within ${failsafeSeconds}s — the async " +
+                            "dispatch or its EDT tail is broken. Settled so far: ${settledLabels()}; dispatched: ${dispatchedLabels()}."
+                    }
+                matched = traceId == null || label == traceId
             }
         }
         drainEdt()

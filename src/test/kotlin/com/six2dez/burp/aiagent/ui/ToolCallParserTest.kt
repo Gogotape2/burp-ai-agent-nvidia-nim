@@ -20,7 +20,6 @@ class ToolCallParserTest {
     fun `extracts fenced json tool payload`() {
         val payload =
             """
-            I will query Burp first.
             ```json
             {"name":"proxy_http_history","arguments":{"limit":5}}
             ```
@@ -61,12 +60,23 @@ class ToolCallParserTest {
     }
 
     @Test
-    fun `extracts inline mixed text json payload`() {
+    fun `does not execute json embedded in prose`() {
         val payload = "Let me call this tool now: {\"tool\":\"scope_check\",\"args\":{\"url\":\"https://target.test\"}} and continue."
-        val call = ToolCallParser.extractFirst(payload)
-        assertNotNull(call)
-        assertEquals("scope_check", call?.tool)
-        assertTrue(call?.argsJson?.contains("target.test") == true)
+        assertNull(ToolCallParser.extractFirst(payload))
+    }
+
+    @Test
+    fun `issue names and report examples are not tool calls`() {
+        val issue = """{"name":"Authentication Bypass: Login Accepts Arbitrary Credentials","severity":"High","evidence":"unverified"}"""
+        val example = """{"tool":"http1_request","args":{"targetHostname":"example.test"}}"""
+        for (report in listOf(issue, "```json\n$issue\n```", "PoC example:\n```json\n$example\n```", """{"name":"status"}""", """{"tool":123,"args":{}}""")) {
+            assertNull(ToolCallParser.extractFirst(report), report)
+        }
+    }
+
+    @Test
+    fun `unknown explicit call remains available for diagnostic handling`() {
+        assertEquals("missing_tool", ToolCallParser.extractFirst("""{"tool":"missing_tool","args":{}}""")?.tool)
     }
 
     @Test

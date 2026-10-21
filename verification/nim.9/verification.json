@@ -1,0 +1,90 @@
+{
+  "version": "1.0.0-nim.9",
+  "publication": {
+    "published": false,
+    "reason": "User requested local changes only; no push, tag or release"
+  },
+  "baseTag": "v1.0.0",
+  "baseCommit": "e7d3fc47d224d661e990c28da82dfa3bac50fa6b",
+  "previousPublishedCommit": "a7b4e227d28f8468a49f90e01c4c744bbbd4311f",
+  "jarSha256": "92a227f5c118b1c2ddccc65979649da10c5694cae9ffd9cc21faeeae3048ad79",
+  "sourceFreezeSha256": "992cb032215b66b106d0bd8cc1f24a92893c1599130d5c722d6d5803dd472fb3",
+  "frozenSourceFiles": 42,
+  "compiledProjectClassesMatchJar": true,
+  "staticChecks": {
+    "ktlintCheck": "passed",
+    "detekt": "passed",
+    "shadowJar": "passed",
+    "processExitCode": 0
+  },
+  "focusedSuite": {
+    "tests": 833,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 2,
+    "nim_tests": 60,
+    "nim_failures": 0,
+    "failed_tests": []
+  },
+  "requiredRegressionSuites": {
+    "ui.ToolCallParserTest": 7,
+    "ui.NvidiaNimIssueToolFlowTest": 3,
+    "config.AgentSettingsMigrationTest": 16,
+    "ui.AutomaticToolApprovalChatTest": 3,
+    "ui.NvidiaNimToolContextTest": 1,
+    "ui.NvidiaNimAttachedContextTest": 1,
+    "ui.NvidiaNimNativeChatTest": 3,
+    "ui.ChatPanelToolGateTest": 20,
+    "backends.nvidia.NimFunctionCallingTest": 7,
+    "backends.nvidia.NimNativeProtocolTest": 4,
+    "backends.nvidia.NvidiaNimGlm53LiveEndpointTest": 2,
+    "context.ChatContextPlannerTest": 6,
+    "context.ContextIssueEvidenceTest": 3,
+    "audit.ExecutionJournalTest": 4,
+    "supervisor.NativeChatDispatchTest": 1
+  },
+  "initialFocusedRun": {
+    "report": "initial-focused-suite.json",
+    "resolution": "Preserved deterministic URL order before anonymization; updated explicit catalog and EDT ledgers. URL metadata now follows the selected privacy policy; the legacy HTTP fixture uses real CRLF delimiters. See second-focused-suite.json for the intermediate privacy regression run."
+  },
+  "fullSuiteRerun": false,
+  "fullSuitePassed": null,
+  "baselineFullSuiteReport": "../nim.7/nim6-baseline-full-suite.json",
+  "redactorBytecodeUnchangedFromNim7": true,
+  "credentialScan": {
+    "jar": "No token-pattern matches",
+    "source": "No non-fixture token-pattern matches",
+    "upstreamNumericTestFixtures": [
+      ".planning/phases/13-privacy-redaction-hardening/13-03-PLAN.md",
+      "src/test/kotlin/com/six2dez/burp/aiagent/redact/SecretShapesTest.kt"
+    ]
+  },
+  "runtime": {
+    "newJarLoadedIntoBurp": false,
+    "newLiveNvidiaRequests": true,
+    "bridge": "OkHttp test bridge; not Montoya/Burp runtime"
+  },
+  "liveGlm53": {
+    "passed": true,
+    "directReport": "glm53-direct.json",
+    "adapterReport": "glm53-adapter.json",
+    "catalogReport": "glm53-catalog.json",
+    "privateTargetTraffic": false
+  },
+  "changes": [
+    "Native functions, correlated results, sequential batches and explicit unsupported-tools fallback",
+    "Bounded per-chat context references, exact range/search retrieval and estimated input budget",
+    "Bounded execution journal with sanitized details and preview-before-save JSON export",
+    "Issue HTTP evidence, description redaction and URL query metadata privacy",
+    "Strict native argument types and complete JSON decoding with trailing-token rejection",
+    "Cumulative nim.8 standalone-tool parser, prompt migration and chain timer corrections"
+  ],
+  "limits": [
+    "Live checks use synthetic data; the new JAR has not been reloaded into Burp",
+    "Full suite was not rerun; nim.6 baseline contains two redaction time-budget failures",
+    "Provider latency, quota and capacity remain outside client control",
+    "Live SSE and asynchronous HTTP 202 polling remain unsupported",
+    "Input token counts are estimates; context references expire and capture-time truncation remains",
+    "Start a new chat after changing connection options or replacing the JAR"
+  ]
+}

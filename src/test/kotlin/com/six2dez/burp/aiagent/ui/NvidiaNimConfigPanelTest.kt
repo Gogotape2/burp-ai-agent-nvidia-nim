@@ -11,6 +11,7 @@ import java.awt.image.BufferedImage
 import java.io.File
 import javax.imageio.ImageIO
 import javax.swing.JButton
+import javax.swing.JSpinner
 import javax.swing.SwingUtilities
 
 class NvidiaNimConfigPanelTest {
@@ -40,9 +41,23 @@ class NvidiaNimConfigPanelTest {
     fun applyState_roundTripsGenerationAndRateLimits() {
         SwingUtilities.invokeAndWait {
             val panel = BackendConfigPanel()
-            val options = NvidiaNimOptions(maxTokens = 24000, reasoningEffort = "high", reasoningBudget = 9000, maxConcurrency = 2, rateLimit = 10, rateWindowSeconds = 120, maxRetries = 4, historyMaxChars = 800_000)
+            val options = NvidiaNimOptions(maxTokens = 24000, reasoningEffort = "high", reasoningBudget = 9000, maxConcurrency = 2, rateLimit = 10, rateWindowSeconds = 120, maxRetries = 4, historyMaxChars = 800_000, maxToolCalls = 48)
             panel.applyState(BackendConfigState(nvidiaNimOptions = options))
             assertEquals(options, panel.currentBackendSettings().nvidiaNimOptions)
+        }
+    }
+
+    @Test
+    fun typedToolCallLimitIsCommittedAndInvalidEditRetainsTheLastValidValue() {
+        SwingUtilities.invokeAndWait {
+            val panel = BackendConfigPanel()
+            panel.setBackend("nvidia-nim")
+            val spinner = components(panel).filterIsInstance<JSpinner>().single { it.toolTipText?.startsWith("1-128 tool attempts") == true }
+            val field = (spinner.editor as JSpinner.NumberEditor).textField
+            field.text = "64"
+            assertEquals(64, panel.currentBackendSettings().nvidiaNimOptions.maxToolCalls)
+            field.text = "999"
+            assertEquals(64, panel.currentBackendSettings().nvidiaNimOptions.maxToolCalls)
         }
     }
 

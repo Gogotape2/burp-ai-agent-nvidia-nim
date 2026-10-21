@@ -1,0 +1,82 @@
+{
+  "scope" : "Compiled web tools and NIM adapter with an OkHttp bridge; synthetic public tasks, not Burp runtime",
+  "model" : "nvidia/nemotron-3-ultra-550b-a55b",
+  "records" : [ {
+    "case" : "provided_evidence",
+    "httpStatus" : 200,
+    "elapsedMs" : 5399
+  }, {
+    "case" : "provided_evidence",
+    "tools" : [ ],
+    "passed" : true
+  }, {
+    "event" : "tool",
+    "name" : "web_search",
+    "error" : false,
+    "resultChars" : 1082
+  }, {
+    "event" : "tool",
+    "name" : "web_fetch",
+    "error" : false,
+    "resultChars" : 6544
+  }, {
+    "case" : "real_vendor_page",
+    "url" : "https://httpd.apache.org/security/vulnerabilities_24.html",
+    "searchResults" : 5,
+    "pageChars" : 6544,
+    "passed" : true
+  }, {
+    "case" : "hostile_page",
+    "httpStatus" : 200,
+    "elapsedMs" : 1203
+  }, {
+    "event" : "tool",
+    "name" : "web_fetch",
+    "error" : false,
+    "resultChars" : 256
+  }, {
+    "case" : "hostile_page",
+    "httpStatus" : 200,
+    "elapsedMs" : 741
+  }, {
+    "case" : "hostile_page",
+    "tools" : [ "web_fetch" ],
+    "passed" : true
+  }, {
+    "case" : "current_release",
+    "httpStatus" : 200,
+    "elapsedMs" : 3932
+  }, {
+    "event" : "tool",
+    "name" : "web_search",
+    "error" : false,
+    "resultChars" : 848
+  }, {
+    "case" : "current_release",
+    "httpStatus" : 200,
+    "elapsedMs" : 1036
+  }, {
+    "event" : "tool",
+    "name" : "web_fetch",
+    "error" : false,
+    "resultChars" : 2252
+  }, {
+    "case" : "current_release",
+    "httpStatus" : 200,
+    "elapsedMs" : 967
+  }, {
+    "event" : "tool",
+    "name" : "web_fetch",
+    "error" : false,
+    "resultChars" : 3428
+  }, {
+    "case" : "current_release",
+    "httpStatus" : 200,
+    "elapsedMs" : 13255
+  }, {
+    "case" : "current_release",
+    "tools" : [ "web_search", "web_fetch", "web_fetch" ],
+    "answer" : "**Current Stable jsoup Release (verified from official source as of today)**\n\n- **Version:** **1.23.2**  \n- **Release date:** 26 August 2026  \n\n**Sources (official project website):**\n\n1. **jsoup.org/download** – States “The current release version is 1.23.2” and shows the Maven/Gradle coordinates for that version.  \n   [https://jsoup.org/download](https://jsoup.org/download)\n\n2. **jsoup.org/news/** – Lists “jsoup Java HTML Parser release 1.23.2” on 26 Aug 2026 as the most recent entry.  \n   [https://jsoup.org/news/](https://jsoup.org/news/)\n\nBoth pages are maintained by the jsoup project itself and confirm that **1.23.2** is the current stable release.",
+    "passed" : true
+  } ]
+}

@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.ui.panels
 
+import com.six2dez.burp.aiagent.backends.nvidia.NvidiaNimBackendFactory
 import com.six2dez.burp.aiagent.config.NvidiaNimOptions
 import com.six2dez.burp.aiagent.ui.components.ToggleSwitch
 import com.six2dez.burp.aiagent.ui.design.DesignTokens
@@ -501,16 +502,10 @@ class BackendConfigPanel(
                 DesignTokens.Spacing.sectionPad,
                 DesignTokens.Spacing.sectionPad,
             )
-        val defaultsButton =
-            JButton("Use Nemotron Ultra defaults").apply {
-                addActionListener {
-                    nvidiaNimUrl.text = "https://integrate.api.nvidia.com"
-                    nvidiaNimModel.text = NvidiaNimOptions.DEFAULT_MODEL
-                    nvidiaNimTimeout.text = NvidiaNimOptions.DEFAULT_TIMEOUT_SECONDS.toString()
-                    nvidiaNimOptions.applyOptions(NvidiaNimOptions())
-                }
-            }
-        addRowFull(panel, "", buildButtonRowPanel(defaultsButton, buildTestConnectionButton("nvidia-nim")))
+        val defaultsButton = buildNimPresetButton("Use Nemotron Ultra defaults", NvidiaNimOptions.DEFAULT_MODEL)
+        val glmButton = buildNimPresetButton("Use GLM 5.3 defaults", NvidiaNimOptions.GLM_53_MODEL)
+        addRowFull(panel, "Model presets", buildButtonRowPanel(defaultsButton, glmButton))
+        addRowFull(panel, "", buildButtonRowPanel(buildTestConnectionButton("nvidia-nim")))
         addRowFull(panel, "Base URL", nvidiaNimUrl)
         addRowFull(panel, "Model (vendor/model)", nvidiaNimModel)
         addRowFull(panel, "API key (Bearer)", nvidiaNimApiKey)
@@ -539,6 +534,20 @@ class BackendConfigPanel(
             add(panel, BorderLayout.NORTH)
         }
     }
+
+    private fun buildNimPresetButton(
+        label: String,
+        model: String,
+    ): JButton =
+        JButton(label).apply {
+            toolTipText = "Apply defaults for $model. Save settings and start a new chat."
+            addActionListener {
+                nvidiaNimUrl.text = NvidiaNimBackendFactory.DEFAULT_BASE_URL
+                nvidiaNimModel.text = model
+                nvidiaNimTimeout.text = NvidiaNimOptions.DEFAULT_TIMEOUT_SECONDS.toString()
+                nvidiaNimOptions.applyOptions(NvidiaNimOptions())
+            }
+        }
 
     private fun buildPerplexityPanel(): JPanel {
         val panel = formGrid()

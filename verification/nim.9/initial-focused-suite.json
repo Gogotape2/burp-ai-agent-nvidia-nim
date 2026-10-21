@@ -1,0 +1,22 @@
+{
+  "tests": 825,
+  "failures": 3,
+  "errors": 0,
+  "skipped": 2,
+  "nim_tests": 57,
+  "nim_failures": 0,
+  "failed_tests": [
+    {
+      "name": "com.six2dez.burp.aiagent.context.ContextPreviewConsistencyTest: httpPreview_isDeterministicAndHostRedactedInStrictMode()",
+      "message": "org.opentest4j.AssertionFailedError: expected: <true> but was: <false>"
+    },
+    {
+      "name": "com.six2dez.burp.aiagent.mcp.McpToolCatalogTierParityTest: catalogHasFiftyNineTools()",
+      "message": "org.opentest4j.AssertionFailedError: expected: <59> but was: <60>"
+    },
+    {
+      "name": "com.six2dez.burp.aiagent.ui.ChatPanelEdtConfinementTest: everyMarshallingPointInChatPanelIsAccountedFor()",
+      "message": "org.opentest4j.AssertionFailedError: SC5: ChatPanel.kt's marshalling-point count moved. Every one is a place where work hops onto the EDT, so an unexplained addition is an unexplained new interleaving. The justification ledger is the KDoc on CHAT_PANEL_INVOKE_LATER_SITES — add your line there and move the constant, or remove the marshalling point. ==> expected: <11> but was: <13>"
+    }
+  ]
+}

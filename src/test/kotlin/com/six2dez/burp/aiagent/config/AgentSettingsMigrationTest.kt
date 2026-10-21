@@ -13,6 +13,67 @@ import org.mockito.kotlin.whenever
 
 class AgentSettingsMigrationTest {
     @Test
+    fun toolCallLimitDefaultsForLegacyOptionsAndPersistsValidatedValues() {
+        val prefs = InMemoryPrefs()
+        prefs.strings["nvidia.nim.options"] = """{"maxTokens":24000,"toolCallingMode":"text"}"""
+        val repo = AgentSettingsRepository(apiWith(prefs.mock))
+        val legacy = repo.load()
+        assertEquals(24, legacy.nvidiaNimOptions.maxToolCalls)
+        assertEquals(24000, legacy.nvidiaNimOptions.maxTokens)
+        assertEquals("text", legacy.nvidiaNimOptions.toolCallingMode)
+        listOf(1 to 1, 48 to 48, 0 to 1, Int.MAX_VALUE to 128).forEach { (input, expected) ->
+            repo.save(legacy.copy(nvidiaNimOptions = legacy.nvidiaNimOptions.copy(maxToolCalls = input)))
+            assertEquals(expected, AgentSettingsRepository(apiWith(prefs.mock)).load().nvidiaNimOptions.maxToolCalls)
+        }
+    }
+
+    @Test
+    fun nativeToolModeAndContextOptionsRoundTripWithoutResettingExistingNimSettings() {
+        val prefs = InMemoryPrefs()
+        val repo = AgentSettingsRepository(apiWith(prefs.mock))
+        val initial = repo.defaultSettings()
+        repo.save(initial.copy(nvidiaNimOptions = initial.nvidiaNimOptions.copy(toolCallingMode = "text", inputTokenBudget = 48000, compactContext = false, maxRetries = 4)))
+        val restored = AgentSettingsRepository(apiWith(prefs.mock)).load().nvidiaNimOptions
+        assertEquals("text", restored.toolCallingMode)
+        assertEquals(48000, restored.inputTokenBudget)
+        assertFalse(restored.compactContext)
+        assertEquals(4, restored.maxRetries)
+    }
+
+    @Test
+    fun unchangedLegacyIssuePromptMigratesToEvidenceDrivenAnalysis() {
+        val prefs = InMemoryPrefs()
+        prefs.strings["prompt.issue_analyze"] =
+            """
+### TASK
+Analyze the provided security finding in depth.
+Response Language: English.
+
+### REQUIREMENTS
+- Explain the **vulnerability mechanics** clearly.
+- Identify the **root cause** in the application logic.
+- Cite **concrete evidence** from the data provided.
+- Provide a list of **manual validation steps** for a researcher.
+            """.trim().replace("\n", "\r\n")
+        val repo = AgentSettingsRepository(apiWith(prefs.mock))
+        val prompt = repo.load().issueAnalyzePrompt
+        assertEquals(repo.defaultSettings().issueAnalyzePrompt, prompt)
+        assertTrue(prompt.contains("enabled MCP tools"))
+        assertTrue(prompt.contains("unverified impact"))
+    }
+
+    @Test
+    fun customIssuePromptIsPreservedVerbatim() {
+        val prefs = InMemoryPrefs()
+        val custom = "  My custom workflow\r\nUse the selected evidence.  "
+        prefs.strings["prompt.issue_analyze"] = custom
+        val repo = AgentSettingsRepository(apiWith(prefs.mock))
+        assertEquals(custom, repo.load().issueAnalyzePrompt)
+        repo.save(repo.defaultSettings().copy(issueAnalyzePrompt = custom))
+        assertEquals(custom, AgentSettingsRepository(apiWith(prefs.mock)).load().issueAnalyzePrompt)
+    }
+
+    @Test
     fun automaticToolApprovalIsOptInAndPersistsBothValues() {
         val prefs = InMemoryPrefs()
         val repo = AgentSettingsRepository(apiWith(prefs.mock))

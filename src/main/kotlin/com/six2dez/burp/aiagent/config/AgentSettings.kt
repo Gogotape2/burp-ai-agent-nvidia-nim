@@ -327,7 +327,7 @@ class AgentSettingsRepository(
                     .ifBlank { DEFAULT_COPILOT_CMD },
             requestPromptTemplate = prefs.getString(KEY_PROMPT_FIND_VULNS).orEmpty().ifBlank { defaultRequestPrompt() },
             issuePromptTemplate = prefs.getString(KEY_PROMPT_FULL_REPORT).orEmpty().ifBlank { defaultIssuePrompt() },
-            issueAnalyzePrompt = prefs.getString(KEY_PROMPT_ISSUE_ANALYZE).orEmpty().ifBlank { defaultIssueAnalyzePrompt() },
+            issueAnalyzePrompt = loadIssueAnalyzePrompt(prefs.getString(KEY_PROMPT_ISSUE_ANALYZE)),
             issuePocPrompt = prefs.getString(KEY_PROMPT_ISSUE_POC).orEmpty().ifBlank { defaultIssuePocPrompt() },
             issueImpactPrompt = prefs.getString(KEY_PROMPT_ISSUE_IMPACT).orEmpty().ifBlank { defaultIssueImpactPrompt() },
             requestSummaryPrompt = prefs.getString(KEY_PROMPT_QUICK_RECON).orEmpty().ifBlank { defaultRequestSummaryPrompt() },
@@ -1068,6 +1068,27 @@ Response Language: English.
 """.trim()
 
         private fun defaultIssueAnalyzePrompt(): String =
+            """
+### TASK
+Analyze the provided security finding using the available evidence and enabled MCP tools.
+Response Language: English.
+
+### REQUIREMENTS
+- Inspect relevant issue details and captured requests/responses with enabled tools before drawing conclusions.
+- Perform requested validation with enabled tools when available; honor scope, permissions and tool limits.
+- Explain vulnerability mechanics and distinguish observed facts, suspected root causes and unverified impact.
+- Cite concrete request/response evidence and actual tool results. Do not invent successful checks.
+- Give a verdict supported by evidence, remaining uncertainty and remediation.
+- Provide manual validation steps only when requested or when a required tool is unavailable; explain that limitation.
+- Do not create duplicate findings or treat an existing issue title or confidence score as proof.
+""".trim()
+
+        private fun loadIssueAnalyzePrompt(saved: String?): String {
+            val normalized = saved.orEmpty().replace("\r\n", "\n").trim()
+            return if (normalized.isBlank() || normalized == legacyIssueAnalyzePrompt()) defaultIssueAnalyzePrompt() else saved.orEmpty()
+        }
+
+        private fun legacyIssueAnalyzePrompt(): String =
             """
 ### TASK
 Analyze the provided security finding in depth.

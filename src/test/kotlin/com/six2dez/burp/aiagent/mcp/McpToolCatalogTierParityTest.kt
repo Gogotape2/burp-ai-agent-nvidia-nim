@@ -4,6 +4,7 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 /**
@@ -18,16 +19,24 @@ import org.junit.jupiter.api.Test
 class McpToolCatalogTierParityTest {
     /**
      * The catalog size is asserted, not derived, because the tier sets below are exhaustive
-     * partitions of it: 19 AUTO + 24 CONFIRM + 16 CONFIRM_EACH = 59.
+     * partitions of it: 19 AUTO + 27 CONFIRM + 16 CONFIRM_EACH = 62.
      *
-     * Note for whoever sees this fail: `grep -c 'McpToolDescriptor('` reports 60, not 59, because it
-     * also counts the `data class` declaration line. 59 is the number of construction sites. If this
+     * Note for whoever sees this fail: `grep -c 'McpToolDescriptor('` reports 63, not 62, because it
+     * also counts the `data class` declaration line. 62 is the number of construction sites. If this
      * test fails because a tool was added, that is correct and expected — the author must also place
      * the new tool in exactly one of the tier sets below.
      */
     @Test
-    fun catalogHasFiftyNineTools() {
-        assertEquals(59, McpToolCatalog.all().size)
+    fun catalogHasSixtyTwoTools() {
+        assertEquals(62, McpToolCatalog.all().size)
+    }
+
+    @Test
+    fun capturedContextRequiresConfirmationBecauseItReadsAdditionalEvidence() {
+        val descriptor = McpToolCatalog.all().single { it.id == "context_read" }
+        assertEquals(SecTier.CONFIRM, descriptor.secTier)
+        assertFalse(descriptor.unsafeOnly)
+        assertTrue(descriptor.nativeTool)
     }
 
     @Test

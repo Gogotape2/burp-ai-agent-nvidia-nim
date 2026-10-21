@@ -1,0 +1,9 @@
+{
+  "tests": 130,
+  "failures": 0,
+  "errors": 0,
+  "skipped": 3,
+  "nim_tests": 74,
+  "nim_failures": 0,
+  "failed_tests": []
+}

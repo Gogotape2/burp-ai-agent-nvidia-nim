@@ -3,6 +3,14 @@ package com.six2dez.burp.aiagent.mcp.tools
 import burp.api.montoya.http.HttpService
 import kotlinx.serialization.Serializable
 
+@Serializable
+data class ReadChatContext(
+    val id: String,
+    val offset: Int = 0,
+    val count: Int = 8000,
+    val query: String? = null,
+)
+
 // ──────────────────────────────────────────────────────────────────────────────
 // Shared interfaces
 // ──────────────────────────────────────────────────────────────────────────────

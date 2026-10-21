@@ -1951,12 +1951,15 @@ private const val REL_01_DATA_RACE_MESSAGE = "off-EDT access is a data race (REL
  * own. So there is no per-addition line to write here, and if a future change adds one, this KDoc is
  * where its reason goes:
  *
- * - `12`: _reason for the twelfth marshalling point_
+ * - `12` (nim.9): transport events arrive on the backend worker; journal state and the waiting
+ *   description move onto the EDT, guarded by session identity, root trace and current step.
+ * - `13` (nim.9): the completion callback records its final model result in the same EDT-confined
+ *   journal flow before the existing UI completion runnables. Token accounting stays off this seam.
  *
  * A bare number with no reason is not evidence. A number that fails loudly when someone adds an
  * unexplained marshalling point is.
  */
-private const val CHAT_PANEL_INVOKE_LATER_SITES = 11
+private const val CHAT_PANEL_INVOKE_LATER_SITES = 13
 
 /** The five `@GuardedBy("EDT")` session maps REL-01 confines to the EDT. */
 private val GUARDED_SESSION_MAPS =

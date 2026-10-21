@@ -2,9 +2,90 @@
 
 Unofficial NVIDIA NIM compatibility fork of [Custom AI Agent by six2dez](https://github.com/six2dez/burp-ai-agent).
 Based on upstream **v1.0.0**, commit `e7d3fc47d224d661e990c28da82dfa3bac50fa6b`.
-Fork release: **1.0.0-nim.7**. The extension still appears in Burp as **Custom AI Agent**.
+Fork release: **1.0.0-nim.15**. The extension appears in Burp as **Custom AI Agent**.
 
-**[Download the release](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.7)** | [Technical notes](docs/nvidia-nim-patch.md) | [Validation](verification/nim.7/verification.json) | [Upstream README](README.upstream.md)
+**[Download nim.15](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.15)** | [Technical notes](docs/nvidia-nim-patch.md) | [Web research](docs/web-research.md) | [Validation](verification/nim.15/verification.json) | [Upstream README](README.upstream.md)
+
+## Latest release: 1.0.0-nim.15
+
+NVIDIA NIM settings now include **Tool calls per analysis**, with a default of 24 and a range of 1-128. Save applies to the next user request, including requests in an existing chat. Each chain retains its starting limit, counts individual batch members and denied attempts, and requests a final evidence-based answer when exhausted. Existing saved NIM options without this field receive 24; model presets restore the default. Other backends retain their existing limit. Cancellation, request timeouts, scope and approval checks are unchanged.
+
+This release cumulatively includes the native function calling, context management, free web research, execution journal and cancellation fixes developed in nim.8-nim.14. The version-specific notes below retain the original scope of each development snapshot; those snapshots were not published as separate releases.
+
+Artifact: `build/libs/Custom-AI-Agent-full-1.0.0-nim.15.jar`. Exact nim.15 validation is recorded in [verification](verification/nim.15/verification.json).
+
+## Local update: 1.0.0-nim.14 (unpublished)
+
+After eight automatic tool calls, the chat now explicitly requests a final verdict from the collected evidence and records `tool_limit` in the execution journal. If the provider ignores `tool_choice=none`, one bounded final-answer repair removes function definitions and renders prior tool exchanges as evidence text. No additional tool is executed. A provider that continues returning calls stops explicitly after that one repair; both inference usages are counted when available. The original deadline, cancellation, approval and tool-count limits remain in force.
+
+Development artifact: `build/libs/Custom-AI-Agent-full-1.0.0-nim.14.jar`. Verification is recorded in `verification/nim.14/`; included cumulatively in nim.15.
+
+## Local update: 1.0.0-nim.13 (unpublished)
+
+Cancel now closes the abandoned NIM conversation turn before the next user request. This prevents an unfinished tool-result instruction from merging into the new question. Both initial-generation and tool-followup cancellation have deterministic UI-to-wire regression tests. The backend-list tool distinguishes the selected chat backend from the separate background worker, whose Idle state does not imply NIM failure.
+
+Web research is under **Settings > Burp Integration > Web research**. The nim.12 transport and protocol remain unchanged. The AI health badge caches an explicit Test connection result for five minutes; background polling does not generate requests.
+
+Development artifact: `build/libs/Custom-AI-Agent-full-1.0.0-nim.13.jar`. Verification is recorded in `verification/nim.13/`; included cumulatively in nim.15.
+
+## Local update: 1.0.0-nim.12 (unpublished)
+
+Free web research is built into the full JAR: no search API key, FCC, Python or browser installation is needed. In **Settings > Burp Integration > Web research**, enable **Free web search and page reading**, save, then start a new chat. The switch controls the existing `web_search` and `web_fetch` tool toggles. Existing automatic-approval settings apply. New tools are off by default so an upgrade does not silently enable new outbound requests.
+
+`web_search` reads DuckDuckGo Lite results. `web_fetch` reads a public text/HTML source with timestamps, bounded fragments, literal `query` search, and `nextOffset` pagination. Model instructions distinguish current external facts from target evidence: vendor advisories should be read before being cited, routine summaries should not browse, and a matching CVE does not confirm exploitability on the target. Public web text is explicitly untrusted source data.
+
+Requests use a dedicated anonymous HTTP client with a 20-second total deadline, bounded DNS, manual redirect validation, a 1 MiB response limit and small TTL/LRU caches. Cancellation retires only the originating chat's request. Private/reserved addresses and unsupported ports, credentials, downloads and JavaScript execution are rejected. The client uses a direct public Internet connection, separate from Burp's target request tools; corporate environments requiring an explicit proxy are not supported by this initial web transport. Search challenges and unexpected layouts are reported as errors, without retry loops or invented results. Protected search arguments are rejected before outbound traffic.
+
+Local artifact: `build/libs/Custom-AI-Agent-full-1.0.0-nim.12.jar`. See [web research notes](docs/web-research.md) and `verification/nim.12/` for validation scope. This version has not been published.
+
+## Local update: 1.0.0-nim.11 (unpublished)
+
+NIM now accepts a complete tool-only text turn containing adjacent JSON objects or a JSON array, including a sole JSON/tool fence. Every member is decoded and checked against the enabled function catalog before the first is exposed. Batches are bounded to 16 and run sequentially through the existing approval, scope and iteration gates. Results retain call IDs in both native and text protocols. JSON examples inside prose and mixed report/call payloads remain data.
+
+An explicit unsupported-native-tools response during a followup can switch the conversation to text without losing or duplicating previous results. No API inference is needed between queued batch members. Disabling tools supplies skipped results for remaining members before the final completion.
+
+HTTP 451 now has a specific refusal/access-policy diagnostic rather than a server-error retry hint. The existing no-retry behavior for 451 remains; metadata includes model, actual protocol and statuses from earlier attempts. A 451 after two attempts can follow an earlier transient failure. Error-body text is never copied into diagnostics. The patch does not remove a provider restriction; its exact cause requires the provider response. See [RFC 7725](https://www.rfc-editor.org/rfc/rfc7725.html) for the standard status meaning.
+
+Local artifact: `build/libs/Custom-AI-Agent-full-1.0.0-nim.11.jar`. Validation and the separate benign API control result are recorded in `verification/nim.11/`. That control contains no target traffic and is not a live Burp test. This version has not been published.
+
+## Local update: 1.0.0-nim.10 (unpublished)
+
+**Settings > NVIDIA NIM > Use GLM 5.3 defaults** fills the model `z-ai/glm-5.3`, NVIDIA endpoint, a 900-second timeout and the standard generation/limit profile. Reasoning and tool calling are Auto, the completion limit is 16,384, and context compaction is enabled. API credentials and extra headers are retained. Click Save and start a new chat to apply the new connection settings.
+
+This is a preset UI update. The nim.9 runtime and GLM verification below remain the baseline; no new live API requests are needed for this button. Local artifact: `build/libs/Custom-AI-Agent-full-1.0.0-nim.10.jar`.
+
+## Local update: 1.0.0-nim.9 (unpublished)
+
+NIM chat now supports native OpenAI-compatible function calls. **Tool calling = auto** uses native functions and switches to the text protocol only if the endpoint explicitly rejects them. **native** reports that rejection; **text** forces the legacy protocol. Returned batches pass through the existing tool gates in order, and results retain their provider call IDs.
+
+Large approved context and tool results can be stored in a bounded per-chat memory and replaced with concise references. The enabled `context_read` tool retrieves exact ranges or a literal search match. Its snapshot contains only what Burp captured under the configured privacy and capture limits. References expire when a chat is cleared or entries are evicted; they do not restore previously truncated bodies. Disable compaction to keep inline context.
+
+The input footer estimates prompt size, separate from the answer/thinking reserve. **Input token budget** defaults to 64,000 estimated tokens and trims complete older turns; it is a character-based estimate, not the provider tokenizer or a new model context limit. Oversized current requests fail before sending.
+
+**Execution log** in the chat footer shows chain steps, HTTP status, retries, native calls and tool outcomes. Selecting an event shows sanitized arguments/results. Export first opens a redacted preview and writes a new JSON file only after Save. The journal is bounded and held in memory until explicitly exported.
+
+After loading the local JAR, start a new chat. Saved model/connection options apply to new connections; an existing chat can retain its previous connection settings. The automatic-approval checkbox remains independent of native function calling.
+
+Local artifact: `build/libs/Custom-AI-Agent-full-1.0.0-nim.9.jar`. The focused Windows/JDK 21 task ran **833 tests: 831 passed, 2 skipped, zero failures/errors**; ktlintCheck, detekt and shadowJar passed. It includes live GLM checks through the compiled adapter, while its HTTP bridge remains outside Burp's runtime.
+
+GLM 5.3 passed short-response, native-function/result and 43,145-character synthetic-context requests. The real-catalog check accepted 35 enabled schemas with the stock 16,384-token completion limit. Provider latency varied; these checks do not guarantee future availability. See [local verification](verification/nim.9/verification.json), [direct GLM checks](verification/nim.9/glm53-direct.json), [adapter roundtrip](verification/nim.9/glm53-adapter.json) and [catalog check](verification/nim.9/glm53-catalog.json). No private target traffic was submitted. This version has not been published.
+
+## Local update: 1.0.0-nim.8 (unpublished)
+
+The local build fixes report JSON being mistaken for a tool invocation, which could produce `Unknown tool: <issue title>` followed by another model request.
+Only a standalone tool payload is executable; code examples embedded in an answer remain data.
+An explicit unknown tool receives one final completion with tools disabled, rather than repeated execution attempts.
+
+NIM receives the enabled tool catalog and execution instructions in the system role on every step.
+The stock issue-analysis prompt now asks for evidence gathering with enabled tools; unchanged legacy defaults migrate while custom prompts are preserved.
+The pending label shows the step number and total elapsed time across the chain.
+These instructions improve the tool workflow but do not guarantee a model will follow every instruction.
+Start a new chat after updating to avoid older catalogs and generated instructions in retained history.
+This development snapshot is included cumulatively in nim.15.
+
+Local validation: **796 tests, 794 passed, 2 skipped, 0 failures/errors**; `ktlintCheck`, `detekt` and `shadowJar` passed.
+The initial run exposed an existing test waiting on another chat's global completion event; that wait now matches its own request trace without weakening assertions.
+See [nim.8 validation](verification/nim.8/verification.json). No live Burp reload or NVIDIA inference was performed for this build.
 
 ## What this fork changes
 
@@ -21,7 +102,7 @@ Fork release: **1.0.0-nim.7**. The extension still appears in Burp as **Custom A
 
 Requires Java 21 or newer. Burp Community supports the chat workflow; automatic Burp passive-check integration requires Burp Professional.
 
-1. Download `Custom-AI-Agent-full-1.0.0-nim.7.jar` from this fork's [release](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.7).
+1. Download `Custom-AI-Agent-full-1.0.0-nim.15.jar` from this fork's [release](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.15).
 2. Disable the previous Custom AI Agent extension under **Extensions > Installed**.
 3. Add the downloaded file as a **Java** extension. Load one version at a time.
 4. Open **Custom AI Agent > Settings** and select **NVIDIA NIM**.
@@ -44,6 +125,10 @@ Existing settings share the upstream configuration location. Starting a new chat
 | Requests per window | 30 |
 | Window | 60 seconds |
 | Additional retries | 2 |
+| Tool calling | auto |
+| Tool calls per analysis | 24; configurable from 1 to 128 |
+| Input token budget | 64,000 estimated tokens |
+| Compact large context | Enabled, when context_read is available |
 | Retained history | 1,000,000 characters, up to 200 previous messages |
 
 These are client settings, not guarantees of model availability, provider quota, or the model's context window.
@@ -66,17 +151,16 @@ Existing proxy history is processed through a manual scan action or `ai_passive_
 
 ## Validation and known limits
 
-The nim.7 regression task ran **789 tests: 787 passed, 2 skipped, 0 failures/errors** on Windows/JDK 21.
+The nim.15 selected regression task ran **589 tests: 580 passed, 9 skipped, 0 failures/errors** on Windows/JDK 21. One additional legacy-options persistence and validation test passed separately.
 `ktlintCheck`, `detekt` and `shadowJar` passed.
 The tests include the real Swing ChatPanel tool-call/result continuation with a synthetic backend, timeout cleanup, scope filtering and scanner-session isolation.
-See [the validation record](verification/nim.7/verification.json) and [technical notes](docs/nvidia-nim-patch.md).
+The exact nim.15 JAR was loaded into Burp Pro. A saved limit of 3 ran three of four synthetic `url_encode` calls and reported the fourth as skipped. After saving 24, the next request in the same chat ran all nine calls. Both chains produced final answers without model errors; no target HTTP requests were sent. See [the validation record](verification/nim.15/verification.json), [sanitized journal](verification/nim.15/burp-ui-execution.json) and [technical notes](docs/nvidia-nim-patch.md).
 
-- The complete suite was not rerun for nim.7. A nim.6 full-suite run had two existing redaction time-budget test failures. The redactor drops the remaining data when its budget expires; its bytecode is unchanged in nim.7. The baseline report is explicitly labelled [nim6-baseline-full-suite.json](verification/nim.7/nim6-baseline-full-suite.json).
-- The nim.7 JAR was not loaded into a live Burp process during its validation, and no live NVIDIA inference was made for this version. Earlier validation does not substitute for testing this exact build in your environment.
+- The complete suite and separate live endpoint suite were not rerun for nim.15. Earlier version-labelled reports remain under `verification/`, including the [nim.6 baseline](verification/nim.7/nim6-baseline-full-suite.json) with two redaction time-budget failures. Earlier results do not substitute for testing every workflow on this exact build.
 - HTTP 429 quota/capacity errors and HTTP 500 provider errors remain possible. Client retries and timeouts cannot increase provider capacity.
 - Responses are displayed after generation; this buffered transport does not provide live token streaming. Async HTTP 202 polling is not implemented.
 - Stop discards late results locally. Montoya does not expose an HTTP cancellation handle in the transport path used here, so a submitted inference can continue at the provider.
-- `ai_analyze` performs model inference. It is not web search or CVE retrieval. Web search is not included in this fork release; the upstream external MCP client manager is not wired into the production chat runtime.
+- `ai_analyze` performs model inference. Current-source retrieval uses the separately enabled `web_search` and `web_fetch` tools. Free search relies on public HTML and may encounter challenges or markup changes; the web client does not provide a configured corporate proxy, login, JavaScript rendering or PDF downloads. See [web research](docs/web-research.md). The upstream external MCP client manager is not wired into the production chat runtime.
 
 ## Build
 
@@ -86,7 +170,7 @@ Use JDK 21 and the included Gradle wrapper:
 .\gradlew.bat shadowJar
 ```
 
-On macOS/Linux use `./gradlew shadowJar`. The output is `build/libs/Custom-AI-Agent-full-1.0.0-nim.7.jar`.
+On macOS/Linux use `./gradlew shadowJar`. The output is `build/libs/Custom-AI-Agent-full-1.0.0-nim.15.jar`.
 The complete test task remains available as `./gradlew test`; known baseline failures are documented above and are not silently excluded from that task.
 
 ## Privacy and security notes

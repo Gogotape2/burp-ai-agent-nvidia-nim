@@ -1,0 +1,14 @@
+{
+  "tests": 796,
+  "failures": 1,
+  "errors": 0,
+  "skipped": 2,
+  "nim_tests": 44,
+  "nim_failures": 0,
+  "failed_tests": [
+    {
+      "name": "com.six2dez.burp.aiagent.ui.ChatPanelToolGateTest: anApprovedToolThatThrowsStillDischargesTheParkedContinuation()",
+      "message": "Wanted but not invoked:\nproxy.history();\n-> at com.six2dez.burp.aiagent.ui.ChatPanelToolGateTest.anApprovedToolThatThrowsStillDischargesTheParkedContinuation(ChatPanelToolGateTest.kt:188)\nActually, there were zero interactions with this mock.\n"
+    }
+  ]
+}

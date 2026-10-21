@@ -61,7 +61,7 @@ class ContextCollector(
                     )
                 }.let { list ->
                     if (options.deterministic) list.sortedBy { stableKey(it) } else list
-                }
+                }.map { it.copy(url = previewUrl(it.url, policy, options.hostSalt)) }
 
         // Global context cap: drop trailing items if total serialized size exceeds limit
         val cappedItems = capItemsBySize(items)
@@ -91,8 +91,8 @@ class ContextCollector(
                         name = i.name(),
                         severity = i.severity()?.name,
                         confidence = i.confidence()?.name,
-                        detail = i.detail(),
-                        remediation = i.remediation(),
+                        detail = i.detail()?.let { Redaction.apply(it, policy, stableHostSalt = options.hostSalt) },
+                        remediation = i.remediation()?.let { Redaction.apply(it, policy, stableHostSalt = options.hostSalt) },
                         affectedHost =
                             host?.let {
                                 if (policy.anonymizeHosts) Redaction.anonymizeHost(it, options.hostSalt) else it
@@ -102,10 +102,27 @@ class ContextCollector(
                     if (options.deterministic) list.sortedBy { stableKey(it) } else list
                 }
 
+        val evidence =
+            issues
+                .asSequence()
+                .flatMap { it.requestResponses().orEmpty().asSequence() }
+                .take(MAX_ISSUE_EVIDENCE_ITEMS)
+                .distinctBy { it.request().toString() }
+                .map { rr ->
+                    val req = truncateHttpMessageBody(rr.request().toString(), options.maxRequestBodyChars ?: DEFAULT_REQUEST_BODY_MAX_CHARS)
+                    val resp = rr.response()?.toString()?.let { truncateHttpMessageBody(it, options.maxResponseBodyChars ?: DEFAULT_RESPONSE_BODY_MAX_CHARS) }
+                    HttpItem(
+                        tool = "issue_evidence",
+                        url = previewUrl(rr.request().url(), policy, options.hostSalt),
+                        method = rr.request().method(),
+                        request = Redaction.apply(req, policy, stableHostSalt = options.hostSalt),
+                        response = resp?.let { Redaction.apply(it, policy, stableHostSalt = options.hostSalt) },
+                    )
+                }.toList()
         val env =
             BurpContextEnvelope(
                 capturedAtEpochMs = System.currentTimeMillis(),
-                items = items,
+                items = capItemsBySize(items + if (options.deterministic) evidence.sortedBy { stableKey(it) } else evidence),
             )
 
         val json = toJson(env, options.compactJson)
@@ -131,7 +148,7 @@ class ContextCollector(
     ): String {
         val sampleLines =
             items.take(PREVIEW_MAX_ITEMS).map { item ->
-                val safeUrl = previewUrl(item.url, policy, options.hostSalt)
+                val safeUrl = item.url ?: "-"
                 "${item.method ?: "?"} $safeUrl"
             }
         return buildPreview(
@@ -187,10 +204,11 @@ ${sampleLines.ifEmpty { listOf("- (none)") }.joinToString(separator = "\n") { " 
         hostSalt: String,
     ): String {
         if (url.isNullOrBlank()) return "-"
-        if (!policy.anonymizeHosts) return url
+        val safeUrl = Redaction.apply(url, policy, stableHostSalt = hostSalt)
+        if (!policy.anonymizeHosts) return safeUrl
         return try {
-            val uri = URI(url)
-            val host = uri.host ?: return url
+            val uri = URI(safeUrl)
+            val host = uri.host ?: return safeUrl
             val safeHost = Redaction.anonymizeHost(host, hostSalt)
             val scheme = uri.scheme ?: "https"
             val portPart = if (uri.port > 0) ":${uri.port}" else ""
@@ -198,7 +216,7 @@ ${sampleLines.ifEmpty { listOf("- (none)") }.joinToString(separator = "\n") { " 
             val query = uri.rawQuery?.let { "?$it" }.orEmpty()
             "$scheme://$safeHost$portPart$path$query"
         } catch (_: Exception) {
-            url
+            safeUrl
         }
     }
 
@@ -263,6 +281,7 @@ ${sampleLines.ifEmpty { listOf("- (none)") }.joinToString(separator = "\n") { " 
     }
 
     private companion object {
+        private const val MAX_ISSUE_EVIDENCE_ITEMS = 20
         private const val DEFAULT_REQUEST_BODY_MAX_CHARS = 4_000
         private const val DEFAULT_RESPONSE_BODY_MAX_CHARS = 8_000
         private const val PREVIEW_MAX_ITEMS = 3

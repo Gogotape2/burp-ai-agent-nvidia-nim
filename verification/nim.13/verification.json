@@ -1,0 +1,210 @@
+{
+  "version": "1.0.0-nim.13",
+  "published": false,
+  "baseCommit": "e7d3fc47d224d661e990c28da82dfa3bac50fa6b",
+  "jarSha256": "440bad0ae1d9f39f9dac2abd17eac655987ae6590a32e44b83c7c2395084a7ed",
+  "scope": "NIM cancellation-history boundary, accurate selected/worker diagnostics, and free web research regression validation",
+  "focusedSuite": {
+    "tests": 581,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 8,
+    "failedTests": [],
+    "webResearch": {
+      "tests": 28,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 4
+    }
+  },
+  "liveSuite": {
+    "tests": 4,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "fullSuite": null,
+  "staticChecks": {
+    "ktlintCheck": "passed",
+    "detekt": "passed",
+    "shadowJar": "passed"
+  },
+  "unchangedRuntimeSourcesFromNim11": [
+    "backends/nvidia/NimProtocol",
+    "backends/nvidia/NimModelProfile",
+    "backends/nvidia/NimTurnEncoder",
+    "backends/nvidia/NvidiaNimConnection",
+    "redact/Redaction"
+  ],
+  "runtime": {
+    "newJarLoadedIntoBurp": true,
+    "compiledLiveChecks": true,
+    "privateTargetTraffic": false
+  },
+  "burpUiChecks": {
+    "version": "1.0.0-nim.13",
+    "date": "2026-10-21",
+    "timezone": "Europe/Moscow",
+    "status": "completed",
+    "surface": "Running Burp Suite Professional v2026.9.1 on Java 21",
+    "model": "nvidia/nemotron-3-ultra-550b-a55b",
+    "protocol": "Auto: native functions and complete text-call recovery",
+    "generation": {
+      "reasoning": "auto",
+      "maxTokens": 16384,
+      "timeoutSeconds": 900,
+      "inputBudget": 64000
+    },
+    "newJarLoadedIntoBurp": true,
+    "loadedExtensionCount": 1,
+    "loadResult": "The extension loaded successfully; Details points to the Desktop nim.13 JAR",
+    "privateTargetTrafficUsed": false,
+    "webToolsEnabled": true,
+    "existingAutoApproval": true,
+    "testConnection": "Connection OK; AI: OK observed after the explicit test",
+    "extensionErrors": [
+      "AI backend error (nvidia-nim): NVIDIA NIM request cancelled — expected from the Cancel test"
+    ],
+    "cases": [
+      {
+        "name": "backend_diagnostics_and_low_token_error_then_cancel",
+        "traceId": "chat-turn-e57f746e-65aa-4043-9faf-0f7abce4e7f7",
+        "startedAtUtc": "2026-10-21T12:08:26.236000+00:00",
+        "durationMs": 23260,
+        "httpResponses": 2,
+        "tools": [
+          "ai_backends_list",
+          "ai_analyze"
+        ],
+        "result": "passed",
+        "notes": [
+          "ai_backends_list correctly distinguishes the selected on-demand backend from the idle worker.",
+          "An intentionally small 128-token nested analysis budget returned the explicit max_tokens error; this was not an initialization failure.",
+          "Cancel was pressed while the NIM follow-up after that tool result was in flight."
+        ]
+      },
+      {
+        "name": "next_request_after_cancel",
+        "traceId": "chat-turn-e52dfea7-01be-4c28-a183-a520a545a823",
+        "startedAtUtc": "2026-10-21T12:09:11.177000+00:00",
+        "durationMs": 864,
+        "httpResponses": 1,
+        "tools": [],
+        "result": "passed",
+        "notes": [
+          "Exact response: OK_NIM13_RECOVERY. The abandoned task was not resumed."
+        ]
+      },
+      {
+        "name": "synthetic_ai_analyze_and_public_burp_get",
+        "traceId": "chat-turn-250f524c-3c83-4709-92b0-0e130ba19728",
+        "startedAtUtc": "2026-10-21T12:09:53.003000+00:00",
+        "durationMs": 8264,
+        "httpResponses": 2,
+        "tools": [
+          "ai_analyze",
+          "http1_request"
+        ],
+        "result": "passed",
+        "notes": [
+          "ai_analyze succeeded with the observed 2048-token budget.",
+          "Exactly one anonymous GET to https://httpbin.org/get?nim13=smoke was sent through Burp's http1_request tool; received HTTP/2 200.",
+          "Both tool calls came in one native function batch; the queued second call did not need a new inference."
+        ]
+      },
+      {
+        "name": "autonomous_current_release_research",
+        "traceId": "chat-turn-f4292408-afde-407a-84a4-f649f25ef2cf",
+        "startedAtUtc": "2026-10-21T12:10:53.812000+00:00",
+        "durationMs": 12478,
+        "httpResponses": 3,
+        "tools": [
+          "web_search",
+          "web_fetch"
+        ],
+        "result": "passed",
+        "notes": [
+          "The ordinary current-version question did not specify tool names.",
+          "A complete textual web_search call was recovered and executed once, followed by a native web_fetch call.",
+          "The answer cited the fetched official release page and its release date."
+        ]
+      },
+      {
+        "name": "provided_evidence_without_browsing_instruction",
+        "traceId": "chat-turn-f2bb0b06-1a6c-47cb-a2cc-0a80788e9092",
+        "startedAtUtc": "2026-10-21T12:11:36.036000+00:00",
+        "durationMs": 1394,
+        "httpResponses": 1,
+        "tools": [],
+        "result": "passed",
+        "notes": [
+          "The question supplied a synthetic HTTP response and did not prohibit web tools; no tools were used."
+        ]
+      }
+    ],
+    "journalEvents": 97,
+    "journalDroppedEntries": 0,
+    "cancellationRecovery": {
+      "result": "passed",
+      "cancelErrorLatencyMs": 33,
+      "lateAbandonedCompletionsObserved": 0,
+      "observationAfterCancelMs": 167967,
+      "scope": "NIM continuation after a tool result; an active web HTTP read was not cancelled in this GUI run"
+    },
+    "regressionProof": "Two deterministic UI-to-wire cases failed on nim.12 and passed with the local cancellation history boundary",
+    "selectedRegression": {
+      "tests": 581,
+      "passed": 573,
+      "skipped": 8,
+      "failures": 0,
+      "errors": 0
+    },
+    "liveCompiledWorkflowChecks": {
+      "tests": 4,
+      "passed": 4,
+      "failures": 0
+    },
+    "staticChecks": [
+      "ktlintCheck passed",
+      "detekt passed",
+      "shadowJar passed"
+    ],
+    "settingsLocation": "Settings > Burp Integration > Web research",
+    "remainingUiChecks": [],
+    "limitations": [
+      "Only the configured Nemotron Ultra model was exercised in these Burp UI cases; this is not a GLM latency result.",
+      "The full unrestricted automated suite was not run for nim.13; the selected suite and four live checks are reported separately.",
+      "The AI health badge uses the cached explicit connection-test result; it does not continuously probe the provider.",
+      "No private target scans, active vulnerability verification, authenticated pages, or corpus-wide prompt-injection guarantee is claimed.",
+      "Public search availability and model tool selection can vary."
+    ],
+    "evidence": {
+      "before": "before-fix.json",
+      "after": "execution-after-recovery-fix.json",
+      "afterSha256": "dcb29429e72bbf22c227c5bc4995cacb1f4bd6ae0551e291edfd242eeccc5616",
+      "sanitization": "The extension redacted the export; the local evidence copy additionally masks echoed outbound IP and request trace ID."
+    },
+    "published": false
+  },
+  "defaults": {
+    "webToolsEnabled": false,
+    "provider": "DuckDuckGo Lite",
+    "paidSearchApi": false,
+    "externalRuntimeRequired": false
+  },
+  "standaloneJarSmoke": {
+    "passed": true,
+    "scope": "Exact shaded JAR in a fresh JVM, synthetic transport, no Burp runtime or network",
+    "search": true,
+    "htmlFetch": true,
+    "shadedParser": true
+  },
+  "limits": [
+    "Public search markup and availability may change; challenges fail explicitly",
+    "The current web transport uses direct connections, without an explicit corporate proxy",
+    "No JavaScript rendering, login, binary/PDF downloads or private hosts",
+    "Model selection of tools remains probabilistic; live cases do not guarantee every task or adversarial page",
+    "Compiled adapter checks and the separately recorded Burp UI checks cover different scenarios"
+  ],
+  "credentialScan": "No JAR tokens; source allowlist limited to two exact pre-existing numeric upstream fixtures"
+}

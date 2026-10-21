@@ -46,8 +46,11 @@ data class McpToolContext(
     // are configured. Defaults to null so all existing construction sites compile unchanged.
     val externalClientManager: ExternalMcpClientManager? = null,
     val aiBackendId: String? = null,
+    val chatContextStore: com.six2dez.burp.aiagent.context.ChatContextStore? = null,
+    val webResearchClient: com.six2dez.burp.aiagent.web.WebResearchClient? = null,
+    val webCancelled: () -> Boolean = { false },
 ) {
-    fun isToolEnabled(name: String): Boolean = toolToggles[name] ?: false
+    fun isToolEnabled(name: String): Boolean = (name != "context_read" || chatContextStore != null) && (toolToggles[name] ?: false)
 
     fun isUnsafeTool(name: String): Boolean = unsafeTools.contains(name)
 

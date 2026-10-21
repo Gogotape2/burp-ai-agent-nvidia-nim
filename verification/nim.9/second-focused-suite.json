@@ -1,0 +1,22 @@
+{
+  "tests": 831,
+  "failures": 3,
+  "errors": 0,
+  "skipped": 2,
+  "nim_tests": 58,
+  "nim_failures": 0,
+  "failed_tests": [
+    {
+      "name": "com.six2dez.burp.aiagent.context.ContextIssueEvidenceTest: issueSnapshotIncludesBoundedHttpEvidenceWithTheSelectedPrivacyPolicy()",
+      "message": "org.opentest4j.AssertionFailedError: Captured issue evidence must not expose query-fixture-secret ==> expected: <false> but was: <true>"
+    },
+    {
+      "name": "com.six2dez.burp.aiagent.context.ContextIssueEvidenceTest: balancedHttpCaptureRedactsUrlQuerySecretsWhileKeepingTheHost()",
+      "message": "org.opentest4j.AssertionFailedError: expected: <false> but was: <true>"
+    },
+    {
+      "name": "com.six2dez.burp.aiagent.context.ContextPreviewConsistencyTest: httpPreview_isDeterministicAndHostRedactedInStrictMode()",
+      "message": "org.opentest4j.AssertionFailedError: expected: <false> but was: <true>"
+    }
+  ]
+}

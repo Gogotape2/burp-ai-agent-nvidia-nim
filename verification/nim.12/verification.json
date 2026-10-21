@@ -1,0 +1,74 @@
+{
+  "version": "1.0.0-nim.12",
+  "published": false,
+  "baseCommit": "e7d3fc47d224d661e990c28da82dfa3bac50fa6b",
+  "jarSha256": "ac9f6f7888ed0fec9bcc49d8afd428cc667e6f20b4a04ea090717e478ae3e596",
+  "scope": "Free web research with opt-in tools, anonymous bounded HTTP, redaction, cancellation and model-driven source use",
+  "focusedSuite": {
+    "tests": 549,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 8,
+    "failedTests": [],
+    "webResearch": {
+      "tests": 28,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 4
+    }
+  },
+  "liveSuite": {
+    "tests": 4,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "fullSuite": {
+    "completed": false,
+    "scope": "Initial unrestricted regression attempt before the final Strict-query guard fix",
+    "reason": "Stopped a confirmed Gradle test worker after several minutes in the unchanged pre-existing RedactionTest.windowedScanRedactsJsonPairWhoseValueStraddlesTheCut stress case; thread diagnostic retained locally",
+    "observedFailures": [
+      "McpSupervisorRestartPolicyTest.bindConflict_requestsTakeoverAndRetriesWithBoundedPolicy (fixture published its latch before callback completion; fixture order corrected)",
+      "WebResearchToolTest.strictModePublicSourceLinksCanBeReadWithoutLeakingTargetQueries (new Strict URL guard added)"
+    ],
+    "executedBeforeStop": 856
+  },
+  "staticChecks": {
+    "ktlintCheck": "passed",
+    "detekt": "passed",
+    "shadowJar": "passed"
+  },
+  "unchangedRuntimeSourcesFromNim11": [
+    "backends/nvidia/NimProtocol",
+    "backends/nvidia/NimModelProfile",
+    "backends/nvidia/NimTurnEncoder",
+    "backends/nvidia/NvidiaNimConnection",
+    "redact/Redaction"
+  ],
+  "runtime": {
+    "newJarLoadedIntoBurp": false,
+    "compiledLiveChecks": true,
+    "privateTargetTraffic": false
+  },
+  "defaults": {
+    "webToolsEnabled": false,
+    "provider": "DuckDuckGo Lite",
+    "paidSearchApi": false,
+    "externalRuntimeRequired": false
+  },
+  "standaloneJarSmoke": {
+    "passed": true,
+    "scope": "Exact shaded JAR in a fresh JVM, synthetic transport, no Burp runtime or network",
+    "search": true,
+    "htmlFetch": true,
+    "shadedParser": true
+  },
+  "limits": [
+    "Public search markup and availability may change; challenges fail explicitly",
+    "The current web transport uses direct connections, without an explicit corporate proxy",
+    "No JavaScript rendering, login, binary/PDF downloads or private hosts",
+    "Model selection of tools remains probabilistic; live cases do not guarantee every task or adversarial page",
+    "A compiled adapter check is not a running Burp UI reload"
+  ],
+  "credentialScan": "No JAR tokens; source allowlist limited to two exact pre-existing numeric upstream fixtures"
+}

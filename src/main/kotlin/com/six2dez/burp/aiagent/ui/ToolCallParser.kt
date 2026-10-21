@@ -12,24 +12,25 @@ import kotlinx.serialization.json.jsonPrimitive
 internal data class ParsedToolCall(
     val tool: String,
     val argsJson: String?,
+    val invocationId: String? = null,
 )
 
 internal object ToolCallParser {
-    private const val MAX_JSON_CANDIDATES = 12
+    private val toolFence = Regex("\\A```(?:tool|json)\\s*([\\s\\S]*?)\\s*```\\z", RegexOption.IGNORE_CASE)
+    private val argumentKeys = setOf("args", "arguments", "input")
+    private val directKeys = argumentKeys + setOf("tool", "name", "id", "type")
+    private val functionKeys = setOf("function", "function_call", "id", "type")
 
     fun extractFirst(text: String): ParsedToolCall? {
-        val candidates = linkedSetOf<String>()
-        candidates.addAll(extractFencedJsonCandidates(text))
         val trimmed = text.trim()
-        if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
-            candidates.add(trimmed)
-        }
-        candidates.addAll(extractJsonObjectCandidates(text))
-        for (candidate in candidates) {
-            val parsed = parseToolJson(candidate)
-            if (parsed != null) return parsed
-        }
-        return null
+        // The entire assistant turn must be a call. JSON examples inside a report are data.
+        val candidate =
+            toolFence
+                .matchEntire(trimmed)
+                ?.groupValues
+                ?.get(1)
+                ?.trim() ?: trimmed
+        return parseToolJson(candidate)
     }
 
     private fun parseToolJson(jsonText: String): ParsedToolCall? {
@@ -48,9 +49,13 @@ internal object ToolCallParser {
     }
 
     private fun buildToolCall(obj: JsonObject): ParsedToolCall? {
-        val tool = resolveToolName(obj) ?: return null
-        val args = resolveToolArgs(obj)
-        return ParsedToolCall(tool = tool, argsJson = args)
+        val explicitFunction = "function" in obj || "function_call" in obj
+        val explicitTool = obj["tool"].asStringOrNull()?.isNotBlank() == true
+        val legacyName = obj["name"].asStringOrNull()?.isNotBlank() == true && argumentKeys.any { it in obj }
+        val allowedKeys = if (explicitFunction) functionKeys else directKeys
+        val callShape = explicitFunction || explicitTool || legacyName
+        if (!callShape || !obj.keys.all { it in allowedKeys }) return null
+        return resolveToolName(obj)?.let { ParsedToolCall(tool = it, argsJson = resolveToolArgs(obj)) }
     }
 
     private fun firstNestedToolCallObject(obj: JsonObject): JsonObject? {
@@ -136,65 +141,9 @@ internal object ToolCallParser {
         return value.toString()
     }
 
-    private fun extractFencedJsonCandidates(text: String): List<String> {
-        val regex = Regex("```(?:tool|json)\\s*([\\s\\S]*?)\\s*```", RegexOption.IGNORE_CASE)
-        return regex
-            .findAll(text)
-            .mapNotNull { match ->
-                val payload =
-                    match.groupValues
-                        .getOrNull(1)
-                        ?.trim()
-                        .orEmpty()
-                if (payload.startsWith("{") && payload.endsWith("}")) payload else null
-            }.take(MAX_JSON_CANDIDATES)
-            .toList()
-    }
-
-    private fun extractJsonObjectCandidates(text: String): List<String> {
-        val out = mutableListOf<String>()
-        var start = -1
-        var depth = 0
-        var inString = false
-        var escaped = false
-        for (i in text.indices) {
-            val ch = text[i]
-            if (start < 0) {
-                if (ch == '{') {
-                    start = i
-                    depth = 1
-                    inString = false
-                    escaped = false
-                }
-                continue
-            }
-            if (inString) {
-                when {
-                    escaped -> escaped = false
-                    ch == '\\' -> escaped = true
-                    ch == '"' -> inString = false
-                }
-                continue
-            }
-            when (ch) {
-                '"' -> inString = true
-                '{' -> depth++
-                '}' -> {
-                    depth--
-                    if (depth == 0) {
-                        out.add(text.substring(start, i + 1))
-                        if (out.size >= MAX_JSON_CANDIDATES) break
-                        start = -1
-                    }
-                }
-            }
-        }
-        return out
-    }
-
     private fun JsonElement?.asObjectOrNull(): JsonObject? = runCatching { this?.jsonObject }.getOrNull()
 
     private fun JsonElement?.asArrayOrNull(): JsonArray? = runCatching { this?.jsonArray }.getOrNull()
 
-    private fun JsonElement?.asStringOrNull(): String? = runCatching { this?.jsonPrimitive?.contentOrNull }.getOrNull()
+    private fun JsonElement?.asStringOrNull(): String? = runCatching { this?.jsonPrimitive?.takeIf { it.isString }?.contentOrNull }.getOrNull()
 }

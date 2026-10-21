@@ -10,7 +10,12 @@ class BurpAiAgentExtension : BurpExtension {
     override fun initialize(api: MontoyaApi) {
         App.initialize(api)
         api.extension().registerUnloadingHandler {
-            App.shutdown()
+            try {
+                App.shutdown()
+            } finally {
+                com.six2dez.burp.aiagent.mcp.tools.WebResearchTools
+                    .shutdown()
+            }
         }
     }
 }

@@ -5,7 +5,7 @@ import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
 plugins {
     kotlin("jvm") version "2.1.21"
     kotlin("plugin.serialization") version "2.1.21"
-    id("com.github.johnrengelman.shadow") version "8.1.1"
+    id("com.gradleup.shadow") version "8.3.11"
     id("org.jlleitschuh.gradle.ktlint") version "12.1.1"
     id("org.cyclonedx.bom") version "1.10.0"
     id("io.gitlab.arturbosch.detekt") version "1.23.8"
@@ -13,7 +13,7 @@ plugins {
 }
 
 group = "com.six2dez.burp"
-version = "1.0.0-nim.7"
+version = "1.0.0-nim.15"
 
 repositories {
     mavenCentral()
@@ -31,6 +31,7 @@ dependencies {
 
     // HTTP client (Ollama + webhooks)
     implementation("com.squareup.okhttp3:okhttp:5.4.0")
+    implementation("org.jsoup:jsoup:1.23.2")
 
     // MCP Server (Ktor + MCP SDK)
     implementation("io.modelcontextprotocol:kotlin-sdk:0.5.0")
@@ -139,6 +140,7 @@ tasks.shadowJar {
     }
     archiveClassifier.set("")
     mergeServiceFiles()
+    relocate("org.jsoup", "com.six2dez.burp.aiagent.shaded.jsoup")
     isZip64 = true
 
     // Shadow JAR should include all runtime dependencies

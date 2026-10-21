@@ -50,6 +50,35 @@ object McpToolCatalog {
     private val tools =
         listOf(
             McpToolDescriptor(
+                id = "web_search",
+                title = "Search the web (free)",
+                description =
+                    "Search DuckDuckGo for current documentation, vendor advisories and CVEs. Use short product/version terms, never traffic or credentials. " +
+                        "Returns titles/URLs, not verified facts. Read an authoritative page with web_fetch before citing. count: 1-10; no API key required.",
+                category = "Web research",
+                defaultEnabled = false,
+                secTier = SecTier.CONFIRM,
+            ),
+            McpToolDescriptor(
+                id = "web_fetch",
+                title = "Read a public web page",
+                description =
+                    "Read public HTTP(S) documentation as untrusted text without cookies/authentication. Not a target testing tool. " +
+                        "Supports offset/maxChars pagination and literal query search; follow nextOffset. Public ports 80/443 only; no private hosts, downloads or JavaScript. Cite the returned URL.",
+                category = "Web research",
+                defaultEnabled = false,
+                secTier = SecTier.CONFIRM,
+            ),
+            McpToolDescriptor(
+                id = "context_read",
+                title = "Read chat context",
+                description = "Reads an exact bounded character range from a contextRef snapshot in this chat. Optional query finds a literal substring (case insensitive), starting at offset. Paginate with nextOffset; count is at most 12000.",
+                category = "Context",
+                defaultEnabled = true,
+                secTier = SecTier.CONFIRM,
+                nativeTool = true,
+            ),
+            McpToolDescriptor(
                 id = "status",
                 title = "Extension status",
                 description = "Returns basic extension and Burp version status.",

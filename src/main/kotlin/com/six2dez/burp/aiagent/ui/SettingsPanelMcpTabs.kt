@@ -459,7 +459,7 @@ internal fun SettingsPanel.buildMcpToolsPanel(): JScrollPane {
     )
 
     // STEP 9 — Return via buildTabPanel from design module
-    return buildTabPanel(listOf(searchBarPanel, aiSection, sectionSeparator, montoyaSection))
+    return buildTabPanel(listOf(searchBarPanel, WebResearchControls.build(mcpToolCheckboxes), aiSection, sectionSeparator, montoyaSection))
 }
 
 internal fun SettingsPanel.updateUnsafeToolStates() {

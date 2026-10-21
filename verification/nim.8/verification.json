@@ -1,0 +1,69 @@
+{
+  "version": "1.0.0-nim.8",
+  "publication": {
+    "published": false,
+    "reason": "User requested local changes only; no push, tag or release."
+  },
+  "baseTag": "v1.0.0",
+  "baseCommit": "e7d3fc47d224d661e990c28da82dfa3bac50fa6b",
+  "previousPublishedCommit": "a7b4e227d28f8468a49f90e01c4c744bbbd4311f",
+  "jarSha256": "801ac38d1ac806018a0c1901506af275355d0e6f931ce3fb3fd529660bf3a117",
+  "staticChecks": {
+    "ktlintCheck": "passed",
+    "detekt": "passed",
+    "shadowJar": "passed",
+    "processExitCode": 0
+  },
+  "focusedSuite": {
+    "tests": 796,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 2,
+    "nim_tests": 44,
+    "nim_failures": 0,
+    "failed_tests": []
+  },
+  "requiredRegressionSuites": {
+    "ui.ToolCallParserTest": 7,
+    "ui.NvidiaNimIssueToolFlowTest": 3,
+    "config.AgentSettingsMigrationTest": 15,
+    "ui.AutomaticToolApprovalChatTest": 3,
+    "ui.NvidiaNimToolContextTest": 1,
+    "ui.NvidiaNimAttachedContextTest": 1,
+    "ui.ChatPanelToolGateTest": 20
+  },
+  "initialFocusedRun": {
+    "report": "initial-focused-suite.json",
+    "resolution": "The existing failure-path test now waits for its own trace rather than an unrelated global settle event. Production assertions remain unchanged."
+  },
+  "fullSuiteRerun": false,
+  "fullSuitePassed": null,
+  "baselineFullSuiteReport": "../nim.7/nim6-baseline-full-suite.json",
+  "redactorBytecodeUnchangedFromNim7": true,
+  "credentialScan": {
+    "jar": "No token-pattern matches.",
+    "source": "No non-fixture token-pattern matches.",
+    "upstreamNumericTestFixtures": [
+      ".planning/phases/13-privacy-redaction-hardening/13-03-PLAN.md",
+      "src/test/kotlin/com/six2dez/burp/aiagent/redact/SecretShapesTest.kt"
+    ],
+    "fixtureRule": "Only the pre-existing all-digit ghp_ fixture in these exact files, verified against the upstream base; no NVIDIA exemptions."
+  },
+  "runtime": {
+    "newJarLoadedIntoBurp": false,
+    "newLiveNvidiaRequests": false
+  },
+  "changes": [
+    "Only standalone tool JSON is executable; report JSON and embedded examples remain data.",
+    "Executed unknown tools have error status and at most one final completion with tools disabled.",
+    "NIM tool protocol and enabled schemas are sent in the system role on each step.",
+    "The unchanged stock issue-analysis prompt migrates; custom prompts are preserved.",
+    "NIM waiting labels share the root monotonic start time and identify the step."
+  ],
+  "limits": [
+    "Synthetic backend and headless Swing tests do not establish live model compliance.",
+    "The full suite was not rerun; the nim.6 baseline has two redaction time-budget test failures.",
+    "Provider quota, capacity, model availability and timeouts are unchanged in nim.8.",
+    "Existing chats may retain old catalogs and model instructions; start a new chat after loading."
+  ]
+}

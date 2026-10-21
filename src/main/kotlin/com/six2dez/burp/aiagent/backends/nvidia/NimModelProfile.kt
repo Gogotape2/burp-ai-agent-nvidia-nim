@@ -19,7 +19,7 @@ internal object NimModelProfile {
                 payload["reasoning_effort"] = effort
                 if (effort == "high") payload["reasoning_budget"] = minOf(options.reasoningBudget, (maxTokens - 1).coerceAtLeast(0))
             }
-            model.equals("z-ai/glm-5.3", true) || model.equals("z-ai/glm-5.3-flash", true) -> {
+            model.equals(NvidiaNimOptions.GLM_53_MODEL, true) || model.equals("z-ai/glm-5.3-flash", true) -> {
                 val effort = if (options.reasoningEffort in listOf("auto", "none")) "low" else options.reasoningEffort
                 require(effort in listOf("low", "high", "max")) {
                     "GLM 5.3 supports reasoning low / high / max. Select Auto for low; reasoning cannot be disabled."

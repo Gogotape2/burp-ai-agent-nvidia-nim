@@ -1,0 +1,863 @@
+{
+  "format" : "burp-ai-agent-diagnostics-v1",
+  "droppedEntries" : 0,
+  "fieldLimitChars" : 16000,
+  "redacted" : true,
+  "events" : [ {
+    "timeMs" : 1792590381213,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 1,
+    "stage" : "prepared",
+    "detail" : "Prompt 404 chars; history 0; tools 62",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590381280,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 1,
+    "stage" : "protocol",
+    "detail" : "Native function calling",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590381336,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 1,
+    "stage" : "queue",
+    "detail" : "Attempt 1/3: waiting for a NIM request slot",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590381336,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 1,
+    "stage" : "provider",
+    "detail" : "Request sent; waiting for the provider response",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590383681,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 1,
+    "stage" : "http",
+    "detail" : "Provider returned HTTP 200",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590383690,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 1,
+    "stage" : "tool_call",
+    "detail" : "Function call (4 in batch)",
+    "arguments" : "{\"content\":\"nim15 low 1\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590383690,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 1,
+    "stage" : "usage",
+    "detail" : "Provider tokens: input 9202, output 114",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590383692,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 1,
+    "stage" : "model_complete",
+    "detail" : "Response received (54 chars)",
+    "arguments" : null,
+    "result" : "{\"tool\":\"url_encode\",\"args\":{\"content\":\"nim15 low 1\"}}"
+  }, {
+    "timeMs" : 1792590383704,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 1,
+    "stage" : "tool_requested",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 low 1\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590383708,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 1,
+    "stage" : "tool_running",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 low 1\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590383774,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 1,
+    "stage" : "tool_result",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 low 1\"}",
+    "result" : "nim15+low+1"
+  }, {
+    "timeMs" : 1792590383789,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 2,
+    "stage" : "prepared",
+    "detail" : "Prompt 510 chars; history 2; tools 62",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590383850,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 2,
+    "stage" : "protocol",
+    "detail" : "Native function calling",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590383850,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 2,
+    "stage" : "tool_call",
+    "detail" : "Queued function call; no provider inference",
+    "arguments" : "{\"content\":\"nim15 low 2\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590383886,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 2,
+    "stage" : "model_complete",
+    "detail" : "Response received (54 chars)",
+    "arguments" : null,
+    "result" : "{\"tool\":\"url_encode\",\"args\":{\"content\":\"nim15 low 2\"}}"
+  }, {
+    "timeMs" : 1792590383886,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 2,
+    "stage" : "tool_requested",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 low 2\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590383886,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 2,
+    "stage" : "tool_running",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 low 2\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590383953,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 2,
+    "stage" : "tool_result",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 low 2\"}",
+    "result" : "nim15+low+2"
+  }, {
+    "timeMs" : 1792590383972,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 3,
+    "stage" : "prepared",
+    "detail" : "Prompt 510 chars; history 4; tools 62",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590384054,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 3,
+    "stage" : "protocol",
+    "detail" : "Native function calling",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590384054,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 3,
+    "stage" : "tool_call",
+    "detail" : "Queued function call; no provider inference",
+    "arguments" : "{\"content\":\"nim15 low 3\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590384054,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 3,
+    "stage" : "model_complete",
+    "detail" : "Response received (54 chars)",
+    "arguments" : null,
+    "result" : "{\"tool\":\"url_encode\",\"args\":{\"content\":\"nim15 low 3\"}}"
+  }, {
+    "timeMs" : 1792590384054,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 3,
+    "stage" : "tool_requested",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 low 3\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590384054,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 3,
+    "stage" : "tool_running",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 low 3\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590384144,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 3,
+    "stage" : "tool_result",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 low 3\"}",
+    "result" : "nim15+low+3"
+  }, {
+    "timeMs" : 1792590384164,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 4,
+    "stage" : "tool_limit",
+    "detail" : "Automatic tool-call limit (3) reached; preparing the final answer from collected evidence",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590384164,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 4,
+    "stage" : "prepared",
+    "detail" : "Prompt 510 chars; history 6; tools 0",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590384248,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 4,
+    "stage" : "protocol",
+    "detail" : "Native function calling",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590384317,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 4,
+    "stage" : "queue",
+    "detail" : "Attempt 1/3: waiting for a NIM request slot",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590384317,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 4,
+    "stage" : "provider",
+    "detail" : "Request sent; waiting for the provider response",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590386789,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 4,
+    "stage" : "http",
+    "detail" : "Provider returned HTTP 200",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590386789,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 4,
+    "stage" : "usage",
+    "detail" : "Provider tokens: input 763, output 112",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590386792,
+    "traceId" : "chat-turn-f0d92234-bc61-4aa9-8322-69a10864adc0",
+    "step" : 4,
+    "stage" : "model_complete",
+    "detail" : "Response received (219 chars)",
+    "arguments" : null,
+    "result" : "NIM15_LOW_OK\n\nВыполненные вызовы (3/4):\n1. \"nim15 low 1\" → nim15+low+1\n2. \"nim15 low 2\" → nim15+low+2\n3. \"nim15 low 3\" → nim15+low+3\n\nПропущенный вызов (1/4):\n4. \"nim15 low 4\" — не выполнен (превышен лимит инструментов)"
+  }, {
+    "timeMs" : 1792590542662,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 1,
+    "stage" : "prepared",
+    "detail" : "Prompt 447 chars; history 8; tools 62",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590542711,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 1,
+    "stage" : "protocol",
+    "detail" : "Native function calling",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590542759,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 1,
+    "stage" : "queue",
+    "detail" : "Attempt 1/3: waiting for a NIM request slot",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590542759,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 1,
+    "stage" : "provider",
+    "detail" : "Request sent; waiting for the provider response",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590547490,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 1,
+    "stage" : "http",
+    "detail" : "Provider returned HTTP 200",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590547499,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 1,
+    "stage" : "tool_call",
+    "detail" : "Function call (9 in batch)",
+    "arguments" : "{\"content\":\"nim15 high 1\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590547499,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 1,
+    "stage" : "usage",
+    "detail" : "Provider tokens: input 10052, output 254",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590547500,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 1,
+    "stage" : "model_complete",
+    "detail" : "Response received (55 chars)",
+    "arguments" : null,
+    "result" : "{\"tool\":\"url_encode\",\"args\":{\"content\":\"nim15 high 1\"}}"
+  }, {
+    "timeMs" : 1792590547501,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 1,
+    "stage" : "tool_requested",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 1\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590547501,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 1,
+    "stage" : "tool_running",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 1\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590547608,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 1,
+    "stage" : "tool_result",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 1\"}",
+    "result" : "nim15+high+1"
+  }, {
+    "timeMs" : 1792590547626,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 2,
+    "stage" : "prepared",
+    "detail" : "Prompt 554 chars; history 10; tools 62",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590547672,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 2,
+    "stage" : "protocol",
+    "detail" : "Native function calling",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590547672,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 2,
+    "stage" : "tool_call",
+    "detail" : "Queued function call; no provider inference",
+    "arguments" : "{\"content\":\"nim15 high 2\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590547709,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 2,
+    "stage" : "model_complete",
+    "detail" : "Response received (55 chars)",
+    "arguments" : null,
+    "result" : "{\"tool\":\"url_encode\",\"args\":{\"content\":\"nim15 high 2\"}}"
+  }, {
+    "timeMs" : 1792590547713,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 2,
+    "stage" : "tool_requested",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 2\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590547713,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 2,
+    "stage" : "tool_running",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 2\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590547824,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 2,
+    "stage" : "tool_result",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 2\"}",
+    "result" : "nim15+high+2"
+  }, {
+    "timeMs" : 1792590547840,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 3,
+    "stage" : "prepared",
+    "detail" : "Prompt 554 chars; history 12; tools 62",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590547899,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 3,
+    "stage" : "protocol",
+    "detail" : "Native function calling",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590547899,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 3,
+    "stage" : "tool_call",
+    "detail" : "Queued function call; no provider inference",
+    "arguments" : "{\"content\":\"nim15 high 3\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590547901,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 3,
+    "stage" : "model_complete",
+    "detail" : "Response received (55 chars)",
+    "arguments" : null,
+    "result" : "{\"tool\":\"url_encode\",\"args\":{\"content\":\"nim15 high 3\"}}"
+  }, {
+    "timeMs" : 1792590547905,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 3,
+    "stage" : "tool_requested",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 3\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590547905,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 3,
+    "stage" : "tool_running",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 3\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548016,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 3,
+    "stage" : "tool_result",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 3\"}",
+    "result" : "nim15+high+3"
+  }, {
+    "timeMs" : 1792590548036,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 4,
+    "stage" : "prepared",
+    "detail" : "Prompt 554 chars; history 14; tools 62",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590548136,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 4,
+    "stage" : "protocol",
+    "detail" : "Native function calling",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590548136,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 4,
+    "stage" : "tool_call",
+    "detail" : "Queued function call; no provider inference",
+    "arguments" : "{\"content\":\"nim15 high 4\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548136,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 4,
+    "stage" : "model_complete",
+    "detail" : "Response received (55 chars)",
+    "arguments" : null,
+    "result" : "{\"tool\":\"url_encode\",\"args\":{\"content\":\"nim15 high 4\"}}"
+  }, {
+    "timeMs" : 1792590548140,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 4,
+    "stage" : "tool_requested",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 4\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548140,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 4,
+    "stage" : "tool_running",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 4\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548226,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 4,
+    "stage" : "tool_result",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 4\"}",
+    "result" : "nim15+high+4"
+  }, {
+    "timeMs" : 1792590548242,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 5,
+    "stage" : "prepared",
+    "detail" : "Prompt 554 chars; history 16; tools 62",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590548304,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 5,
+    "stage" : "protocol",
+    "detail" : "Native function calling",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590548304,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 5,
+    "stage" : "tool_call",
+    "detail" : "Queued function call; no provider inference",
+    "arguments" : "{\"content\":\"nim15 high 5\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548344,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 5,
+    "stage" : "model_complete",
+    "detail" : "Response received (55 chars)",
+    "arguments" : null,
+    "result" : "{\"tool\":\"url_encode\",\"args\":{\"content\":\"nim15 high 5\"}}"
+  }, {
+    "timeMs" : 1792590548345,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 5,
+    "stage" : "tool_requested",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 5\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548345,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 5,
+    "stage" : "tool_running",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 5\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548426,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 5,
+    "stage" : "tool_result",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 5\"}",
+    "result" : "nim15+high+5"
+  }, {
+    "timeMs" : 1792590548446,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 6,
+    "stage" : "prepared",
+    "detail" : "Prompt 554 chars; history 18; tools 62",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590548497,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 6,
+    "stage" : "protocol",
+    "detail" : "Native function calling",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590548497,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 6,
+    "stage" : "tool_call",
+    "detail" : "Queued function call; no provider inference",
+    "arguments" : "{\"content\":\"nim15 high 6\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548536,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 6,
+    "stage" : "model_complete",
+    "detail" : "Response received (55 chars)",
+    "arguments" : null,
+    "result" : "{\"tool\":\"url_encode\",\"args\":{\"content\":\"nim15 high 6\"}}"
+  }, {
+    "timeMs" : 1792590548538,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 6,
+    "stage" : "tool_requested",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 6\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548538,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 6,
+    "stage" : "tool_running",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 6\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548642,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 6,
+    "stage" : "tool_result",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 6\"}",
+    "result" : "nim15+high+6"
+  }, {
+    "timeMs" : 1792590548658,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 7,
+    "stage" : "prepared",
+    "detail" : "Prompt 554 chars; history 20; tools 62",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590548705,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 7,
+    "stage" : "protocol",
+    "detail" : "Native function calling",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590548705,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 7,
+    "stage" : "tool_call",
+    "detail" : "Queued function call; no provider inference",
+    "arguments" : "{\"content\":\"nim15 high 7\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548707,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 7,
+    "stage" : "model_complete",
+    "detail" : "Response received (55 chars)",
+    "arguments" : null,
+    "result" : "{\"tool\":\"url_encode\",\"args\":{\"content\":\"nim15 high 7\"}}"
+  }, {
+    "timeMs" : 1792590548707,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 7,
+    "stage" : "tool_requested",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 7\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548707,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 7,
+    "stage" : "tool_running",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 7\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548810,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 7,
+    "stage" : "tool_result",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 7\"}",
+    "result" : "nim15+high+7"
+  }, {
+    "timeMs" : 1792590548826,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 8,
+    "stage" : "prepared",
+    "detail" : "Prompt 554 chars; history 22; tools 62",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590548878,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 8,
+    "stage" : "protocol",
+    "detail" : "Native function calling",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590548878,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 8,
+    "stage" : "tool_call",
+    "detail" : "Queued function call; no provider inference",
+    "arguments" : "{\"content\":\"nim15 high 8\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548878,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 8,
+    "stage" : "model_complete",
+    "detail" : "Response received (55 chars)",
+    "arguments" : null,
+    "result" : "{\"tool\":\"url_encode\",\"args\":{\"content\":\"nim15 high 8\"}}"
+  }, {
+    "timeMs" : 1792590548879,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 8,
+    "stage" : "tool_requested",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 8\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548879,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 8,
+    "stage" : "tool_running",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 8\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590548985,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 8,
+    "stage" : "tool_result",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 8\"}",
+    "result" : "nim15+high+8"
+  }, {
+    "timeMs" : 1792590549010,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 9,
+    "stage" : "prepared",
+    "detail" : "Prompt 554 chars; history 24; tools 62",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590549109,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 9,
+    "stage" : "protocol",
+    "detail" : "Native function calling",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590549109,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 9,
+    "stage" : "tool_call",
+    "detail" : "Queued function call; no provider inference",
+    "arguments" : "{\"content\":\"nim15 high 9\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590549111,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 9,
+    "stage" : "model_complete",
+    "detail" : "Response received (55 chars)",
+    "arguments" : null,
+    "result" : "{\"tool\":\"url_encode\",\"args\":{\"content\":\"nim15 high 9\"}}"
+  }, {
+    "timeMs" : 1792590549112,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 9,
+    "stage" : "tool_requested",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 9\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590549112,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 9,
+    "stage" : "tool_running",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 9\"}",
+    "result" : null
+  }, {
+    "timeMs" : 1792590549192,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 9,
+    "stage" : "tool_result",
+    "detail" : "url_encode",
+    "arguments" : "{\"content\":\"nim15 high 9\"}",
+    "result" : "nim15+high+9"
+  }, {
+    "timeMs" : 1792590549206,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 10,
+    "stage" : "prepared",
+    "detail" : "Prompt 554 chars; history 26; tools 62",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590549263,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 10,
+    "stage" : "protocol",
+    "detail" : "Native function calling",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590549303,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 10,
+    "stage" : "queue",
+    "detail" : "Attempt 1/3: waiting for a NIM request slot",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590549303,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 10,
+    "stage" : "provider",
+    "detail" : "Request sent; waiting for the provider response",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590554658,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 10,
+    "stage" : "http",
+    "detail" : "Provider returned HTTP 200",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590554668,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 10,
+    "stage" : "usage",
+    "detail" : "Provider tokens: input 10382, output 191",
+    "arguments" : null,
+    "result" : null
+  }, {
+    "timeMs" : 1792590554669,
+    "traceId" : "chat-turn-e341f5d7-abb8-4d42-af04-7c54c3ec4ae8",
+    "step" : 10,
+    "stage" : "model_complete",
+    "detail" : "Response received (343 chars)",
+    "arguments" : null,
+    "result" : "Наблюдавшиеся результаты (9/9):\n1. \"nim15 high 1\" → nim15+high+1\n2. \"nim15 high 2\" → nim15+high+2\n3. \"nim15 high 3\" → nim15+high+3\n4. \"nim15 high 4\" → nim15+high+4\n5. \"nim15 high 5\" → nim15+high+5\n6. \"nim15 high 6\" → nim15+high+6\n7. \"nim15 high 7\" → nim15+high+7\n8. \"nim15 high 8\" → nim15+high+8\n9. \"nim15 high 9\" → nim15+high+9\n\nNIM15_HIGH_OK"
+  } ]
+}

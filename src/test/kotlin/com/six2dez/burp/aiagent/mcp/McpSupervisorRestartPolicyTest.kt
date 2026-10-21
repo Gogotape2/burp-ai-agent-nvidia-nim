@@ -176,9 +176,9 @@ class McpSupervisorRestartPolicyTest {
             callback: (McpServerState) -> Unit,
         ) {
             startCalls.incrementAndGet()
-            startLatch.countDown()
             val state = if (scriptedStates.isEmpty()) fallbackState else scriptedStates.removeFirst()
             callback(state)
+            startLatch.countDown()
         }
 
         override fun stop(callback: (McpServerState) -> Unit) {

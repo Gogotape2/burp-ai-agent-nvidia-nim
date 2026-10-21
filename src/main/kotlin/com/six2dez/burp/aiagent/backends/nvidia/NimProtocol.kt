@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.backends.nvidia
 
+import com.fasterxml.jackson.databind.DeserializationFeature
 import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
@@ -11,13 +12,14 @@ import java.time.format.DateTimeFormatter
 import java.util.concurrent.TimeUnit
 
 internal object NimProtocol {
-    val mapper: ObjectMapper = ObjectMapper().registerKotlinModule()
+    val mapper: ObjectMapper = ObjectMapper().registerKotlinModule().enable(DeserializationFeature.FAIL_ON_TRAILING_TOKENS)
     private const val MAX_RESPONSE_CHARS = 16 * 1024 * 1024
     private const val SSE_DATA_PREFIX_LENGTH = 5
 
     data class Completion(
         val content: String,
         val usage: TokenUsage?,
+        val calls: List<com.six2dez.burp.aiagent.backends.FunctionCall> = emptyList(),
     )
 
     fun endpoint(baseUrl: String): String {
@@ -58,7 +60,7 @@ internal object NimProtocol {
         checkError(node)
         val choice = node.path("choices").path(0)
         val content = text(choice.path("message").path("content"))
-        return completed(content, choice.path("finish_reason").asText(""), usage(node))
+        return completed(content, choice.path("finish_reason").asText(""), usage(node), NimNativeTools.parse(choice.path("message").path("tool_calls")))
     }
 
     private fun parseSse(body: String): Completion {
@@ -68,6 +70,7 @@ internal object NimProtocol {
         var finished = false
         var done = false
         var reason = ""
+        val calls = NimSseToolCalls()
 
         fun flush() {
             if (data.isEmpty()) return
@@ -83,6 +86,7 @@ internal object NimProtocol {
             usage(node)?.let { tokenUsage = it }
             val choice = node.path("choices").path(0)
             content.append(text(choice.path("delta").path("content")))
+            calls.append(choice.path("delta").path("tool_calls"))
             if (choice.path("finish_reason").isTextual) {
                 finished = true
                 reason = choice.path("finish_reason").asText()
@@ -99,22 +103,24 @@ internal object NimProtocol {
         }
         flush()
         require(done || finished) { "NVIDIA NIM stream ended before a completion marker; response discarded" }
-        return completed(content.toString(), reason, tokenUsage)
+        val nativeCalls = if (reason in setOf("length", "content_filter")) emptyList() else calls.completed()
+        return completed(content.toString(), reason, tokenUsage, nativeCalls)
     }
 
     private fun completed(
         content: String,
         reason: String,
         usage: TokenUsage?,
+        calls: List<com.six2dez.burp.aiagent.backends.FunctionCall> = emptyList(),
     ): Completion {
         check(reason != "length") {
             "NVIDIA NIM reached max_tokens before finishing. Increase Max tokens or reduce Reasoning budget / effort."
         }
         check(reason != "content_filter") { "NVIDIA NIM filtered this response" }
-        check(content.isNotBlank()) {
+        check(content.isNotBlank() || calls.isNotEmpty()) {
             "NVIDIA NIM returned no answer text (possibly reasoning-only). Increase Max tokens or reduce Reasoning effort."
         }
-        return Completion(content, usage)
+        return Completion(content, usage, calls)
     }
 
     private fun text(node: JsonNode): String =

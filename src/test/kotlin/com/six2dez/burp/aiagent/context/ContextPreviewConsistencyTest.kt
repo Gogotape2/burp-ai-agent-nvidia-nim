@@ -37,6 +37,8 @@ class ContextPreviewConsistencyTest {
         assertTrue(preview.contains("host-"))
         assertFalse(preview.contains("api.alpha.test"))
         assertFalse(preview.contains("api.beta.test"))
+        assertFalse(capture.contextJson.contains("api.alpha.test"))
+        assertFalse(capture.contextJson.contains("api.beta.test"))
 
         val alphaIndex = preview.indexOf("/a")
         val betaIndex = preview.indexOf("/b")
@@ -85,16 +87,16 @@ class ContextPreviewConsistencyTest {
         whenever(request.method()).thenReturn(method)
         whenever(request.url()).thenReturn(url)
         whenever(request.toString()).thenReturn(
-            "$method $path HTTP/1.1\\r\\n" +
-                "Host: $host\\r\\n" +
-                "Authorization: Bearer secret-token\\r\\n\\r\\n" +
+            "$method $path HTTP/1.1\r\n" +
+                "Host: $host\r\n" +
+                "Authorization: Bearer secret-token\r\n\r\n" +
                 "{\"demo\":\"value\"}",
         )
 
         val response = mock<HttpResponse>()
         whenever(response.toString()).thenReturn(
-            "HTTP/1.1 200 OK\\r\\n" +
-                "Set-Cookie: session=secret\\r\\n\\r\\n" +
+            "HTTP/1.1 200 OK\r\n" +
+                "Set-Cookie: session=secret\r\n\r\n" +
                 "ok",
         )
 

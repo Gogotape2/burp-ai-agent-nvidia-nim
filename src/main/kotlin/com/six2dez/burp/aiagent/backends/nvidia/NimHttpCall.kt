@@ -25,6 +25,7 @@ internal class NimHttpCall(
         json: String,
         options: NvidiaNimOptions,
         deadline: Long,
+        onSending: () -> Unit = {},
         cancelled: () -> Boolean,
     ): TransportResponse {
         val future =
@@ -35,6 +36,7 @@ internal class NimHttpCall(
                     coordinator.acquire(options, deadline, cancelled).use {
                         if (cancelled() || Thread.currentThread().isInterrupted) throw CancellationException("NVIDIA NIM request cancelled")
                         val remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()).coerceAtLeast(1)
+                        onSending()
                         transport.post(endpoint, headers, json, remainingMs)
                     }
                 }

@@ -1,0 +1,15 @@
+{
+  "scope": "Default Burp schemas, synthetic prompt; no tool execution",
+  "toolCount": 35,
+  "requests": [
+    {
+      "status": 200,
+      "elapsedMs": 52170,
+      "messages": 1,
+      "hasNativeResult": false,
+      "toolChoice": "auto",
+      "reasoning": "low",
+      "maxTokens": 16384
+    }
+  ]
+}

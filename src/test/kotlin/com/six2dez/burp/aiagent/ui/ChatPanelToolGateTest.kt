@@ -178,7 +178,8 @@ class ChatPanelToolGateTest {
         // REL-05: added BESIDE the explicit drain, not in place of it — the drain's count is load-bearing
         // for chain continuation (one invokeLater per chained turn) and the await is what proves the
         // worker's EDT tail has run. Over-draining an empty EDT queue is free.
-        ChatPanelTestHarness.awaitToolSettled(count = 1)
+        // Other live panels may settle through the global hook; only this trace proves completion.
+        ChatPanelTestHarness.awaitToolSettled(count = 1, traceId = traceId)
         ChatPanelTestHarness.drainEdt(times = LONG_DRAIN)
 
         // NON-VACUITY FIRST, AND THAT ORDERING IS THE POINT. The claim below is "the continuation was

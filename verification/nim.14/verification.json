@@ -1,0 +1,114 @@
+{
+  "version": "1.0.0-nim.14",
+  "published": false,
+  "baseCommit": "e7d3fc47d224d661e990c28da82dfa3bac50fa6b",
+  "jarSha256": "6cfbc2c4843de4d352e9374adc06d197e7cb8fdc302661e8b4b9f287b71a61b9",
+  "finalAnswerLive": {
+    "scope": "Injected disabled-tool provider response, then a real compiled-adapter final-answer repair; synthetic evidence only, not Burp runtime",
+    "model": "nvidia/nemotron-3-ultra-550b-a55b",
+    "httpStatus": 200,
+    "networkCalls": 1,
+    "repairEvents": 1,
+    "extraToolsExecuted": 0,
+    "elapsedMs": 12217,
+    "answer": "The synthetic HTTP response returned a 200 OK status with a JSON body indicating status \"ok\" and 3 items.",
+    "passed": true
+  },
+  "scope": "Bounded final-answer repair when the provider ignores disabled tools after the automatic tool-call limit",
+  "focusedSuite": {
+    "tests": 586,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 9,
+    "failedTests": [],
+    "webResearch": {
+      "tests": 28,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 4
+    }
+  },
+  "liveSuite": {
+    "tests": 5,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "fullSuite": null,
+  "staticChecks": {
+    "ktlintCheck": "passed",
+    "detekt": "passed",
+    "shadowJar": "passed"
+  },
+  "unchangedRuntimeSourcesFromNim11": [
+    "backends/nvidia/NimProtocol",
+    "backends/nvidia/NimModelProfile",
+    "backends/nvidia/NimTurnEncoder",
+    "redact/Redaction"
+  ],
+  "runtime": {
+    "newJarLoadedIntoBurp": true,
+    "compiledLiveChecks": true,
+    "privateTargetTraffic": false
+  },
+  "burpUiChecks": {
+    "date": "2026-10-21",
+    "timezone": "Europe/Moscow",
+    "surface": "Burp Suite Professional v2026.9.1",
+    "case": "User-selected Issue Analysis conversation",
+    "observedVersion": "nim.13",
+    "automaticToolsExecuted": 8,
+    "finalStep": 9,
+    "finalStepTools": 0,
+    "finalProviderHttpStatus": 200,
+    "lastTargetResponseStatus": 403,
+    "error": "Provider returned tool calls while tools were disabled",
+    "diagnosis": "Provider emitted another native call after the eight-call budget; the adapter rejected it instead of producing a final answer.",
+    "targetTrafficRepeatedByThisInvestigation": false,
+    "targetDataIncluded": false,
+    "nim14UiRetest": {
+      "status": "passed",
+      "loaded": true,
+      "loadedExtensionCount": 1,
+      "originalChatRestored": true,
+      "loadErrors": 0,
+      "traceId": "chat-turn-bf7337b1-f8db-432e-bec2-edbc4dde3a02",
+      "journalEvents": 68,
+      "droppedEvents": 0,
+      "durationMs": 13484,
+      "requestedBatchSize": 9,
+      "toolsExecuted": 8,
+      "skipped": 1,
+      "finalStep": 9,
+      "finalStepTools": 0,
+      "modelErrors": 0,
+      "finalAnswerRepairEvents": 0,
+      "providerHttpResponses": 2,
+      "finalMarker": "NIM14_TOOL_LIMIT_OK",
+      "scope": "Actual Burp UI: nine requested native-batch utility calls, eight executions, explicit skipped ninth and final answer. The noncompliant-provider repair branch was checked separately with deterministic fixtures and a real NIM final answer.",
+      "journalSha256": "d0f3d82f6f1f9526ca27623b82ac7abc057230af4fa70e48e8273d5857574af9"
+    },
+    "published": false
+  },
+  "defaults": {
+    "webToolsEnabled": false,
+    "provider": "DuckDuckGo Lite",
+    "paidSearchApi": false,
+    "externalRuntimeRequired": false
+  },
+  "standaloneJarSmoke": {
+    "passed": true,
+    "scope": "Exact shaded JAR in a fresh JVM, synthetic transport, no Burp runtime or network",
+    "search": true,
+    "htmlFetch": true,
+    "shadedParser": true
+  },
+  "limits": [
+    "Public search markup and availability may change; challenges fail explicitly",
+    "The current web transport uses direct connections, without an explicit corporate proxy",
+    "No JavaScript rendering, login, binary/PDF downloads or private hosts",
+    "Model selection of tools remains probabilistic; live cases do not guarantee every task or adversarial page",
+    "Compiled adapter checks and the separately recorded Burp UI checks cover different scenarios"
+  ],
+  "credentialScan": "No JAR tokens; source allowlist limited to two exact pre-existing numeric upstream fixtures"
+}

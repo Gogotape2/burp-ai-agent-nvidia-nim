@@ -467,7 +467,44 @@ class AgentSupervisor(
         systemPrompt: String? = null,
         maxOutputTokens: Int? = null,
         launchMetadata: Map<String, String>? = null,
+    ): com.six2dez.burp.aiagent.backends.AgentConnection? =
+        sendAgentChat(
+            com.six2dez.burp.aiagent.backends.AgentChatRequest(
+                chatSessionId,
+                backendId,
+                text,
+                history,
+                contextJson,
+                privacyMode,
+                determinismMode,
+                traceId,
+                systemPrompt,
+                maxOutputTokens,
+                launchMetadata,
+            ),
+            onChunk,
+            onComplete,
+        )
+
+    // Shares the existing audit/session callback lifecycle; request planning lives outside this method.
+    @Suppress("LongMethod", "ReturnCount")
+    fun sendAgentChat(
+        request: com.six2dez.burp.aiagent.backends.AgentChatRequest,
+        onChunk: (String) -> Unit,
+        onComplete: (Throwable?) -> Unit,
+        onEvent: (com.six2dez.burp.aiagent.backends.AgentTurnEvent) -> Unit = {},
     ): com.six2dez.burp.aiagent.backends.AgentConnection? {
+        val chatSessionId = request.chatSessionId
+        val backendId = request.backendId
+        val text = request.text
+        val history = request.history
+        val contextJson = request.contextJson
+        val privacyMode = request.privacyMode
+        val determinismMode = request.determinismMode
+        val traceId = request.traceId
+        val systemPrompt = request.systemPrompt
+        val maxOutputTokens = request.maxOutputTokens
+        val launchMetadata = request.launchMetadata
         if (requiresBurpAiAndDisabled(backendId)) {
             onComplete(IllegalStateException("Burp AI is disabled in Burp Suite settings."))
             return null
@@ -547,63 +584,62 @@ class AgentSupervisor(
         )
 
         val chatResponseAccumulator = StringBuilder()
-        connection.send(
-            text,
-            history = history,
-            onChunk = { chunk ->
-                chatResponseAccumulator.append(chunk)
-                if (audit.isEnabled()) {
-                    audit.logEvent("agent_chunk", mapOf("backendId" to backendId, "chunk" to chunk))
-                }
-                onChunk(chunk)
-            },
-            systemPrompt = systemPrompt,
-            maxOutputTokens = maxOutputTokens,
-            onComplete = { err ->
-                val durationMs = System.currentTimeMillis() - chatSendStartMs
-                audit.logEvent("prompt_complete", mapOf("backendId" to backendId, "error" to err?.message))
-                if (err != null) {
-                    api.logging().logToError("AI backend error ($backendId): ${err.message}")
-                    aiRequestLogger?.log(
-                        type = ActivityType.ERROR,
-                        source = "chat",
-                        backendId = backendId,
-                        sessionId = chatSessionId,
-                        detail = "Chat error: ${err.message}",
-                        durationMs = durationMs,
-                        promptChars = text.length,
-                        metadata =
-                            mapOf(
-                                "operation" to "chat_turn",
-                                "status" to "error",
-                                "traceId" to resolvedTraceId,
-                                "errorClass" to err.javaClass.simpleName,
-                                "errorCode" to err.javaClass.simpleName,
-                            ) + launchMetadata.orEmpty(),
-                    )
-                } else {
-                    aiRequestLogger?.log(
-                        type = ActivityType.RESPONSE_COMPLETE,
-                        source = "chat",
-                        backendId = backendId,
-                        sessionId = chatSessionId,
-                        detail = "Chat response received (${chatResponseAccumulator.length} chars)",
-                        durationMs = durationMs,
-                        promptChars = text.length,
-                        responseChars = chatResponseAccumulator.length,
-                        metadata =
-                            mapOf(
-                                "operation" to "chat_turn",
-                                "status" to "ok",
-                                "traceId" to resolvedTraceId,
-                            ) + launchMetadata.orEmpty(),
-                    )
-                }
-                // Update session state after completion (stores cliSessionId or connection for reuse)
-                chatSessionManager.updateSession(chatSessionId, backendId, connection)
-                onComplete(err)
-            },
-        )
+        val wrappedChunk: (String) -> Unit = { chunk ->
+            chatResponseAccumulator.append(chunk)
+            if (audit.isEnabled()) {
+                audit.logEvent("agent_chunk", mapOf("backendId" to backendId, "chunk" to chunk))
+            }
+            onChunk(chunk)
+        }
+        val wrappedComplete: (Throwable?) -> Unit = { err ->
+            val durationMs = System.currentTimeMillis() - chatSendStartMs
+            audit.logEvent("prompt_complete", mapOf("backendId" to backendId, "error" to err?.message))
+            if (err != null) {
+                api.logging().logToError("AI backend error ($backendId): ${err.message}")
+                aiRequestLogger?.log(
+                    type = ActivityType.ERROR,
+                    source = "chat",
+                    backendId = backendId,
+                    sessionId = chatSessionId,
+                    detail = "Chat error: ${err.message}",
+                    durationMs = durationMs,
+                    promptChars = text.length,
+                    metadata =
+                        mapOf(
+                            "operation" to "chat_turn",
+                            "status" to "error",
+                            "traceId" to resolvedTraceId,
+                            "errorClass" to err.javaClass.simpleName,
+                            "errorCode" to err.javaClass.simpleName,
+                        ) + launchMetadata.orEmpty(),
+                )
+            } else {
+                aiRequestLogger?.log(
+                    type = ActivityType.RESPONSE_COMPLETE,
+                    source = "chat",
+                    backendId = backendId,
+                    sessionId = chatSessionId,
+                    detail = "Chat response received (${chatResponseAccumulator.length} chars)",
+                    durationMs = durationMs,
+                    promptChars = text.length,
+                    responseChars = chatResponseAccumulator.length,
+                    metadata =
+                        mapOf(
+                            "operation" to "chat_turn",
+                            "status" to "ok",
+                            "traceId" to resolvedTraceId,
+                        ) + launchMetadata.orEmpty(),
+                )
+            }
+            // Update session state after completion (stores cliSessionId or connection for reuse)
+            chatSessionManager.updateSession(chatSessionId, backendId, connection)
+            onComplete(err)
+        }
+        if (connection is com.six2dez.burp.aiagent.backends.ToolCallingConnection) {
+            connection.sendAgentTurn(request.copy(traceId = resolvedTraceId), wrappedChunk, wrappedComplete, onEvent)
+        } else {
+            connection.send(text, history, wrappedChunk, wrappedComplete, systemPrompt, jsonMode = request.jsonMode, maxOutputTokens = maxOutputTokens)
+        }
         return connection
     }
 

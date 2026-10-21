@@ -33,4 +33,39 @@ internal object NimErrorInfo {
             .firstOrNull { it.key.equals("NVCF-REQID", true) || it.key.equals("X-Request-ID", true) }
             ?.value
             ?.takeIf { requestIdPattern.matches(it) && !it.startsWith("nvapi-", true) }
+
+    fun acceptedBody(
+        result: TransportResponse?,
+        allowToolFallback: Boolean,
+    ): String? {
+        check(result?.statusCode != NimHttpStatus.ASYNC) {
+            "NVIDIA NIM returned async HTTP 202. This backend requires synchronous chat completions; use a synchronous NIM endpoint."
+        }
+        if (result != null && allowToolFallback && NimNativeTools.unsupported(result)) throw NativeToolsUnsupported()
+        return result?.takeIf { it.isSuccessful }?.body
+    }
+
+    fun httpError(
+        response: TransportResponse,
+        attempts: Int,
+        shape: String,
+        attemptStatuses: List<String> = emptyList(),
+    ): Exception {
+        val hint =
+            when (response.statusCode) {
+                NimHttpStatus.UNAVAILABLE_FOR_LEGAL_REASONS -> NimProviderRestriction.describe(response)
+                0 -> "Burp received no HTTP response. Check network/proxy settings and the total timeout."
+                NimHttpStatus.UNAUTHORIZED, NimHttpStatus.FORBIDDEN -> "Check your NVIDIA API key and model access."
+                NimHttpStatus.NOT_FOUND -> "Check Base URL and the complete vendor/model identifier, including nvidia/."
+                NimHttpStatus.BAD_REQUEST, NimHttpStatus.UNPROCESSABLE -> "Check model parameters; for a different model, leave Reasoning effort on Auto."
+                NimHttpStatus.RATE_LIMITED -> "NVIDIA rejected this attempt due to rate, quota or capacity limits. Wait before retrying; this can occur even with one request. Lower request limits if several chats or scanners are active."
+                else -> NimErrorInfo.description(response)
+            }
+        // Provider bodies can echo prompts or credentials. Keep logs and UI errors metadata-only.
+        val requestId = NimErrorInfo.requestId(response)?.let { " provider_request_id=$it" }.orEmpty()
+        val statuses = attemptStatuses.takeIf { it.isNotEmpty() }?.joinToString(",", prefix = " http_statuses=").orEmpty()
+        return IllegalStateException("NVIDIA NIM HTTP ${response.statusCode} after $attempts attempt(s). $hint\n$shape$statuses$requestId")
+    }
+
+    class NativeToolsUnsupported : IllegalStateException()
 }
