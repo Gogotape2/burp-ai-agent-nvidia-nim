@@ -1,0 +1,17 @@
+{
+  "version": "1.0.0-nim.16",
+  "scope": "Publication preflight for the cumulative nim.16 source and previously tested JAR",
+  "runtimeSourcesCompared": 411,
+  "implementationMatchesTestedLocalNim16": true,
+  "jarSha256": "e484e17143e1723a7330898bdc69c5616692d1225e04b8e642ed90c2a87da02b",
+  "credentialScan": "No real credential patterns in tracked source or JAR; two exact numeric upstream fixtures and unchanged Netty test PEM constants from the previously published nim.7 JAR allowed",
+  "reportsContainPrivateTargetContext": false,
+  "docsCheck": {
+    "tests": 21,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "verificationSnapshot": "verification.json records the local pre-publication test result; release publication metadata is attached separately",
+  "fullSuiteRepeatedForPublication": false
+}

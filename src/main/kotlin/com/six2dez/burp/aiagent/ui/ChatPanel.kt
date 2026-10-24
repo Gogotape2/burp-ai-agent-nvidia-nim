@@ -35,6 +35,7 @@ import com.six2dez.burp.aiagent.scanner.PassiveAiScanner
 import com.six2dez.burp.aiagent.supervisor.AgentSupervisor
 import com.six2dez.burp.aiagent.ui.components.ActionCard
 import com.six2dez.burp.aiagent.ui.components.ContextPreviewDialog
+import com.six2dez.burp.aiagent.ui.components.ExecutionCheckNotice
 import com.six2dez.burp.aiagent.ui.components.ExecutionJournalDialog
 import com.six2dez.burp.aiagent.ui.components.PrivacyPill
 import com.six2dez.burp.aiagent.ui.components.SubtleNotice
@@ -664,9 +665,11 @@ class ChatPanel(
         if (backendId == "nvidia-nim") {
             val chain = state.toolChainRequest?.takeIf { it.traceId == traceId }
             val step = chainStepFor(sessionId, traceId, toolIterationsLeft)
+            val progress = chain?.progress
             assistant.setWaitingDescription(
-                "NVIDIA NIM: step $step, waiting for complete answer; total",
-                chain?.startedAtNanos ?: System.nanoTime(),
+                "Шаг $step · ${progress?.phase(if (allowToolCalls) "prepared" else "final").orEmpty()}",
+                progress?.startedAtNanos ?: System.nanoTime(),
+                progress?.phaseStartedAtNanos,
             )
         }
         if (backendId == "nvidia-nim" && actionName == "Tool Followup") {
@@ -711,6 +714,7 @@ class ChatPanel(
             listOfNotNull(
                 agentBlock?.takeIf { it.isNotBlank() },
                 toolPreamble?.takeIf { nimSystemTools },
+                ChatPresentation.LANGUAGE_INSTRUCTION,
                 if (nimSystemTools && !toolsEnabled) {
                     (if (toolLimitReached) "Automatic tool-call limit ($chainLimit) reached. " else "") +
                         "Tool calls are disabled for this completion. Give the final answer from existing evidence; do not emit tool invocations. " +
@@ -733,6 +737,7 @@ class ChatPanel(
             listOfNotNull(
                 toolPreamble?.takeIf { it.isNotBlank() && !nimSystemTools },
                 prompt.takeIf { it.isNotBlank() },
+                ChatPresentation.LANGUAGE_INSTRUCTION.takeIf { backendObj?.supportsSystemRole != true },
             ).joinToString("\n\n")
         val promptChars = finalPrompt.length
         if (promptChars > Defaults.LARGE_PROMPT_THRESHOLD) {
@@ -819,13 +824,18 @@ class ChatPanel(
                     SwingUtilities.invokeLater {
                         if (sessionStates[sessionId] === state && state.currentStep == step && state.toolChainRequest?.traceId == traceId) {
                             state.journal.add(ExecutionEntry(System.currentTimeMillis(), traceId, step, event.stage, event.detail, event.call?.argumentsJson))
-                            assistant.setWaitingDescription("NVIDIA NIM: step $step, ${event.detail}; total", state.toolChainRequest?.startedAtNanos ?: System.nanoTime())
+                            state.toolChainRequest?.progress?.let { progress ->
+                                progress.phase(event.stage, event.detail)?.let { phase ->
+                                    assistant.setWaitingDescription("Шаг $step · $phase", progress.startedAtNanos, progress.phaseStartedAtNanos)
+                                }
+                            }
                         }
                     }
                 },
                 onChunk = { chunk ->
                     responseBuffer.append(chunk)
-                    SwingUtilities.invokeLater { assistant.appendChunk(chunk) }
+                    // NIM is buffered already: classify complete tool payloads before anything is painted.
+                    if (backendId != "nvidia-nim") SwingUtilities.invokeLater { assistant.appendChunk(chunk) }
                 },
                 onComplete = { err ->
                     SwingUtilities.invokeLater {
@@ -920,7 +930,11 @@ class ChatPanel(
                             session.messages.add(ChatMessage("assistant", finalResp))
                         }
                         SwingUtilities.invokeLater {
-                            assistant.append("\n")
+                            if (backendId == "nvidia-nim") {
+                                assistant.finish(ChatPresentation.visibleText("assistant", finalResp).orEmpty())
+                            } else {
+                                assistant.append("\n")
+                            }
                             refreshSessionList()
                             onResponseReady()
                         }
@@ -957,6 +971,7 @@ class ChatPanel(
                                 // AWAITING_DECISION, it is deliberately NOT invoked here — the parked
                                 // copy is discharged by the resolution callback instead.
                                 if (outcome == ToolCallOutcome.NOT_CHAINED) {
+                                    showExecutionCheck(sessionId, traceId)
                                     // onCompleted does no Swing work itself; invoking it here on the
                                     // EDT is safe — it re-enters sendMessage which dispatches to a
                                     // backend executor internally and returns immediately.
@@ -964,6 +979,7 @@ class ChatPanel(
                                 }
                             }
                         } else {
+                            SwingUtilities.invokeLater { showExecutionCheck(sessionId, traceId) }
                             // No tool-call attempt: invoke onCompleted off-EDT on this backend thread,
                             // matching the existing behaviour at the error branch above (:634).
                             onCompleted?.invoke(finalResp, null)
@@ -973,6 +989,40 @@ class ChatPanel(
             )
         callbackConnectionRef.set(connection)
         inFlightConnection.set(connection)
+    }
+
+    private fun showExecutionCheck(
+        sessionId: String,
+        traceId: String,
+    ) {
+        val state = sessionStates[sessionId] ?: return
+        val chain = state.toolChainRequest?.takeIf { it.traceId == traceId && !it.noticeShown && backendIdFor(sessionId) == "nvidia-nim" }
+        val notice = chain?.execution?.notice()
+        val panel = sessionPanels[sessionId]
+        if (chain != null && notice != null && panel != null) {
+            chain.noticeShown = true
+            val context = buildToolContext(getSettings(), sessionId, "nvidia-nim")
+            val canRun = state.toolsMode && McpToolExecutor.functionTools(context).any { it.name in ChatExecutionEvidence.ACTIVE_TOOLS }
+            state.journal.add(ExecutionEntry(System.currentTimeMillis(), traceId, state.currentStep, "check_incomplete", notice))
+            panel.addComponent(ExecutionCheckNotice(notice, canRun) { runExecutionCheck(sessionId, state, chain, panel) })
+        }
+    }
+
+    private fun runExecutionCheck(
+        sessionId: String,
+        state: ToolSessionState,
+        chain: ToolChainRequest,
+        panel: SessionPanel,
+    ) {
+        // A stale card cannot submit work into another session or a newer task.
+        if (!isSending && activeSessionId == sessionId && state.toolChainRequest === chain) {
+            val text =
+                "Выполни практическую проверку доступными инструментами и сообщи только наблюдавшиеся результаты. " +
+                    "Соблюдай текущую область и подтверждения. Если инструмент недоступен, объясни причину.\n\nИсходная задача:\n${chain.userText}"
+            panel.addMessage("You", text)
+            sessionsById[sessionId]?.messages?.add(ChatMessage("user", text))
+            sendMessage(sessionId, text, null, state.toolsMode, actionName = "Chat")
+        }
     }
 
     private fun dispatchChatRequest(
@@ -1288,6 +1338,10 @@ class ChatPanel(
         val toolToken = runningTool.take() as? RunningToolToken
         val conn = inFlightConnection.take()
         if (toolToken == null && conn == null) return false
+        sessionStates.values.forEach { state ->
+            state.toolActivity?.finishIfWaiting("Вызов инструмента остановлен локально. Отправленный запрос может завершиться; продолжение отменено.")
+            state.toolActivity = null
+        }
         activeSessionId?.let { id ->
             sessionStates[id]?.let { state ->
                 state.currentStep = -1
@@ -2275,7 +2329,11 @@ class ChatPanel(
         val userText: String,
         val maxToolCalls: Int,
         val startedAtNanos: Long = System.nanoTime(),
-    )
+    ) {
+        val progress = ChatProgress(startedAtNanos)
+        val execution = ChatExecutionEvidence(userText)
+        var noticeShown = false
+    }
 
     private data class ToolSessionState(
         val contextStore: ChatContextStore = ChatContextStore(),
@@ -2286,6 +2344,7 @@ class ChatPanel(
         var toolCatalogSent: Boolean = false,
         var toolCatalogSnapshot: String? = null,
         var toolChainRequest: ToolChainRequest? = null,
+        var toolActivity: StreamingMessage? = null,
         // D-10: the SEC-06 approve/deny memory is keyed on the CHAT session and dies with it — no new
         // lifecycle, no persistence. An approval granted while reviewing target A must not silently
         // apply when the user opens a new chat about target B (T-22-20).
@@ -2383,7 +2442,8 @@ class ChatPanel(
             role: String,
             text: String,
         ) {
-            val message = ChatMessagePanel(role, text)
+            val visible = ChatPresentation.visibleText(role, text) ?: return
+            val message = ChatMessagePanel(role, visible)
             messagePanels.add(message)
             messages.add(message.root)
             messages.add(javax.swing.Box.createRigidArea(Dimension(0, 4)))
@@ -2474,11 +2534,16 @@ class ChatPanel(
             message.append(text)
         }
 
+        fun finishIfWaiting(text: String) {
+            if (firstChunk) finish(text)
+        }
+
         fun setWaitingDescription(
             description: String,
             startedAtNanos: Long = System.nanoTime(),
+            phaseStartedAtNanos: Long? = null,
         ) {
-            message.setWaitingDescription(description, startedAtNanos)
+            message.setWaitingDescription(description, startedAtNanos, phaseStartedAtNanos)
         }
     }
 
@@ -2501,6 +2566,7 @@ class ChatPanel(
         private var spinnerIndex = 0
         private var waitingDescription = "Thinking..."
         private var waitingSinceNanos = System.nanoTime()
+        private var waitingPhaseSinceNanos: Long? = null
         private val pendingText = StringBuilder()
         private var coalescingTimer: javax.swing.Timer? = null
         private var copyResetTimer: javax.swing.Timer? = null
@@ -2729,7 +2795,13 @@ class ChatPanel(
                     javax.swing.Timer(100) {
                         spinnerIndex = (spinnerIndex + 1) % spinnerFrames.size
                         val elapsed = TimeUnit.NANOSECONDS.toSeconds(System.nanoTime() - waitingSinceNanos)
-                        spinnerLabel.text = "${spinnerFrames[spinnerIndex]} $waitingDescription (${elapsed}s)"
+                        val phaseStarted = waitingPhaseSinceNanos
+                        spinnerLabel.text =
+                            if (phaseStarted == null) {
+                                "${spinnerFrames[spinnerIndex]} $waitingDescription (${elapsed}s)"
+                            } else {
+                                "${spinnerFrames[spinnerIndex]} ${ChatProgress.elapsedLabel(waitingDescription, waitingSinceNanos, phaseStarted, System.nanoTime())}"
+                            }
                     }
                 spinnerTimer?.start()
             }
@@ -2748,9 +2820,11 @@ class ChatPanel(
         fun setWaitingDescription(
             description: String,
             startedAtNanos: Long = System.nanoTime(),
+            phaseStartedAtNanos: Long? = null,
         ) {
             waitingDescription = description
             waitingSinceNanos = startedAtNanos
+            waitingPhaseSinceNanos = phaseStartedAtNanos
             spinnerLabel.text = description
         }
 
@@ -3366,6 +3440,11 @@ class ChatPanel(
         onCompleted: ((String, Throwable?) -> Unit)?,
         denied: ToolApprovalOutcome.Denied,
     ): ToolCallOutcome {
+        sessionStates[sessionId]
+            ?.toolChainRequest
+            ?.takeIf { it.traceId == traceId }
+            ?.execution
+            ?.recordDenied()
         val backendId = backendIdFor(sessionId)
         val canonicalId = McpToolExecutor.canonicalToolId(call.tool)
         // SC3. The refusal status rule is the reporter's and is deliberately NOT recomputed here: a
@@ -3451,6 +3530,12 @@ class ChatPanel(
         onCompleted: ((String, Throwable?) -> Unit)?,
         approved: ToolApprovalOutcome.Run,
     ): ToolCallOutcome {
+        val state = sessionStates[sessionId]
+        val progress = state?.toolChainRequest?.takeIf { it.traceId == traceId }?.progress
+        val activity = panel.addStreamingMessage("AI")
+        val phase = progress?.phase("tool", call.tool) ?: "Выполняется инструмент ${call.tool}"
+        activity.setWaitingDescription(phase, progress?.startedAtNanos ?: System.nanoTime(), progress?.phaseStartedAtNanos)
+        state?.toolActivity = activity
         val captured =
             ToolCallCapture(
                 sessionId = sessionId,
@@ -3462,6 +3547,7 @@ class ChatPanel(
                 traceId = traceId,
                 remainingToolIterations = remainingToolIterations,
                 startedAt = System.currentTimeMillis(),
+                activity = activity,
             )
         sessionStates[sessionId]?.journal?.add(ExecutionEntry(System.currentTimeMillis(), traceId, chainStepFor(sessionId, traceId, remainingToolIterations), "tool_running", call.tool, call.argsJson))
         // REL-05 / AI-SPEC E5 — THE LAST EDT READ OF GUARDED STATE ON THIS PATH. `panel` was resolved
@@ -3521,6 +3607,7 @@ class ChatPanel(
         val traceId: String,
         val remainingToolIterations: Int,
         val startedAt: Long,
+        val activity: StreamingMessage,
     )
 
     /**
@@ -3554,6 +3641,7 @@ class ChatPanel(
             onCompleted?.invoke(ToolApprovalGate.DENIAL_RESULT, null)
             return
         }
+        completeToolActivity(captured, canonicalId, result)
         if (result.isFailure) {
             // That branch emits its own audit pair and its own transcript row; nothing is emitted here,
             // so the "exactly one pair per exit" rule holds.
@@ -3570,6 +3658,7 @@ class ChatPanel(
             )
             // The chain stops here, so S3 must be left or the panel stays busy with nothing running.
             setSendingState(false)
+            showExecutionCheck(captured.sessionId, captured.traceId)
             // T-22-31: reportFailedToolCall sends no followup turn, so nothing downstream is carrying
             // `onCompleted` any more. Both former consumers now see EXECUTING and fall through, which
             // makes this its last chance to be discharged rather than dropped.
@@ -3605,7 +3694,6 @@ class ChatPanel(
             durationMs = durationMs,
             metadata = metadata,
         )
-        captured.panel.addMessage("Tool result: ${captured.call.tool}", toolResult)
         sessionStates[captured.sessionId]?.journal?.add(ExecutionEntry(System.currentTimeMillis(), captured.traceId, chainStep, "tool_result", captured.call.tool, captured.call.argsJson, toolResult))
         val compactResult = compactToolResult(captured.sessionId, toolResult, captured.userText, captured.call.tool)
         setSendingState(false)
@@ -3632,6 +3720,21 @@ class ChatPanel(
             traceId = captured.traceId,
             nativeResult = captured.call.invocationId?.let { FunctionResult(it, compactResult) },
         )
+    }
+
+    private fun completeToolActivity(
+        captured: ToolCallCapture,
+        canonicalId: String,
+        result: Result<String>,
+    ) {
+        val state = sessionStates[captured.sessionId]
+        state?.toolActivity = null
+        state
+            ?.toolChainRequest
+            ?.takeIf { it.traceId == captured.traceId }
+            ?.execution
+            ?.record(canonicalId, result.getOrNull(), result.isFailure, captured.call.argsJson)
+        captured.activity.finishIfWaiting(ChatPresentation.resultSummary(captured.call.tool, result.getOrNull() ?: "Error: execution failed"))
     }
 
     private fun compactToolResult(
@@ -3666,6 +3769,10 @@ class ChatPanel(
         result: Result<String>,
         durationMs: Long,
     ) {
+        captured.activity.finishIfWaiting("Вызов инструмента завершён после отмены; его результат не применён.")
+        sessionStates[captured.sessionId]?.let { state ->
+            if (state.toolActivity === captured.activity) state.toolActivity = null
+        }
         val metadata =
             toolDecisionReporter.report(
                 rawToolName = captured.call.tool,

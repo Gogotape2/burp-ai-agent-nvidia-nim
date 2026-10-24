@@ -2,11 +2,21 @@
 
 Unofficial NVIDIA NIM compatibility fork of [Custom AI Agent by six2dez](https://github.com/six2dez/burp-ai-agent).
 Based on upstream **v1.0.0**, commit `e7d3fc47d224d661e990c28da82dfa3bac50fa6b`.
-Fork release: **1.0.0-nim.15**. The extension appears in Burp as **Custom AI Agent**.
+Fork release: **1.0.0-nim.16**. The extension appears in Burp as **Custom AI Agent**.
 
-**[Download nim.15](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.15)** | [Technical notes](docs/nvidia-nim-patch.md) | [Web research](docs/web-research.md) | [Validation](verification/nim.15/verification.json) | [Upstream README](README.upstream.md)
+**[Download nim.16](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.16)** | [Technical notes](docs/nvidia-nim-patch.md) | [Web research](docs/web-research.md) | [Validation](verification/nim.16/verification.json) | [Upstream README](README.upstream.md)
 
-## Latest release: 1.0.0-nim.15
+## Latest release: 1.0.0-nim.16
+
+Interactive chat replies default to Russian; explicit user requests for another language still apply. Scanner prompts and structured scanner output are unchanged. Tool arguments/results and internal result-followup wrappers are not rendered as large chat bubbles: the model retains its existing history/context, and the chat shows compact tool status rows. Restored transcripts use the same presentation rules. Sanitized diagnostic details remain in Execution log.
+
+An explicit practical-testing request that ends without a successful HTTP/active-testing tool receives a separate incomplete-execution notice. Its **Выполнить проверку** button starts a new model request only when clicked, through the current tool catalog and existing approval/scope gates. This is conservative Russian/English intent detection and actual tool bookkeeping, not proof that a vulnerability was confirmed. Unavailable tools disable the button; stale cards cannot start work in another task.
+
+NIM waiting messages distinguish request preparation, the extension's queue, provider waiting, response processing, retry/backoff, tool execution and the final answer. A task clock survives transitions and retries; a separate phase clock identifies the current wait. Buffered NIM output is classified before rendering, so raw function JSON does not flash into the transcript.
+
+Selected compatible upstream fixes add an explicit UTF-8 JSON content type and classify HTTP 429 health results as reachable/degraded. See [upstream review](docs/upstream-review-nim16.md) for adopted and deferred changes. Artifact: `build/libs/Custom-AI-Agent-full-1.0.0-nim.16.jar`. This release uses the exact previously tested local JAR; publication metadata is attached separately from the original verification snapshot.
+
+## Previous release: 1.0.0-nim.15
 
 NVIDIA NIM settings now include **Tool calls per analysis**, with a default of 24 and a range of 1-128. Save applies to the next user request, including requests in an existing chat. Each chain retains its starting limit, counts individual batch members and denied attempts, and requests a final evidence-based answer when exhausted. Existing saved NIM options without this field receive 24; model presets restore the default. Other backends retain their existing limit. Cancellation, request timeouts, scope and approval checks are unchanged.
 
@@ -102,7 +112,7 @@ See [nim.8 validation](verification/nim.8/verification.json). No live Burp reloa
 
 Requires Java 21 or newer. Burp Community supports the chat workflow; automatic Burp passive-check integration requires Burp Professional.
 
-1. Download `Custom-AI-Agent-full-1.0.0-nim.15.jar` from this fork's [release](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.15).
+1. Download `Custom-AI-Agent-full-1.0.0-nim.16.jar` from this fork's [release](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.16).
 2. Disable the previous Custom AI Agent extension under **Extensions > Installed**.
 3. Add the downloaded file as a **Java** extension. Load one version at a time.
 4. Open **Custom AI Agent > Settings** and select **NVIDIA NIM**.
@@ -151,6 +161,10 @@ Existing proxy history is processed through a manual scan action or `ai_passive_
 
 ## Validation and known limits
 
+The nim.16 selected regression task ran **607 tests: 598 passed, 9 skipped, 0 failures/errors** on Windows/JDK 21. `ktlintCheck`, `detekt` and `shadowJar` passed. Tests cover hidden native arguments/results, preserved model evidence, fresh-panel session restoration, execution notices and guarded retry buttons, continuous clocks and cancellation after switching sessions. See [nim.16 verification](verification/nim.16/verification.json). The complete suite and separate live endpoint suite were not repeated. This JAR has not been installed or GUI-tested in the user's running Burp project; publication does not replace that check. The original `published=false` verification field records the local pre-publication snapshot.
+
+Earlier results retain their version-specific scope:
+
 The nim.15 selected regression task ran **589 tests: 580 passed, 9 skipped, 0 failures/errors** on Windows/JDK 21. One additional legacy-options persistence and validation test passed separately.
 `ktlintCheck`, `detekt` and `shadowJar` passed.
 The tests include the real Swing ChatPanel tool-call/result continuation with a synthetic backend, timeout cleanup, scope filtering and scanner-session isolation.
@@ -170,7 +184,7 @@ Use JDK 21 and the included Gradle wrapper:
 .\gradlew.bat shadowJar
 ```
 
-On macOS/Linux use `./gradlew shadowJar`. The output is `build/libs/Custom-AI-Agent-full-1.0.0-nim.15.jar`.
+On macOS/Linux use `./gradlew shadowJar`. The output is `build/libs/Custom-AI-Agent-full-1.0.0-nim.16.jar`.
 The complete test task remains available as `./gradlew test`; known baseline failures are documented above and are not silently excluded from that task.
 
 ## Privacy and security notes

@@ -1,0 +1,85 @@
+{
+  "version": "1.0.0-nim.16",
+  "published": false,
+  "baseHeadUnchanged": "8613def9f60cc9662d52b70251b60ef9215f2537",
+  "jarSha256": "e484e17143e1723a7330898bdc69c5616692d1225e04b8e642ed90c2a87da02b",
+  "selectedSuite": {
+    "tests": 607,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 9
+  },
+  "fullSuiteRun": false,
+  "liveEndpointSuiteRepeated": false,
+  "featureSuites": {
+    "com.six2dez.burp.aiagent.backends.http.MontoyaHttpRequestUtf8Test": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.backends.http.MontoyaRateLimitHealthTest": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.ui.ChatExecutionEvidenceTest": {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.ui.ChatPanelEdtConfinementTest": {
+      "tests": 23,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.ui.ChatPresentationTest": {
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.ui.ChatProgressTest": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.ui.Nim16ChatWorkflowTest": {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "staticChecks": {
+    "ktlintCheck": "passed",
+    "detekt": "passed",
+    "shadowJar": "passed"
+  },
+  "checks": [
+    "Real ChatPanel native tool payloads hidden before painting; preserved in model history and persistence",
+    "Restored chat applies the same presentation filter",
+    "Russian system instruction for interactive chat; scanner sources unchanged",
+    "Explicit practical requests without successful HTTP/active tool get a notice and guarded retry button",
+    "No automatic extra requests; unavailable tools and stale cards cannot submit work",
+    "Root task clock survives provider retries and tool transitions",
+    "Cancellation after switching sessions stops the original tool clock; a late result cannot resume the model chain",
+    "Existing native batches, cancellation, tool approvals, limits, web tools and settings regressions",
+    "Explicit UTF-8 content type and degraded health for HTTP 429"
+  ],
+  "limitations": [
+    "The execution notice recognizes explicit practical requests heuristically; a sent request does not prove a vulnerability",
+    "The language preference is a model instruction, not a translation or guarantee of every generated sentence",
+    "The execution journal retains its existing size bounds and privacy handling",
+    "Upstream v1.1.0 architecture and scanner/redaction migrations are deferred; see upstream-review-nim16.md"
+  ],
+  "burpUi": {
+    "installed": false,
+    "tested": false,
+    "reason": "The user explicitly requested no extension installation or reload during an active pentest on 2026-10-24. The running Burp extension was left unchanged. Validation uses isolated headless ChatPanel tests, not the current target session."
+  }
+}

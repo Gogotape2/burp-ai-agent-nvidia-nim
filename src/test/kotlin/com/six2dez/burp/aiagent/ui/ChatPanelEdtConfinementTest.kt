@@ -844,9 +844,9 @@ class ChatPanelEdtConfinementTest {
             "E9: the failure must reach Burp's error log naming its class. Logged: ${loggedErrors(h)}.",
         )
         assertTrue(
-            transcriptText(h).contains("Error: "),
-            "The user asked for this answer in the transcript, so the failure belongs there too — not " +
-                "only in a log they have no reason to open. Transcript: ${transcriptText(h)}",
+            transcriptText(h).contains("ошибка или отказ"),
+            "A compact failure status must remain in the transcript while exception details stay in " +
+                "the audit/error log checked above. Transcript: ${transcriptText(h)}",
         )
         // UI-SPEC S0. The chain STOPS at a failure with no followup turn, so nothing downstream would
         // clear the busy state; without an explicit clear the Send button stays hidden forever.
@@ -1835,7 +1835,7 @@ private fun settingsWithSingleMcpPermit(): AgentSettings {
  *
  * This string is the tool's own output, so it appears if and only if the row was really rendered.
  */
-private const val EMPTY_HISTORY_ROW = "Tool executed: proxy_http_history"
+private const val EMPTY_HISTORY_ROW = "Инструмент: proxy_http_history — ответ получен ("
 
 /** The exhaustion message `McpTool.runTool` writes when a limiter permit cannot be acquired. */
 private const val LIMITER_EXHAUSTED = "Too many concurrent MCP requests."
@@ -1955,11 +1955,13 @@ private const val REL_01_DATA_RACE_MESSAGE = "off-EDT access is a data race (REL
  *   description move onto the EDT, guarded by session identity, root trace and current step.
  * - `13` (nim.9): the completion callback records its final model result in the same EDT-confined
  *   journal flow before the existing UI completion runnables. Token accounting stays off this seam.
+ * - `14` (nim.16): the tools-disabled completion branch schedules its practical-execution notice on
+ *   the EDT. The helper validates the root trace before reading guarded state or adding a card.
  *
  * A bare number with no reason is not evidence. A number that fails loudly when someone adds an
  * unexplained marshalling point is.
  */
-private const val CHAT_PANEL_INVOKE_LATER_SITES = 13
+private const val CHAT_PANEL_INVOKE_LATER_SITES = 14
 
 /** The five `@GuardedBy("EDT")` session maps REL-01 confines to the EDT. */
 private val GUARDED_SESSION_MAPS =

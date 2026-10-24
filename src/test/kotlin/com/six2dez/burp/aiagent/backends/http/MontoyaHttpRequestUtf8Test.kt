@@ -40,6 +40,7 @@ class MontoyaHttpRequestUtf8Test {
         }
         assertArrayEquals(body.toByteArray(Charsets.UTF_8), captured.get())
         verify(request).withBody(bytes)
+        verify(request).withAddedHeader("Content-Type", "application/json; charset=utf-8")
         verify(request, never()).withBody(any<String>())
     }
 }

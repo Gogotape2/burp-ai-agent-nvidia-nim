@@ -34,7 +34,7 @@ class MontoyaHttpTransport(
                 .httpRequestFromUrl(url)
                 .withMethod("POST")
                 .withBody(ByteArray.byteArray(*jsonBody.toByteArray(Charsets.UTF_8)))
-                .withAddedHeader("Content-Type", "application/json")
+                .withAddedHeader("Content-Type", "application/json; charset=utf-8")
         headers.forEach { (name, value) ->
             request = request.withAddedHeader(name, value)
         }
@@ -64,6 +64,7 @@ class MontoyaHttpTransport(
                 resp.isSuccessful -> HealthCheckResult.Healthy
                 resp.statusCode == 401 || resp.statusCode == 403 ->
                     HealthCheckResult.Degraded("Endpoint reachable but authentication failed (HTTP ${resp.statusCode}).")
+                resp.statusCode == HTTP_TOO_MANY_REQUESTS -> HealthCheckResult.Degraded("Endpoint reachable but rate limited (HTTP 429).")
                 else -> HealthCheckResult.Unavailable("HTTP ${resp.statusCode}.")
             }
         } catch (e: Exception) {
@@ -99,6 +100,8 @@ class MontoyaHttpTransport(
     }
 
     companion object {
+        private const val HTTP_TOO_MANY_REQUESTS = 429
+
         // Extra grace over the request's own response timeout before the off-EDT worker join gives up.
         private const val EDT_OFFLOAD_GRACE_MS = 5_000L
 

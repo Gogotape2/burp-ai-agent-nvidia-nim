@@ -1,9 +1,19 @@
-# NVIDIA NIM patch notes - 1.0.0-nim.15
+# NVIDIA NIM patch notes - 1.0.0-nim.16
 
 Upstream base: [v1.0.0](https://github.com/six2dez/burp-ai-agent/releases/tag/v1.0.0), commit `e7d3fc47d224d661e990c28da82dfa3bac50fa6b`.
 This document describes the cumulative unofficial patch. It contains no runtime credentials or captured target traffic.
 
-Release: [1.0.0-nim.15](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.15). Current validation and Burp UI results are recorded in [nim.15 verification](../verification/nim.15/verification.json). The older sections below retain their original version-specific scope; statements about loading and testing a development snapshot refer to that snapshot.
+Release: [1.0.0-nim.16](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.16). Current regression results are recorded in [nim.16 verification](../verification/nim.16/verification.json); its pre-publication snapshot is preserved. This JAR was not installed or GUI-tested in the running Burp project. Earlier Burp UI results belong to [nim.15](../verification/nim.15/verification.json). The older sections below retain their original version-specific scope; statements about loading and testing a development snapshot refer to that snapshot.
+
+## nim.16 chat workflow and upstream review
+
+Chat presentation now keeps native call JSON, raw tool-result rows and internal tool-result followups out of the visible transcript. The existing model history and context snapshots retain the data. The same presentation filter applies to restored sessions; ordinary explanations and code examples remain visible. Model instructions request concise evidence summaries rather than full tool dumps.
+
+The interactive system instruction defaults replies to Russian, preserving code/schema/evidence literals and allowing an explicit user language override. Scanner prompts are not modified. An explicit practical-testing request receives an incomplete-execution notice when tool bookkeeping does not show a successful HTTP/active-testing call. The optional action button sends a new request under current permissions and scope; it does not invent a request or bypass a refusal. Read-only history lookup, denied calls, failures and successful HTTP execution are distinguished; completed execution is not a confirmed vulnerability verdict.
+
+Progress displays the local request queue, provider waiting, retries, tool execution and finalization with separate total/phase clocks. The total clock is fixed at the root request; cancelling a tool stops its local activity row and continuation, including after switching sessions. A superseded worker can close its original activity row without showing its result or restarting a model followup.
+
+The upstream review and limited compatible backports are recorded in [upstream review](upstream-review-nim16.md). Publication uses the exact tested local nim.16 JAR with updated release documentation.
 
 ## Local nim.15 configurable tool limit
 
