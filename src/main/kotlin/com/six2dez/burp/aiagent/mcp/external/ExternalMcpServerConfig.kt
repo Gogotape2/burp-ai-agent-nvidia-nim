@@ -1,5 +1,9 @@
 package com.six2dez.burp.aiagent.mcp.external
 
+private const val MAX_SERVER_NAME_CHARS = 64
+
+internal fun validExternalServerName(name: String): Boolean = name.length in 1..MAX_SERVER_NAME_CHARS && name == name.trim() && name.none { it.isISOControl() || it in ":[]" }
+
 /**
  * Transport protocol for an external MCP server connection.
  */

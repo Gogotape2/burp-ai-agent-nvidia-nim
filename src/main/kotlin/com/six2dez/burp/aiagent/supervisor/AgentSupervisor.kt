@@ -16,6 +16,7 @@ import com.six2dez.burp.aiagent.backends.openai.OpenAiCompatibleBackend
 import com.six2dez.burp.aiagent.config.AgentSettings
 import com.six2dez.burp.aiagent.config.Defaults
 import com.six2dez.burp.aiagent.config.NvidiaNimOptions
+import com.six2dez.burp.aiagent.mcp.external.ExternalMcpRuntime
 import com.six2dez.burp.aiagent.redact.PrivacyMode
 import com.six2dez.burp.aiagent.util.HeaderParser
 import java.util.UUID
@@ -35,6 +36,17 @@ class AgentSupervisor(
     private val workerPool: ExecutorService,
 ) {
     var aiRequestLogger: AiRequestLogger? = null
+    private val externalMcpRuntime = ExternalMcpRuntime(audit)
+
+    private val activeRuntimeDelegate =
+        lazy {
+            com.six2dez.burp.aiagent.mcp.tools
+                .McpActiveRuntime(api)
+        }
+
+    fun activeToolRuntime() = activeRuntimeDelegate.value
+
+    fun externalMcpManager() = externalMcpRuntime.manager
 
     data class Status(
         val state: String,
@@ -119,6 +131,7 @@ class AgentSupervisor(
 
     fun applySettings(settings: AgentSettings) {
         settingsRef.set(settings)
+        externalMcpRuntime.configure(settings.mcpSettings.externalMcpServers)
     }
 
     /**
@@ -1174,6 +1187,8 @@ class AgentSupervisor(
     }
 
     fun shutdown() {
+        if (activeRuntimeDelegate.isInitialized()) activeRuntimeDelegate.value.close()
+        externalMcpRuntime.close()
         stop()
         chatSessionManager.shutdown()
         monitorExec.shutdown()

@@ -1002,7 +1002,7 @@ class ChatPanel(
         if (chain != null && notice != null && panel != null) {
             chain.noticeShown = true
             val context = buildToolContext(getSettings(), sessionId, "nvidia-nim")
-            val canRun = state.toolsMode && McpToolExecutor.functionTools(context).any { it.name in ChatExecutionEvidence.ACTIVE_TOOLS }
+            val canRun = state.toolsMode && McpToolExecutor.functionTools(context).any { it.name in ChatExecutionEvidence.START_TOOLS }
             state.journal.add(ExecutionEntry(System.currentTimeMillis(), traceId, state.currentStep, "check_incomplete", notice))
             panel.addComponent(ExecutionCheckNotice(notice, canRun) { runExecutionCheck(sessionId, state, chain, panel) })
         }
@@ -3094,11 +3094,8 @@ class ChatPanel(
      * available" (WR-04 / UF-1). `ExternalMcpClientManager.availableTools()` is the same source
      * `McpToolExecutor.describeTools` advertises from, so consulting it is what makes the two agree.
      *
-     * Measured, and stated so it is not rediscovered as a surprise: nothing in the main source set
-     * currently builds an [McpToolContext] carrying an `externalClientManager`, so today every `ext:`
-     * name resolves to `false` here — which is also the only accurate answer, because with no manager
-     * the executor cannot run one. Taking the context rather than assuming its contents is what moves
-     * this function for free on the day one is wired in.
+     * Production contexts obtain the configured manager from AgentSupervisor. Discovery and
+     * execution use that same connected-tool snapshot; a disconnected external name is unknown.
      */
     private fun isKnownTool(
         canonicalId: String,
@@ -3894,6 +3891,8 @@ class ChatPanel(
             backendRegistry = supervisor.backendRegistry(),
             aiBackendId = backendId,
             chatContextStore = sessionStates[sessionId]?.contextStore,
+            externalClientManager = supervisor.externalMcpManager(),
+            activeRuntime = supervisor.activeToolRuntime(),
             preprocessProxyHistory = settings.preprocessProxyHistory,
             preprocessMaxResponseSizeKb = settings.preprocessMaxResponseSizeKb,
             preprocessFilterBinaryContent = settings.preprocessFilterBinaryContent,

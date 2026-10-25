@@ -1,0 +1,52 @@
+{
+  "server": {
+    "name": "burp-ai-agent",
+    "version": "1.0.0-nim.18"
+  },
+  "discoveredTools": 70,
+  "newToolsCovered": [
+    "intruder_attack_cancel",
+    "intruder_attack_results",
+    "intruder_attack_start",
+    "intruder_attack_status",
+    "websocket_close",
+    "websocket_connections",
+    "websocket_open",
+    "websocket_receive",
+    "websocket_send"
+  ],
+  "payloadCases": [
+    {
+      "mode": "SNIPER",
+      "observedRequests": 5,
+      "state": "COMPLETED"
+    },
+    {
+      "mode": "PITCHFORK",
+      "observedRequests": 3,
+      "state": "COMPLETED"
+    },
+    {
+      "mode": "CLUSTER_BOMB",
+      "observedRequests": 5,
+      "state": "COMPLETED"
+    },
+    {
+      "mode": "BATTERING_RAM",
+      "observedRequests": 3,
+      "state": "COMPLETED"
+    }
+  ],
+  "invalidPlanSentNoTraffic": true,
+  "malformedTemplateSentNoTraffic": true,
+  "headerOnlyTemplateRepaired": true,
+  "cancellationCompleted": true,
+  "webSocketTextEcho": true,
+  "webSocketBinaryEcho": true,
+  "webSocketClosed": true,
+  "webSocketCustomHandshake": true,
+  "nonUpgradeRejected": true,
+  "sendAfterCloseRejected": true,
+  "utf8PostBody": true,
+  "targets": "isolated loopback fixtures only"
+}

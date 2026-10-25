@@ -13,7 +13,7 @@ plugins {
 }
 
 group = "com.six2dez.burp"
-version = "1.0.0-nim.16"
+version = "1.0.0-nim.18"
 
 repositories {
     mavenCentral()
@@ -50,7 +50,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-io-core:0.5.4")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
 
-    // Logging façade (we keep it minimal; Burp logs are also used)
+    // Logging faГ§ade (we keep it minimal; Burp logs are also used)
     implementation("org.slf4j:slf4j-api:2.0.16")
     implementation("org.slf4j:slf4j-simple:2.0.16")
 
@@ -115,7 +115,7 @@ val generateBuildFlags by tasks.registering(GenerateBuildFlagsTask::class) {
 }
 
 sourceSets.main {
-    // Pass the task's own outputDir through the TaskProvider — Gradle infers the dependency
+    // Pass the task's own outputDir through the TaskProvider вЂ” Gradle infers the dependency
     // for any task consuming this source directory (including runKtlintCheckOverMainSourceSet).
     kotlin.srcDir(generateBuildFlags.flatMap { it.outputDir })
 }
@@ -159,14 +159,14 @@ tasks.test {
     // forcing the flag makes a developer Mac behave identically instead of silently taking the
     // windowed path and hiding a CI-only failure.
     // The generated BuildFlags.STORE_BUILD offers no other seam a test can compare against, so
-    // McpBuildFlagsVersionTest used to assert a literal false — which made `-PstoreBuild=true`, the
+    // McpBuildFlagsVersionTest used to assert a literal false вЂ” which made `-PstoreBuild=true`, the
     // BApp Store artifact build path, fail its own test suite. Passing the already-resolved
     // `storeBuild` Boolean (configuration-cache-safe, exactly as tasks.shadowJar consumes it) lets
     // the test assert that the generated constant tracks the Gradle property under either build.
     systemProperty("storeBuild.expected", storeBuild.toString())
     // SEC-06 / SC1: DecisionsAdrTest reads these two files from disk at runtime rather than from the
     // compiled classpath, so Gradle cannot infer them. Without declaring them, a change to EITHER is
-    // invisible to the up-to-date check and the build cache — and a commit that edits only DECISIONS.md,
+    // invisible to the up-to-date check and the build cache вЂ” and a commit that edits only DECISIONS.md,
     // or only the SecTier KDoc, produces byte-identical compiled output and therefore an identical
     // cache key. The test task would be restored from cache and the guard would never run, in exactly
     // the case it exists to catch. Measured: mutating the AUTO sentence left `./gradlew test` GREEN
@@ -179,7 +179,7 @@ tasks.test {
         .file("src/main/kotlin/com/six2dez/burp/aiagent/mcp/McpToolCatalog.kt")
         .withPropertyName("secTierKdocSource")
         .withPathSensitivity(PathSensitivity.RELATIVE)
-    // DOC-03 / SC5 / SC6: SecurityDocsTest reads these six markdown files from disk — the same
+    // DOC-03 / SC5 / SC6: SecurityDocsTest reads these six markdown files from disk вЂ” the same
     // stale-cache defect as the DECISIONS.md declaration above, in its purest form. A
     // documentation-only edit produces BYTE-IDENTICAL compiled output, so without these declarations
     // the cache key is unchanged and the guard is served from cache in exactly the commit that breaks
@@ -212,7 +212,7 @@ tasks.test {
     // SEC-06 / SC5 / CR-02: ToolApprovalGateVisibilityTest reads this file from disk to pin
     // `approvedOrigin` as private and `ModelApproved` as file-private, for the same reason and with the
     // same caveat as the two declarations above. A visibility widening does change the compiled output,
-    // but a comment-only edit to the file does not — and this guard's source-text half asserts on text
+    // but a comment-only edit to the file does not вЂ” and this guard's source-text half asserts on text
     // that includes the surrounding declarations. Undeclared, that edit produces an identical cache key
     // and the test task is served from cache with the guard never running (the 22-09 defect).
     inputs
@@ -220,11 +220,11 @@ tasks.test {
         .withPropertyName("originVisibilitySource")
         .withPathSensitivity(PathSensitivity.RELATIVE)
     // SEC-06 / SC4 / WR-09: ChatPanelToolGateTest reads this file from disk in `functionBody` to make
-    // the two structural assertions it cannot drive headlessly — the modal-dialog path in
+    // the two structural assertions it cannot drive headlessly вЂ” the modal-dialog path in
     // `userDialogPathIsNotDoublePrompted`, and `resolvePending`'s no-followup rule in
     // `shutdownResolvesAllPendingDecisionsWithoutSendingATurn`. Same defect as the three declarations
     // above, and the one 22-09 measured on its own ADR guard: an edit that changes the source text but
-    // not the compiled bytecode — a comment replaced in place, a string reflowed — produces an
+    // not the compiled bytecode вЂ” a comment replaced in place, a string reflowed вЂ” produces an
     // identical cache key, so the test task is served from cache and the structural guard never runs in
     // exactly the case it exists to catch.
     inputs
@@ -232,7 +232,7 @@ tasks.test {
         .withPropertyName("chatPanelStructuralSource")
         .withPathSensitivity(PathSensitivity.RELATIVE)
     // REL-05 / SC4 / Rule C-2: SettingsSaveAsyncTest reads this file from disk in
-    // `restoreDefaultsSource` to assert the one ordering it cannot drive headlessly — the
+    // `restoreDefaultsSource` to assert the one ordering it cannot drive headlessly вЂ” the
     // restore-defaults path opens with `JOptionPane.showConfirmDialog`, and `getRootFrame()` throws
     // `HeadlessException`. Same defect as the four declarations above: moving
     // `"Defaults restored and applied."` back out of the completion callback changes the source text
@@ -245,7 +245,7 @@ tasks.test {
         .withPathSensitivity(PathSensitivity.RELATIVE)
     // REL-05 / SC4 / CR-02: SettingsPersistQueueTest reads this file from disk in
     // `everyMainTabSettingsWriteGoesThroughThePersistQueue` to assert the four mention counts pinned in
-    // the KDoc ledger above `MainTab.persistSettings` — that every enumerated settings write goes
+    // the KDoc ledger above `MainTab.persistSettings` вЂ” that every enumerated settings write goes
     // through the persist queue rather than calling settingsRepo.save() inline on the EDT. Same defect
     // as the five declarations above: reverting one call site back to an inline save changes the source
     // text but leaves the surrounding compiled output close enough that the cache key can survive, so
@@ -256,7 +256,7 @@ tasks.test {
         .withPropertyName("mainTabPersistSource")
         .withPathSensitivity(PathSensitivity.RELATIVE)
     // REL-05 / SC4 / Rule T-3: SettingsSaveAsyncTest's corrected structural assertion now reads THIS
-    // file too — the narrowed claim is that applySettingsToUi's component writes stay on the EDT while
+    // file too вЂ” the narrowed claim is that applySettingsToUi's component writes stay on the EDT while
     // its three host notifications are suppressed at the restore call site, and the `notifyHosts` guard
     // that makes that true lives here. Same 22-09 stale-cache defect as the six declarations above:
     // deleting the guard changes the source text but can leave the cache key intact.
@@ -266,12 +266,12 @@ tasks.test {
         .withPathSensitivity(PathSensitivity.RELATIVE)
     // REL-06 / SC1 / REL-07: SchedulerGuardCoverageTest walks the WHOLE main source tree from disk and
     // asserts that only three files call a recurring schedule directly. A per-file declaration like the
-    // seven above would be blind to a scheduler introduced in an eighth, undeclared file — which is the
+    // seven above would be blind to a scheduler introduced in an eighth, undeclared file вЂ” which is the
     // exact defect the allowlist exists to catch, so the declaration has to be as wide as the assertion.
     // This is the first `inputs.dir` in this build and it deliberately supersedes per-file entries for
     // every Phase 24 structural assertion: REL-06-D here, REL-07-D and REL-07-F on CliBackend.kt, and
     // REL-07-G on App.kt / ActiveAiScanner.kt / AgentSupervisor.kt. Accepted cost: `tasks.test` re-runs
-    // on any main-source edit. The defect it prevents is the measured 22-09 one recorded at :170-176 —
+    // on any main-source edit. The defect it prevents is the measured 22-09 one recorded at :170-176 вЂ”
     // mutating source text without changing bytecode yields an identical cache key, so the guard is
     // served from cache in exactly the commit that breaks it.
     inputs
@@ -288,19 +288,19 @@ tasks.test {
             excludeTestsMatching("*ConcurrencyTest")
             excludeTestsMatching("*BackpressureTest")
             excludeTestsMatching("*RestartPolicyTest")
-            excludeTestsMatching("*SupervisionTest") // WR-03: 30s coerced-timeout floor — excluded from fast PR gate
+            excludeTestsMatching("*SupervisionTest") // WR-03: 30s coerced-timeout floor вЂ” excluded from fast PR gate
         }
     }
 }
 
 // REL-05 / SC1 / S-10: `tasks.test` above enables `-ea`, so a green McpToolExecutorEdtGuardTest there
-// proves the guard throws in a JVM where the debug-time assertion facility is ON — which is not the JVM
+// proves the guard throws in a JVM where the debug-time assertion facility is ON вЂ” which is not the JVM
 // SC1 is about. Shipped Burp runs WITHOUT `-ea`, and SC1's whole objection to the existing ChatPanel
 // assertion is that it is a no-op there. This task re-runs that one class with assertions DISABLED, so
 // "the guard fires where it matters" is demonstrated rather than asserted.
 //
 // WR-11 corrected the second half of this comment. It stays out of the `check` lifecycle task on
-// purpose — `check` is the fast path and this is a deliberate, separately named gate — AND it is
+// purpose вЂ” `check` is the fast path and this is a deliberate, separately named gate вЂ” AND it is
 // invoked explicitly by `.github/workflows/build.yml`'s pr-gate step on all three OSes and by
 // `.github/workflows/nightly-regression.yml`. The justification it used to carry, that it "duplicates
 // coverage the fast PR gate already has", was wrong in exactly the way that mattered: the fast PR gate
@@ -339,7 +339,7 @@ ktlint {
     version.set("1.5.0")
     android.set(false)
     // Strict by default: fails unless -PktlintLenient=true is passed as an escape hatch.
-    // Mass-format commit (style(sc3)) preceded this gate-flip — codebase is clean.
+    // Mass-format commit (style(sc3)) preceded this gate-flip вЂ” codebase is clean.
     ignoreFailures.set(
         (project.findProperty("ktlintLenient") as? String)?.equals("true", ignoreCase = true) == true,
     )

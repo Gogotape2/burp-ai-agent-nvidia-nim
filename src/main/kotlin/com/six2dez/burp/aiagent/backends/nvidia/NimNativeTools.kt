@@ -9,15 +9,26 @@ internal object NimNativeTools {
     private val functionName = Regex("[A-Za-z_][A-Za-z0-9_-]{0,63}")
     private val callId = Regex("[A-Za-z0-9_.:-]{1,128}")
     private const val MAX_CALLS = 16
+    private const val WIRE_HASH_BYTES = 24
     private const val MAX_ARGUMENT_CHARS = 256_000
+
+    fun wireName(name: String): String {
+        if (functionName.matches(name)) return name
+        require(name.startsWith("ext:")) { "Invalid native function name" }
+        val hash =
+            java.security.MessageDigest
+                .getInstance("SHA-256")
+                .digest(name.toByteArray(Charsets.UTF_8))
+        return "external_" + hash.take(WIRE_HASH_BYTES).joinToString("") { "%02x".format(it) }
+    }
 
     fun definitions(tools: List<FunctionTool>): List<Map<String, Any>> =
         tools.map { tool ->
-            require(functionName.matches(tool.name)) { "Invalid native function name" }
+            val name = wireName(tool.name)
             val schema = NimProtocol.mapper.readTree(tool.parametersJson)
             require(schema.isObject) { "Function parameters must be an object schema" }
             (schema as com.fasterxml.jackson.databind.node.ObjectNode).put("type", "object")
-            mapOf("type" to "function", "function" to mapOf("name" to tool.name, "description" to tool.description, "parameters" to schema))
+            mapOf("type" to "function", "function" to mapOf("name" to name, "description" to tool.description, "parameters" to schema))
         }
 
     fun parse(node: JsonNode): List<FunctionCall> {
@@ -65,7 +76,7 @@ internal object NimNativeTools {
         mapOf(
             "id" to call.id,
             "type" to "function",
-            "function" to mapOf("name" to call.name, "arguments" to call.argumentsJson),
+            "function" to mapOf("name" to wireName(call.name), "arguments" to call.argumentsJson),
         )
 
     fun unsupported(response: TransportResponse): Boolean {

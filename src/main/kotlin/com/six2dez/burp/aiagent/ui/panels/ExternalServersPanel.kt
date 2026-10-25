@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.ui.panels
 
+import com.six2dez.burp.aiagent.mcp.external.ExternalMcpConnectionState
 import com.six2dez.burp.aiagent.mcp.external.ExternalMcpServerConfig
 import com.six2dez.burp.aiagent.mcp.external.ExternalMcpTransport
 import com.six2dez.burp.aiagent.ui.components.AccordionPanel
@@ -60,6 +61,7 @@ import javax.swing.table.TableCellRenderer
 class ExternalServersPanel(
     private val initialServers: List<ExternalMcpServerConfig> = emptyList(),
     private val stdioEnabled: Boolean = false,
+    private val connectionState: (String) -> ExternalMcpConnectionState? = { null },
 ) {
     // ── Internal list of configured servers ─────────────────────────────────────────────────────
     private val servers: MutableList<ExternalMcpServerConfig> = initialServers.toMutableList()
@@ -252,6 +254,23 @@ class ExternalServersPanel(
      * encryption happens in [AgentSettingsRepository.saveExternalMcpServers].
      */
     fun getServers(): List<ExternalMcpServerConfig> = servers.toList()
+
+    fun refreshConnectionStates() {
+        tableModel.fireTableDataChanged()
+    }
+
+    private fun statusText(config: ExternalMcpServerConfig): String =
+        if (!config.enabled) {
+            "Disabled"
+        } else {
+            when (val state = connectionState(config.name)) {
+                is ExternalMcpConnectionState.Connected -> "Connected (${state.toolCount} tools)"
+                is ExternalMcpConnectionState.Connecting -> "Connecting"
+                is ExternalMcpConnectionState.Retrying -> "Retrying (${state.attempt}/${state.maxAttempts})"
+                is ExternalMcpConnectionState.Error -> "Error: ${state.message}"
+                else -> "Disconnected"
+            }
+        }
 
     /**
      * Replaces the internal list and refreshes the table. Items carry PLAINTEXT [bearerToken]
@@ -551,11 +570,13 @@ class ExternalServersPanel(
             nameErrorLabel.text = "Display name is required"
             nameErrorLabel.isVisible = true
             valid = false
-        } else if (name.contains(":")) {
+        } else if (!com.six2dez.burp.aiagent.mcp.external
+                .validExternalServerName(name)
+        ) {
             // WR-02: the server name is the routing key in ext:<server>:<tool> (split on ':'),
             // so a colon in the name misparses every external tool call. Reject it.
             nameField.border = LineBorder(DesignTokens.Colors.statusError, 2, true)
-            nameErrorLabel.text = "Display name cannot contain a colon (:)"
+            nameErrorLabel.text = "Use 1-64 printable characters without colons or brackets"
             nameErrorLabel.isVisible = true
             valid = false
         }
@@ -709,7 +730,7 @@ class ExternalServersPanel(
                 COL_ENABLE -> config.enabled
                 COL_NAME -> config.name
                 COL_TRANSPORT -> config.transport
-                COL_STATUS -> if (config.enabled) "Disconnected" else "Disabled"
+                COL_STATUS -> statusText(config)
                 COL_ACTIONS -> "..."
                 else -> ""
             }
@@ -773,7 +794,7 @@ class ExternalServersPanel(
                     statusText.startsWith("Connected") -> DesignTokens.Colors.statusSuccess
                     statusText.startsWith("Connecting") -> DesignTokens.Colors.statusWarning
                     statusText.startsWith("Retrying") -> DesignTokens.Colors.statusWarning
-                    statusText == "Error" -> DesignTokens.Colors.statusError
+                    statusText.startsWith("Error") -> DesignTokens.Colors.statusError
                     else -> DesignTokens.Colors.onSurfaceVariant
                 }
             val textColor =
@@ -781,7 +802,7 @@ class ExternalServersPanel(
                     statusText.startsWith("Connected") -> DesignTokens.Colors.statusSuccess
                     statusText.startsWith("Connecting") -> DesignTokens.Colors.statusWarning
                     statusText.startsWith("Retrying") -> DesignTokens.Colors.statusWarning
-                    statusText == "Error" -> DesignTokens.Colors.statusError
+                    statusText.startsWith("Error") -> DesignTokens.Colors.statusError
                     else -> DesignTokens.Colors.onSurfaceVariant
                 }
 

@@ -241,6 +241,8 @@ object App {
     }
 
     fun shutdown() {
+        com.six2dez.burp.aiagent.mcp.tools.McpEditorBridge
+            .clear()
         safeShutdownStep("MainTab") { mainTab?.shutdown() }
         mainTab = null
         safeShutdownStep("AI Request Logger") { aiRequestLogger.shutdown() }

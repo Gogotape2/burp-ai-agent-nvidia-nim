@@ -1,0 +1,252 @@
+{
+  "version": "1.0.0-nim.18",
+  "jarSha256": "8ac3b8980003a5cba886407b76637201204ab54c3b51417ddc30a84204554d09",
+  "selectedAutomatedSuite": {
+    "tests": 769,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 9
+  },
+  "fullFinalArtifactSuiteRun": false,
+  "broaderRegressionAttempt": {
+    "tests": 1518,
+    "failed": 1,
+    "skipped": 9,
+    "failure": "RedactionTest.windowedScanRedactsJsonPairAcrossEveryBoundaryAlignment: budget fallback",
+    "phase": "broader candidate run before the final WebSocket UTF-8 bridge fix",
+    "productionRedactionChanged": false,
+    "note": "The pre-existing boundary-alignment stress test hit a fail-closed time-budget marker. Original stress tests were restored unchanged; no production time limit was increased."
+  },
+  "staticChecks": {
+    "ktlintCheck": "passed",
+    "detekt": "passed",
+    "shadowJar": "passed"
+  },
+  "builtInToolCount": 71,
+  "builtInToolIds": [
+    "web_search",
+    "web_fetch",
+    "context_read",
+    "status",
+    "url_encode",
+    "url_decode",
+    "base64_encode",
+    "base64_decode",
+    "random_string",
+    "hash_compute",
+    "jwt_decode",
+    "decode_as",
+    "cookie_jar_get",
+    "proxy_http_history",
+    "proxy_http_history_regex",
+    "proxy_history_annotate",
+    "response_body_search",
+    "proxy_ws_history",
+    "proxy_ws_history_regex",
+    "site_map",
+    "site_map_regex",
+    "scope_check",
+    "scope_include",
+    "scope_exclude",
+    "scanner_issues",
+    "http1_request",
+    "http2_request",
+    "repeater_tab",
+    "repeater_tab_with_payload",
+    "intruder",
+    "intruder_prepare",
+    "insertion_points",
+    "params_extract",
+    "diff_requests",
+    "request_parse",
+    "response_parse",
+    "find_reflected",
+    "comparer_send",
+    "task_engine_state",
+    "proxy_intercept",
+    "editor_get",
+    "editor_set",
+    "project_options_get",
+    "user_options_get",
+    "project_options_set",
+    "user_options_set",
+    "collaborator_generate",
+    "collaborator_poll",
+    "scan_audit_start",
+    "scan_audit_start_mode",
+    "scan_audit_start_requests",
+    "scan_crawl_start",
+    "scan_task_status",
+    "scan_task_delete",
+    "scan_report",
+    "issue_create",
+    "ai_analyze",
+    "ai_passive_scan",
+    "ai_findings_recent",
+    "redact_preview",
+    "ai_audit_query",
+    "ai_backends_list",
+    "intruder_attack_start",
+    "intruder_attack_status",
+    "intruder_attack_results",
+    "intruder_attack_cancel",
+    "websocket_open",
+    "websocket_send",
+    "websocket_receive",
+    "websocket_close",
+    "websocket_connections"
+  ],
+  "installedBurp": {
+    "version": "2026.9.1 Professional",
+    "extensionVersion": "1.0.0-nim.18",
+    "oldExtensionEntriesRemoved": true,
+    "loadErrors": 0,
+    "loopbackIntegration": {
+      "server": {
+        "name": "burp-ai-agent",
+        "version": "1.0.0-nim.18"
+      },
+      "discoveredTools": 70,
+      "newToolsCovered": [
+        "intruder_attack_cancel",
+        "intruder_attack_results",
+        "intruder_attack_start",
+        "intruder_attack_status",
+        "websocket_close",
+        "websocket_connections",
+        "websocket_open",
+        "websocket_receive",
+        "websocket_send"
+      ],
+      "payloadCases": [
+        {
+          "mode": "SNIPER",
+          "observedRequests": 5,
+          "state": "COMPLETED"
+        },
+        {
+          "mode": "PITCHFORK",
+          "observedRequests": 3,
+          "state": "COMPLETED"
+        },
+        {
+          "mode": "CLUSTER_BOMB",
+          "observedRequests": 5,
+          "state": "COMPLETED"
+        },
+        {
+          "mode": "BATTERING_RAM",
+          "observedRequests": 3,
+          "state": "COMPLETED"
+        }
+      ],
+      "invalidPlanSentNoTraffic": true,
+      "malformedTemplateSentNoTraffic": true,
+      "headerOnlyTemplateRepaired": true,
+      "cancellationCompleted": true,
+      "webSocketTextEcho": true,
+      "webSocketBinaryEcho": true,
+      "webSocketClosed": true,
+      "webSocketCustomHandshake": true,
+      "nonUpgradeRejected": true,
+      "sendAfterCloseRejected": true,
+      "utf8PostBody": true,
+      "targets": "isolated loopback fixtures only"
+    }
+  },
+  "featureSuites": {
+    "com.six2dez.burp.aiagent.mcp.external.ExternalMcpProtocolTest": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.mcp.tools.ActiveToolContractTest": {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.mcp.tools.McpAllToolsSmokeTest": {
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.mcp.tools.PayloadAttackRuntimeTest": {
+      "tests": 12,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.mcp.tools.WebSocketRuntimeTest": {
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.ui.Nim16ChatWorkflowTest": {
+      "tests": 4,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.util.SchedulerGuardCoverageTest": {
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "limits": {
+    "nativeIntruderGuiControl": false,
+    "payloadRunnerUsesBurpHttpApi": true,
+    "browserSocketTakeover": false,
+    "webSocketOwnership": "extension-created connections only"
+  },
+  "testTargets": "isolated loopback fixtures; no pentest target traffic",
+  "liveProviderChat": {
+    "provider": "configured NVIDIA NIM backend",
+    "protocol": "native function calling with one recovered textual call correlated to native history",
+    "advertisedBuiltInTools": 71,
+    "testTargets": "isolated loopback HTTP and WebSocket fixtures only",
+    "initialCandidateTrials": [
+      {
+        "observation": "Literal backslash line escapes caused three 30-second HTTP transport errors; caught before publication and rejected before sending in the revised build."
+      },
+      {
+        "observation": "Model omitted final HTTP header separator repeatedly; revised build completes unambiguous header-only templates. WebSocket text echo and close succeeded."
+      }
+    ],
+    "finalCandidateRetest": {
+      "passed": true,
+      "jarSha256": "8ac3b8980003a5cba886407b76637201204ab54c3b51417ddc30a84204554d09",
+      "modelSteps": 8,
+      "elapsedMs": 22659,
+      "toolsExecuted": [
+        "intruder_attack_start",
+        "intruder_attack_status",
+        "intruder_attack_results",
+        "websocket_open",
+        "websocket_send",
+        "websocket_receive",
+        "websocket_close"
+      ],
+      "payloadRequests": 3,
+      "payloadHttpStatuses": [
+        200,
+        200,
+        200
+      ],
+      "payloadRequestElapsedMs": [
+        5,
+        7,
+        2
+      ],
+      "webSocketInboundCyrillicEcho": true,
+      "webSocketClosed": true,
+      "russianFinalAnswerObserved": true,
+      "evidence": "Installed extension execution journal exported through its UI; assertions use actual tool results, not model claims. Raw journal remains local."
+    }
+  }
+}

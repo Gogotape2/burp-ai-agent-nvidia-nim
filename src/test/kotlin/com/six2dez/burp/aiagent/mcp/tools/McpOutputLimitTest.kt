@@ -42,14 +42,14 @@ class McpOutputLimitTest {
     }
 
     @Test
-    fun limitOutput_fallbackStillTruncatesLegacyStrings() {
+    fun limitOutput_countsTheTruncationNoticeWithinTheByteBudget() {
         val context = testContext(maxBodyBytes = 64)
         val oversized = "X".repeat(4096)
 
         val output = context.limitOutput(oversized)
 
         assertTrue(output.contains("truncated"))
-        assertTrue(output.toByteArray(Charsets.UTF_8).size > 64)
+        assertTrue(output.toByteArray(Charsets.UTF_8).size <= 64)
     }
 
     private fun testContext(maxBodyBytes: Int): McpToolContext {

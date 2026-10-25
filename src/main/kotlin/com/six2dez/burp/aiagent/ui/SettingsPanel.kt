@@ -224,7 +224,8 @@ class SettingsPanel(
     internal val externalServersPanel =
         ExternalServersPanel(
             initialServers = settings.mcpSettings.externalMcpServers,
-            stdioEnabled = settings.mcpSettings.stdioEnabled,
+            stdioEnabled = !com.six2dez.burp.aiagent.BuildFlags.STORE_BUILD,
+            connectionState = { name -> supervisor.externalMcpManager()?.connectionState(name) },
         )
     internal val mcpEnabled = ToggleSwitch(settings.mcpSettings.enabled)
     internal val mcpHost =

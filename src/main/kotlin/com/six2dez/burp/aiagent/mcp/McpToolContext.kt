@@ -45,14 +45,30 @@ data class McpToolContext(
     // Phase 16 (CAP-02): optional external MCP client manager. Null when no external servers
     // are configured. Defaults to null so all existing construction sites compile unchanged.
     val externalClientManager: ExternalMcpClientManager? = null,
+    val activeRuntime: com.six2dez.burp.aiagent.mcp.tools.McpActiveRuntime? = null,
     val aiBackendId: String? = null,
     val chatContextStore: com.six2dez.burp.aiagent.context.ChatContextStore? = null,
     val webResearchClient: com.six2dez.burp.aiagent.web.WebResearchClient? = null,
     val webCancelled: () -> Boolean = { false },
 ) {
-    fun isToolEnabled(name: String): Boolean = (name != "context_read" || chatContextStore != null) && (toolToggles[name] ?: false)
+    fun isToolEnabled(name: String): Boolean =
+        if (name.startsWith("ext:")) {
+            externalClientManager?.availableTools()?.any { it.name == name } == true
+        } else {
+            (name != "context_read" || chatContextStore != null) && (toolToggles[name] ?: false)
+        }
 
     fun isUnsafeTool(name: String): Boolean = unsafeTools.contains(name)
+
+    fun unavailableReason(name: String): String? {
+        val descriptor = McpToolCatalog.all().firstOrNull { it.id == name }
+        return when {
+            !isToolEnabled(name) -> if (name == "context_read" && chatContextStore == null) "No chat context in this session" else "Disabled in tool settings"
+            !isUnsafeToolAllowed(name) -> "Enable this tool in unsafe tool permissions"
+            descriptor?.proOnly == true && edition != burp.api.montoya.core.BurpSuiteEdition.PROFESSIONAL -> "Burp Suite Professional required"
+            else -> runtimeUnavailableReason(name, this)
+        }
+    }
 
     fun isUnsafeToolAllowed(name: String): Boolean {
         if (!isUnsafeTool(name)) return true
@@ -85,8 +101,16 @@ data class McpToolContext(
         val limit = maxBodyBytes.coerceAtLeast(1)
         val bytes = raw.toByteArray(Charsets.UTF_8)
         if (bytes.size <= limit) return raw
-        val truncated = String(bytes, 0, limit, Charsets.UTF_8)
-        return "$truncated... (truncated ${bytes.size} bytes to $limit bytes)"
+        val boundary = if (raw.startsWith("[EXTERNAL-TOOL-RESULT:") || raw.startsWith("Error: [EXTERNAL-TOOL-RESULT:")) "\n[/EXTERNAL-TOOL-RESULT]" else ""
+        val suffix = "... (truncated ${bytes.size} bytes to $limit bytes)$boundary"
+        val available = limit - suffix.toByteArray(Charsets.UTF_8).size
+        return if (available < 0) {
+            com.six2dez.burp.aiagent.util
+                .utf8Prefix("[truncated]", limit)
+        } else {
+            com.six2dez.burp.aiagent.util
+                .utf8Prefix(raw, available) + suffix
+        }
     }
 
     fun limitedJoin(
@@ -112,4 +136,20 @@ data class McpToolContext(
             preprocessFilterBinaryContent = preprocessFilterBinaryContent,
             preprocessAllowedContentTypes = preprocessAllowedContentTypes,
         )
+}
+
+private fun runtimeUnavailableReason(
+    name: String,
+    context: McpToolContext,
+): String? {
+    val dependency =
+        when (name) {
+            in com.six2dez.burp.aiagent.mcp.tools.ActiveToolHandlers.ids -> context.activeRuntime to "Active testing runtime is not initialized"
+            "ai_analyze" -> context.supervisor to "AI runtime is not initialized"
+            "ai_passive_scan", "ai_findings_recent" -> context.passiveScanner to "Passive scanner is not initialized"
+            "ai_backends_list" -> context.backendRegistry to "Backend registry is not initialized"
+            "ai_audit_query" -> context.aiRequestLogger to "AI request logger is not initialized"
+            else -> return null
+        }
+    return if (dependency.first == null) dependency.second else null
 }

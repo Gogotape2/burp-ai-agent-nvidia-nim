@@ -35,3 +35,7 @@ audit.jsonl
 Thumbs.db
 ehthumbs.db
 Desktop.ini
+
+# Local Python verification helpers
+__pycache__/
+*.pyc

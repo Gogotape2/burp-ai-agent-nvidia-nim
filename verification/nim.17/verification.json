@@ -1,0 +1,107 @@
+{
+  "version": "1.0.0-nim.17",
+  "published": false,
+  "committed": false,
+  "baseHeadUnchanged": "fa5992620ac5bd65bbc2bfb5b1d49f7190ce5653",
+  "jarSha256": "9f822b2e895b741ac33c0880321e44ce45e7a1d257efaec51ef5342b6c3d5460",
+  "selectedSuite": {
+    "tests": 777,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 9
+  },
+  "fullSuiteRun": false,
+  "liveProviderTestsRun": false,
+  "burpUi": {
+    "installed": false,
+    "tested": false,
+    "runningProjectModified": false
+  },
+  "builtInToolCount": 62,
+  "syntheticDispatchPrivacyModes": [
+    "OFF",
+    "BALANCED"
+  ],
+  "isolatedStdioProtocolIntegration": true,
+  "staticChecks": {
+    "ktlintCheck": "passed",
+    "detekt": "passed",
+    "shadowJar": "passed"
+  },
+  "featureSuites": {
+    "com.six2dez.burp.aiagent.backends.nvidia.NimExternalToolsTest": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.mcp.external.ExternalMcpProtocolTest": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.mcp.tools.AiToolRuntimeTest": {
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.mcp.tools.McpAllToolsSmokeTest": {
+      "tests": 2,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.mcp.tools.McpCatalogContractTest": {
+      "tests": 150,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.mcp.tools.McpEditorBridgeTest": {
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.mcp.tools.McpRuntimeRepairsTest": {
+      "tests": 9,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.mcp.tools.McpSchemaContractTest": {
+      "tests": 3,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.mcp.tools.McpTextMessagesTest": {
+      "tests": 1,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.mcp.tools.NormalizeHttpRequestTest": {
+      "tests": 6,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    },
+    "com.six2dez.burp.aiagent.ui.ChatPanelEdtConfinementTest": {
+      "tests": 23,
+      "failures": 0,
+      "errors": 0,
+      "skipped": 0
+    }
+  },
+  "limitations": [
+    "Montoya service/factory fixtures verify dispatcher behavior, not a licensed Burp GUI installation",
+    "The isolated Java MCP fixture verifies real stdio framing, discovery and calls; arbitrary third-party server compatibility is not claimed",
+    "Intruder tools prepare tabs; Montoya has no attack-start/results API",
+    "WebSocket tools read captured history; active WebSocket tooling is outside the current catalog",
+    "External MCP tools are wired into chat; the embedded server does not relay external tools",
+    "Provider acceptance, live service availability, scan completion and vulnerability confirmation are not implied by dispatch success"
+  ]
+}

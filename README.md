@@ -2,11 +2,19 @@
 
 Unofficial NVIDIA NIM compatibility fork of [Custom AI Agent by six2dez](https://github.com/six2dez/burp-ai-agent).
 Based on upstream **v1.0.0**, commit `e7d3fc47d224d661e990c28da82dfa3bac50fa6b`.
-Fork release: **1.0.0-nim.16**. The extension appears in Burp as **Custom AI Agent**.
+Fork release: **1.0.0-nim.18**. The extension appears in Burp as **Custom AI Agent**.
 
-**[Download nim.16](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.16)** | [Technical notes](docs/nvidia-nim-patch.md) | [Web research](docs/web-research.md) | [Validation](verification/nim.16/verification.json) | [Upstream README](README.upstream.md)
+**[Download nim.18](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.18)** | [Technical notes](docs/nvidia-nim-patch.md) | [Web research](docs/web-research.md) | [Validation](verification/nim.18/verification.json) | [Upstream README](README.upstream.md)
 
-## Latest release: 1.0.0-nim.16
+## Latest release: 1.0.0-nim.18
+
+The full build now exposes **71 built-in tools**. Nine new tools let the model run bounded HTTP payload attacks and manage extension-owned WebSockets. Payload attacks support Sniper, Battering Ram, Pitchfork and Cluster Bomb, asynchronous progress, paginated results, response hashes and cancellation. WebSockets support custom upgrade requests, text/binary sends, cursor-based reads and explicit close.
+
+The payload runner uses Burp's HTTP API. It is separate from the native Intruder GUI, whose public API still only stages requests. WebSocket tools create their own connections; captured browser sockets remain read-only history. Existing permissions, automatic-approval preference, scope and privacy controls apply. See [usage and limits](docs/active-testing-nim18.md).
+
+This release also includes the nim.17 tool-runtime and external-MCP repairs; see [technical details](docs/tool-runtime-nim17.md).
+
+## Previous release: 1.0.0-nim.16
 
 Interactive chat replies default to Russian; explicit user requests for another language still apply. Scanner prompts and structured scanner output are unchanged. Tool arguments/results and internal result-followup wrappers are not rendered as large chat bubbles: the model retains its existing history/context, and the chat shows compact tool status rows. Restored transcripts use the same presentation rules. Sanitized diagnostic details remain in Execution log.
 
@@ -112,7 +120,7 @@ See [nim.8 validation](verification/nim.8/verification.json). No live Burp reloa
 
 Requires Java 21 or newer. Burp Community supports the chat workflow; automatic Burp passive-check integration requires Burp Professional.
 
-1. Download `Custom-AI-Agent-full-1.0.0-nim.16.jar` from this fork's [release](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.16).
+1. Download `Custom-AI-Agent-full-1.0.0-nim.18.jar` from this fork's [release](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.18).
 2. Disable the previous Custom AI Agent extension under **Extensions > Installed**.
 3. Add the downloaded file as a **Java** extension. Load one version at a time.
 4. Open **Custom AI Agent > Settings** and select **NVIDIA NIM**.
@@ -161,6 +169,14 @@ Existing proxy history is processed through a manual scan action or `ai_passive_
 
 ## Validation and known limits
 
+The nim.18 selected regression run on Windows/JDK 21 completed **769 tests: 760 passed, 9 skipped, 0 failures/errors**. `ktlintCheck`, `detekt` and `shadowJar` passed. The installed build was checked against isolated HTTP and WebSocket services through its real local MCP server, covering all nine new tools, all four payload modes, cancellation, invalid plans, Unicode and binary frames, custom upgrade headers and connection cleanup. See [nim.18 verification](verification/nim.18/verification.json) and [active-testing documentation](docs/active-testing-nim18.md).
+
+In a live NVIDIA NIM chat, the model executed seven tools over eight model steps in about 23 seconds: three payload requests returned HTTP 200, Cyrillic WebSocket echo matched, the connection closed and the model produced a Russian summary. Results were checked against the installed extension's execution journal. This local fixture measurement is not a provider latency guarantee.
+
+A broader earlier candidate run executed 1,518 tests and failed one existing redaction time-budget stress case (`RedactionTest.windowedScanRedactsJsonPairAcrossEveryBoundaryAlignment`). Its original test and production redaction limits were preserved. The complete suite was not rerun on the final artifact; the selected passing run and installed-Burp checks are separate evidence, not a claim that the full suite is green.
+
+Earlier results retain their version-specific scope:
+
 The nim.16 selected regression task ran **607 tests: 598 passed, 9 skipped, 0 failures/errors** on Windows/JDK 21. `ktlintCheck`, `detekt` and `shadowJar` passed. Tests cover hidden native arguments/results, preserved model evidence, fresh-panel session restoration, execution notices and guarded retry buttons, continuous clocks and cancellation after switching sessions. See [nim.16 verification](verification/nim.16/verification.json). The complete suite and separate live endpoint suite were not repeated. This JAR has not been installed or GUI-tested in the user's running Burp project; publication does not replace that check. The original `published=false` verification field records the local pre-publication snapshot.
 
 Earlier results retain their version-specific scope:
@@ -174,7 +190,7 @@ The exact nim.15 JAR was loaded into Burp Pro. A saved limit of 3 ran three of f
 - HTTP 429 quota/capacity errors and HTTP 500 provider errors remain possible. Client retries and timeouts cannot increase provider capacity.
 - Responses are displayed after generation; this buffered transport does not provide live token streaming. Async HTTP 202 polling is not implemented.
 - Stop discards late results locally. Montoya does not expose an HTTP cancellation handle in the transport path used here, so a submitted inference can continue at the provider.
-- `ai_analyze` performs model inference. Current-source retrieval uses the separately enabled `web_search` and `web_fetch` tools. Free search relies on public HTML and may encounter challenges or markup changes; the web client does not provide a configured corporate proxy, login, JavaScript rendering or PDF downloads. See [web research](docs/web-research.md). The upstream external MCP client manager is not wired into the production chat runtime.
+- `ai_analyze` performs model inference. Current-source retrieval uses the separately enabled `web_search` and `web_fetch` tools. Free search relies on public HTML and may encounter challenges or markup changes; the web client does not provide a configured corporate proxy, login, JavaScript rendering or PDF downloads. See [web research](docs/web-research.md). External MCP routing and its limits are described in [the tool runtime notes](docs/tool-runtime-nim17.md).
 
 ## Build
 
@@ -184,7 +200,7 @@ Use JDK 21 and the included Gradle wrapper:
 .\gradlew.bat shadowJar
 ```
 
-On macOS/Linux use `./gradlew shadowJar`. The output is `build/libs/Custom-AI-Agent-full-1.0.0-nim.16.jar`.
+On macOS/Linux use `./gradlew shadowJar`. The output is `build/libs/Custom-AI-Agent-full-1.0.0-nim.18.jar`.
 The complete test task remains available as `./gradlew test`; known baseline failures are documented above and are not silently excluded from that task.
 
 ## Privacy and security notes

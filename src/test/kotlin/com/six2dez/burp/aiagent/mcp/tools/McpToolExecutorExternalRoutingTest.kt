@@ -8,6 +8,7 @@ import com.six2dez.burp.aiagent.mcp.McpToolContext
 import com.six2dez.burp.aiagent.mcp.external.ExternalMcpClientManager
 import com.six2dez.burp.aiagent.mcp.external.ExternalToolDescriptor
 import com.six2dez.burp.aiagent.redact.PrivacyMode
+import io.modelcontextprotocol.kotlin.sdk.CallToolResult
 import io.modelcontextprotocol.kotlin.sdk.TextContent
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -138,9 +139,10 @@ class McpToolExecutorExternalRoutingTest {
 
         val manager =
             mock<ExternalMcpClientManager> {
-                onBlocking { callTool(any(), any(), anyOrNull()) } doSuspendableAnswer { wrappedResult }
+                onBlocking { callToolResult(any(), any(), anyOrNull()) } doSuspendableAnswer { CallToolResult(content = listOf(TextContent(wrappedResult))) }
             }
 
+        whenever(manager.availableTools()).thenReturn(listOf(ExternalToolDescriptor("demo", "ext:demo:search", "Search")))
         val context = baseContext(manager = manager)
         val result = McpToolExecutor.executeToolResult("ext:demo:search", """{"q":"test"}""", context)
 
@@ -173,7 +175,7 @@ class McpToolExecutorExternalRoutingTest {
         // status is a built-in tool; must route to the built-in dispatcher and not the manager.
         val manager =
             mock<ExternalMcpClientManager> {
-                onBlocking { callTool(any(), any(), anyOrNull()) } doSuspendableAnswer {
+                onBlocking { callToolResult(any(), any(), anyOrNull()) } doSuspendableAnswer {
                     error("Should not be called for a built-in tool")
                 }
             }
@@ -214,14 +216,15 @@ class McpToolExecutorExternalRoutingTest {
         val capturedArgs = mutableListOf<Map<String, Any?>>()
         val manager =
             mock<ExternalMcpClientManager> {
-                onBlocking { callTool(any(), any(), anyOrNull()) } doSuspendableAnswer { call ->
+                onBlocking { callToolResult(any(), any(), anyOrNull()) } doSuspendableAnswer { call ->
                     @Suppress("UNCHECKED_CAST")
                     capturedArgs.add(call.getArgument(2) as? Map<String, Any?> ?: emptyMap())
-                    "[EXTERNAL-TOOL-RESULT:s]\nok\n[/EXTERNAL-TOOL-RESULT]"
+                    CallToolResult(content = listOf(TextContent("[EXTERNAL-TOOL-RESULT:s]\nok\n[/EXTERNAL-TOOL-RESULT]")))
                 }
             }
 
         // STRICT mode ensures redactIfNeeded() passes through the redaction pipeline.
+        whenever(manager.availableTools()).thenReturn(listOf(ExternalToolDescriptor("s", "ext:s:t", "Tool")))
         val context = baseContext(manager = manager, privacyMode = PrivacyMode.STRICT)
         val argsJson = """{"query":"example.com"}"""
         McpToolExecutor.executeToolResult("ext:s:t", argsJson, context)

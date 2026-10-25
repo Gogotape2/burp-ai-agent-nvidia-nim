@@ -22,14 +22,18 @@ class LimitedStringBuilder(
         if (value.isEmpty()) return !truncated
         if (truncated) return false
 
-        for (ch in value) {
-            val chBytes = ch.toString().toByteArray(Charsets.UTF_8).size
+        var index = 0
+        while (index < value.length) {
+            val point = value.codePointAt(index)
+            val chars = String(Character.toChars(point))
+            val chBytes = chars.toByteArray(Charsets.UTF_8).size
             if (byteCount + chBytes > maxBytes) {
                 truncated = true
                 return false
             }
-            output.append(ch)
+            output.append(chars)
             byteCount += chBytes
+            index += Character.charCount(point)
         }
         return true
     }
@@ -40,9 +44,9 @@ class LimitedStringBuilder(
         val suffix = "... (truncated)"
         val suffixBytes = suffix.toByteArray(Charsets.UTF_8).size
         while (output.isNotEmpty() && byteCount + suffixBytes > maxBytes) {
-            val last = output.last()
-            output.deleteCharAt(output.length - 1)
-            byteCount -= last.toString().toByteArray(Charsets.UTF_8).size
+            val last = output.codePointBefore(output.length)
+            output.delete(output.length - Character.charCount(last), output.length)
+            byteCount -= String(Character.toChars(last)).toByteArray(Charsets.UTF_8).size
         }
         if (byteCount + suffixBytes <= maxBytes) {
             output.append(suffix)

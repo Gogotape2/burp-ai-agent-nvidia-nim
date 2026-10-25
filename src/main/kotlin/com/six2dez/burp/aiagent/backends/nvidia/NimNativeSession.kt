@@ -113,16 +113,21 @@ internal class NimNativeSession {
 
     fun accept(completion: NimProtocol.Completion): FunctionCall? {
         if (completion.calls.isEmpty()) return null
+        val calls =
+            completion.calls.map { call ->
+                val name = if (nativeProtocol) definitions.firstOrNull { NimNativeTools.wireName(it.name) == call.name }?.name ?: call.name else call.name
+                call.copy(name = name)
+            }
         require(completion.calls.none { it.id in seenIds }) { "Provider reused a tool-call ID" }
         seenIds.addAll(completion.calls.map { it.id })
         messages.add(
             if (nativeProtocol) {
-                mapOf("role" to "assistant", "content" to completion.content.ifBlank { null }, "tool_calls" to completion.calls.map { NimNativeTools.wire(it) })
+                mapOf("role" to "assistant", "content" to completion.content.ifBlank { null }, "tool_calls" to calls.map { NimNativeTools.wire(it) })
             } else {
                 mapOf("role" to "assistant", "content" to completion.calls.joinToString("\n") { NimNativeTools.envelope(it, includeId = true) })
             },
         )
-        queued.addAll(completion.calls)
+        queued.addAll(calls)
         return queued.removeFirst().also { active = it }
     }
 }

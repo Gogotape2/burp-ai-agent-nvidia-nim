@@ -8,7 +8,6 @@ package com.six2dez.burp.aiagent.mcp.tools
 import burp.api.montoya.MontoyaApi
 import burp.api.montoya.core.HighlightColor
 import burp.api.montoya.http.message.HttpHeader
-import burp.api.montoya.http.message.requests.HttpRequest
 import burp.api.montoya.scanner.BuiltInAuditConfiguration
 import com.six2dez.burp.aiagent.mcp.McpToolContext
 import com.six2dez.burp.aiagent.redact.Redaction
@@ -36,19 +35,20 @@ internal fun executeIssueCreate(
     api: MontoyaApi,
     context: McpToolContext,
 ): String {
+    McpScopeFilter.rejectIfOutOfScope(input.baseUrl, context)?.let { return it }
     val severityEnum =
         try {
             burp.api.montoya.scanner.audit.issues.AuditIssueSeverity
                 .valueOf(input.severity.uppercase())
         } catch (_: Exception) {
-            return "Invalid severity: ${input.severity}. Use: HIGH, MEDIUM, LOW, INFORMATION"
+            return "Error: Invalid severity: ${input.severity}. Use: HIGH, MEDIUM, LOW, INFORMATION"
         }
     val confidenceEnum =
         try {
             burp.api.montoya.scanner.audit.issues.AuditIssueConfidence
                 .valueOf(input.confidence.uppercase())
         } catch (_: Exception) {
-            return "Invalid confidence: ${input.confidence}. Use: CERTAIN, FIRM, TENTATIVE"
+            return "Error: Invalid confidence: ${input.confidence}. Use: CERTAIN, FIRM, TENTATIVE"
         }
     val typicalSeverityEnum =
         try {
@@ -63,13 +63,12 @@ internal fun executeIssueCreate(
             val service =
                 input.toMontoyaServiceOrNull(context::resolveHost)
                     ?: return "Error: targetHostname/targetPort/usesHttps required when providing httpRequest"
-            val fixedRequest = input.httpRequest.replace("\r", "").replace("\n", "\r\n")
-            val request = HttpRequest.httpRequest(service, fixedRequest)
+            val fixedRequest = normalizeHttpRequest(input.httpRequest)
+            val request = McpTextMessages.request(service, fixedRequest)
             val httpResponse =
                 if (input.httpResponseContent != null) {
-                    val fixedResponse = input.httpResponseContent.replace("\r", "").replace("\n", "\r\n")
-                    burp.api.montoya.http.message.responses.HttpResponse
-                        .httpResponse(fixedResponse)
+                    val fixedResponse = normalizeHttpRequest(input.httpResponseContent)
+                    McpTextMessages.response(fixedResponse)
                 } else {
                     null
                 }
@@ -173,7 +172,11 @@ internal fun hasEquivalentIssue(
  */
 internal fun normalizeHttpRequest(content: String): String {
     // Normalize line endings to CRLF
-    val normalized = content.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
+    val separator = Regex("\\r?\\n\\r?\\n").find(content)
+    val headers = separator?.let { content.substring(0, it.range.first) } ?: content
+    val rawBody = separator?.let { content.substring(it.range.last + 1) }.orEmpty()
+    val normalizedHeaders = headers.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "\r\n")
+    val normalized = normalizedHeaders + if (separator != null) "\r\n\r\n" + rawBody else ""
 
     // Find the header/body separator
     val separatorIndex = normalized.indexOf("\r\n\r\n")
@@ -182,8 +185,7 @@ internal fun normalizeHttpRequest(content: String): String {
     val headerSection = normalized.substring(0, separatorIndex)
     val body = normalized.substring(separatorIndex + 4)
 
-    // If no body, no need to update Content-Length
-    if (body.isEmpty()) return normalized
+    // Empty bodies also need stale Content-Length values corrected.
 
     // Calculate actual body length in bytes
     val bodyBytes = body.toByteArray(Charsets.UTF_8)
@@ -209,7 +211,9 @@ internal fun truncateIfNeeded(
     val limit = maxBodyBytes.coerceAtLeast(1)
     val bytes = serialized.toByteArray(Charsets.UTF_8)
     if (bytes.size <= limit) return serialized
-    val truncated = String(bytes, 0, limit, Charsets.UTF_8)
+    val truncated =
+        com.six2dez.burp.aiagent.util
+            .utf8Prefix(serialized, limit)
     return "$truncated... (truncated ${bytes.size} bytes to $limit bytes)"
 }
 

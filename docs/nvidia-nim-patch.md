@@ -1,3 +1,15 @@
+# NVIDIA NIM patch notes - 1.0.0-nim.18
+
+## nim.18 active payload and WebSocket tools
+
+Nine new tools add a bounded extension-owned payload runner and WebSocket sessions to chat, SSE and stdio. Tool metadata and JSON schemas are advertised through the same runtime catalog. Background jobs and sockets belong to the extension supervisor and are cleaned up on unload. This release includes the local nim.17 repairs. See [active testing](active-testing-nim18.md) and [nim.17 runtime details](tool-runtime-nim17.md).
+
+Release: [1.0.0-nim.18](https://github.com/Gogotape2/burp-ai-agent-nvidia-nim/releases/tag/v1.0.0-nim.18). Current validation and its limits are recorded in [nim.18 verification](../verification/nim.18/verification.json). Templates containing literal backslash line escapes are rejected before sending. The real Burp WebSocket byte-string boundary uses an explicit UTF-8 bridge, verified with Cyrillic echo traffic.
+
+## Historical local tool runtime update - 1.0.0-nim.17
+
+Originally an unpublished local build. See [the 62-tool audit and runtime guide](tool-runtime-nim17.md) and [verification](../verification/nim.17/verification.json). The running Burp project was not reloaded or modified during that audit.
+
 # NVIDIA NIM patch notes - 1.0.0-nim.16
 
 Upstream base: [v1.0.0](https://github.com/six2dez/burp-ai-agent/releases/tag/v1.0.0), commit `e7d3fc47d224d661e990c28da82dfa3bac50fa6b`.

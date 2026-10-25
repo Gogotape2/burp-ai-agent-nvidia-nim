@@ -427,7 +427,7 @@ internal fun Server.registerToolsLegacy(
         context,
         toolName = "collaborator_poll",
     ) {
-        val key = secretKey.trim()
+        val key = (clientId ?: secretKey).orEmpty().trim()
         val client =
             CollaboratorRegistry.get(key)
                 ?: api.collaborator().restoreClient(

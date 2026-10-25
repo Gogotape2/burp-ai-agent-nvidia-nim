@@ -79,6 +79,7 @@ class McpSupervisor(
         backendRegistry: BackendRegistry,
     ) {
         serverManager.setAiToolDependencies(supervisor, passiveScanner, backendRegistry)
+        stdioBridge.setAiToolDependencies(supervisor, passiveScanner, backendRegistry)
     }
 
     fun applySettings(

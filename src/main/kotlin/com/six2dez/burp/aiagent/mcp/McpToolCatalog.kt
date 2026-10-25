@@ -401,7 +401,7 @@ object McpToolCatalog {
             McpToolDescriptor(
                 id = "editor_get",
                 title = "Get active editor contents",
-                description = "Outputs the contents of the active message editor.",
+                description = "Reads the HTTP message selected by opening its Burp context menu.",
                 category = "Editor",
                 defaultEnabled = false,
                 secTier = SecTier.CONFIRM,
@@ -409,7 +409,7 @@ object McpToolCatalog {
             McpToolDescriptor(
                 id = "editor_set",
                 title = "Set active editor contents",
-                description = "Sets the content of the active message editor.",
+                description = "Replaces the HTTP message explicitly selected through its Burp context menu.",
                 category = "Editor",
                 defaultEnabled = false,
                 unsafeOnly = true,
@@ -457,20 +457,22 @@ object McpToolCatalog {
                 description = "Generates a Burp Collaborator payload.",
                 category = "Collaborator",
                 defaultEnabled = true,
+                proOnly = true,
                 secTier = SecTier.CONFIRM,
             ),
             McpToolDescriptor(
                 id = "collaborator_poll",
                 title = "Poll Collaborator interactions",
-                description = "Fetches interactions for a Collaborator secret key.",
+                description = "Fetches interactions. Pass the returned client_id as clientId, or supply an existing secretKey.",
                 category = "Collaborator",
                 defaultEnabled = true,
+                proOnly = true,
                 secTier = SecTier.CONFIRM,
             ),
             McpToolDescriptor(
                 id = "scan_audit_start",
                 title = "Start scanner audit",
-                description = "Starts a Burp Scanner audit.",
+                description = "Creates an empty Burp audit task. To scan traffic, use scan_audit_start_requests with explicit requests.",
                 category = "Scanner",
                 defaultEnabled = false,
                 proOnly = true,
@@ -603,13 +605,13 @@ object McpToolCatalog {
             ),
         )
 
-    fun all(): List<McpToolDescriptor> = tools
+    fun all(): List<McpToolDescriptor> = tools + ActiveToolCatalog.tools
 
-    fun available(storeBuild: Boolean = BuildFlags.STORE_BUILD): List<McpToolDescriptor> = if (storeBuild) tools.filter { it.nativeTool } else tools
+    fun available(storeBuild: Boolean = BuildFlags.STORE_BUILD): List<McpToolDescriptor> = if (storeBuild) all().filter { it.nativeTool } else all()
 
-    fun defaults(): Map<String, Boolean> = tools.associate { it.id to it.defaultEnabled }
+    fun defaults(): Map<String, Boolean> = all().associate { it.id to it.defaultEnabled }
 
-    fun unsafeToolIds(): Set<String> = tools.filter { it.unsafeOnly }.map { it.id }.toSet()
+    fun unsafeToolIds(): Set<String> = all().filter { it.unsafeOnly }.map { it.id }.toSet()
 
     fun mergeWithDefaults(overrides: Map<String, Boolean>): Map<String, Boolean> {
         val merged = defaults().toMutableMap()

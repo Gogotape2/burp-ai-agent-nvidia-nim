@@ -51,6 +51,8 @@ class McpRuntimeContextFactory(
             supervisor = supervisor,
             passiveScanner = passiveScanner,
             backendRegistry = backendRegistry,
+            externalClientManager = supervisor?.externalMcpManager(),
+            activeRuntime = supervisor?.activeToolRuntime(),
             // 07-03 D-03: pass the global MCP scope toggle to every tool handler via context.
             scopeOnly = settings.scopeOnly,
         )

@@ -80,9 +80,8 @@ internal object McpScopeFilter {
      *
      * Used by write-style MCP tools to perform the scope check BEFORE constructing the
      * Montoya `HttpRequest` (which requires Burp's static factory and so is unavailable in
-     * pure-JVM unit tests). The resulting URL is equivalent to what `HttpRequest.url()` would
-     * return at runtime, modulo any query rewriting Burp itself does — both flow into
-     * `api.scope().isInScope(...)` identically.
+     * pure-JVM unit tests). The hostname comes from the connection destination, so an absolute
+     * request-target cannot substitute a different host for the scope decision.
      */
     fun deriveScopeUrl(
         hostname: String,
@@ -107,11 +106,17 @@ internal object McpScopeFilter {
                 !usesHttps && port == 80 -> ""
                 else -> ":$port"
             }
-        // request-target may already be an absolute URI (CONNECT, OPTIONS *); pass it through.
-        return if (path.startsWith("http://") || path.startsWith("https://") || path == "*") {
-            path
-        } else {
-            "$scheme://$hostname$portSuffix$path"
-        }
+        val host = if (hostname.contains(':') && !hostname.startsWith('[')) "[$hostname]" else hostname
+        return "$scheme://$host$portSuffix${scopeRequestPath(path)}"
     }
 }
+
+private fun scopeRequestPath(target: String): String =
+    when {
+        target.startsWith("http://") || target.startsWith("https://") ->
+            java.net.URI(target).let { uri ->
+                uri.rawPath.orEmpty().ifBlank { "/" } + (uri.rawQuery?.let { "?$it" } ?: "")
+            }
+        target.startsWith('/') -> target
+        else -> "/"
+    }

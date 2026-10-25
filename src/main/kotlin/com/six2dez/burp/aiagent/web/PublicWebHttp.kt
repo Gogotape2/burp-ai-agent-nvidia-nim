@@ -1,5 +1,6 @@
 package com.six2dez.burp.aiagent.web
 
+import com.six2dez.burp.aiagent.util.scheduleGuarded
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
@@ -45,7 +46,12 @@ internal class PublicWebHttp(
             call.timeout().timeout(remaining, TimeUnit.NANOSECONDS)
             val worker = Thread.currentThread()
             val cancelled = WebCancellation.current()
-            val watch = monitor.scheduleAtFixedRate({ if (worker.isInterrupted || cancelled()) call.cancel() }, 0, CANCEL_POLL_MS, TimeUnit.MILLISECONDS)
+            val watch =
+                monitor.scheduleGuarded("PublicWebHttp", "cancel", {
+                    org.slf4j.LoggerFactory
+                        .getLogger(PublicWebHttp::class.java)
+                        .warn(it)
+                }, 0, CANCEL_POLL_MS, TimeUnit.MILLISECONDS) { if (worker.isInterrupted || cancelled()) call.cancel() }
             try {
                 call.execute().use { response ->
                     if (response.code in WebLimits.REDIRECT_STATUSES) {

@@ -58,7 +58,7 @@ internal object McpToolRegistrations {
             "response_parse",
             "find_reflected",
             "comparer_send",
-        )
+        ) + ActiveToolHandlers.ids
 
     val scanner =
         listOf(
@@ -118,9 +118,7 @@ internal fun Server.registerToolHandler(
     context: McpToolContext,
 ) {
     val descriptor = McpToolCatalog.available().firstOrNull { it.id == toolId } ?: return
-    if (descriptor.proOnly && context.edition != burp.api.montoya.core.BurpSuiteEdition.PROFESSIONAL) {
-        return
-    }
+    if (context.unavailableReason(toolId) != null) return
 
     addTool(
         name = descriptor.id,
@@ -131,7 +129,7 @@ internal fun Server.registerToolHandler(
             val startMs = System.currentTimeMillis()
             val result = McpToolExecutor.executeToolResult(descriptor.id, argsJson, context)
             val durationMs = System.currentTimeMillis() - startMs
-            val argsSummary = if (toolId in setOf("web_search", "web_fetch")) "(web research arguments omitted)" else argsJson?.take(120) ?: "(none)"
+            val argsSummary = "(arguments omitted; see argument hash)"
             val resultText =
                 result.content
                     .filterIsInstance<TextContent>()

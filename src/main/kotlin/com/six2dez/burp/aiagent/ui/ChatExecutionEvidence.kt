@@ -26,7 +26,7 @@ internal class ChatExecutionEvidence(
         argumentsJson: String? = null,
     ) {
         attempted.add(tool)
-        val active = tool in ACTIVE_TOOLS && isActiveMode(tool, argumentsJson)
+        val active = tool in ACTIVE_TOOLS && isActiveMode(tool, argumentsJson, result)
         val failed = failure || result == null || result.startsWith("Error:")
         if (active && failed) activeFailure = true
         if (active && !failed) successful.add(tool)
@@ -45,8 +45,37 @@ internal class ChatExecutionEvidence(
     private fun isActiveMode(
         tool: String,
         arguments: String?,
+        result: String?,
+    ): Boolean =
+        when (tool) {
+            "http1_request", "http2_request", "websocket_send" -> true
+            "intruder_attack_start" -> false
+            "intruder_attack_results" -> successfulAttackResult(result)
+            else -> activeScannerMode(tool, arguments)
+        }
+
+    private fun successfulAttackResult(result: String?): Boolean =
+        runCatching {
+            val status =
+                Json
+                    .parseToJsonElement(result.orEmpty())
+                    .jsonObject
+                    .getValue("status")
+                    .jsonObject
+            status
+                .getValue("completed")
+                .jsonPrimitive.content
+                .toInt() >
+                status
+                    .getValue("failed")
+                    .jsonPrimitive.content
+                    .toInt()
+        }.getOrDefault(false)
+
+    private fun activeScannerMode(
+        tool: String,
+        arguments: String?,
     ): Boolean {
-        if (tool == "http1_request" || tool == "http2_request") return true
         // Starting an empty audit or selecting passive checks does not send a verification request.
         return runCatching {
             val args = Json.parseToJsonElement(arguments.orEmpty()).jsonObject
@@ -62,7 +91,8 @@ internal class ChatExecutionEvidence(
     }
 
     companion object {
-        val ACTIVE_TOOLS = setOf("http1_request", "http2_request", "scan_audit_start", "scan_audit_start_mode", "scan_audit_start_requests")
+        val ACTIVE_TOOLS = setOf("http1_request", "http2_request", "scan_audit_start", "scan_audit_start_mode", "scan_audit_start_requests", "intruder_attack_start", "intruder_attack_results", "websocket_send")
+        val START_TOOLS = ACTIVE_TOOLS - "intruder_attack_results"
         private val explanatory = Regex("(?iuU)^\\s*(как\\b|объясни\\b|расскажи\\b|составь\\s+план|how\\b|explain\\b|describe\\b|plan\\b)")
         private val practical =
             Regex(

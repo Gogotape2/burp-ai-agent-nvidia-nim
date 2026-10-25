@@ -21,17 +21,12 @@ class NormalizeHttpRequestTest {
     }
 
     @Test
-    fun updatesContentLengthWhenBodyContainsNewlines() {
-        // Body with LF-only that gets converted to CRLF
-        // Original body is "line1\nline2" (11 chars with LF)
-        // After CRLF conversion, body becomes "line1\r\nline2" (12 bytes)
-        val input = "POST /api HTTP/1.1\nHost: example.com\nContent-Length: 11\n\nline1\nline2"
-
+    fun preservesBodyNewlinesAndCalculatesTheirActualLength() {
+        val body = "line1\nline2"
+        val input = "POST /api HTTP/1.1\nHost: example.com\nContent-Length: 99\n\n$body"
         val result = normalizeHttpRequest(input)
-
-        // After normalization, the body's newline becomes CRLF
-        // "line1\r\nline2" = 12 bytes
-        assertTrue(result.contains("Content-Length: 12"), "Content-Length should be updated to 12 for body with CRLF")
+        assertTrue(result.contains("Content-Length: 11"))
+        assertEquals(body, result.substringAfter("\r\n\r\n"))
     }
 
     @Test

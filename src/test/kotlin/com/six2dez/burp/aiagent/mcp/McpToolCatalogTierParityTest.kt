@@ -27,8 +27,8 @@ class McpToolCatalogTierParityTest {
      * the new tool in exactly one of the tier sets below.
      */
     @Test
-    fun catalogHasSixtyTwoTools() {
-        assertEquals(62, McpToolCatalog.all().size)
+    fun catalogHasSeventyOneTools() {
+        assertEquals(71, McpToolCatalog.all().size)
     }
 
     @Test
@@ -64,6 +64,8 @@ class McpToolCatalogTierParityTest {
                 // Bounded, self-referential reads of the extension's own state.
                 "redact_preview",
                 "scan_task_status",
+                "intruder_attack_status",
+                "websocket_connections",
                 "ai_backends_list",
             )
         val actual =
@@ -89,6 +91,9 @@ class McpToolCatalogTierParityTest {
                 // Sends attacker-influenceable traffic; args are the whole attack surface.
                 "http1_request",
                 "http2_request",
+                "intruder_attack_start",
+                "websocket_open",
+                "websocket_send",
                 // Stages attacker-chosen traffic one click from the wire — ADR-15's "or stage it for
                 // one click" clause. Both repeater tools were CONFIRM until Phase 22's verification
                 // (WARN-2) measured that they stage a model-authored HttpRequest exactly as

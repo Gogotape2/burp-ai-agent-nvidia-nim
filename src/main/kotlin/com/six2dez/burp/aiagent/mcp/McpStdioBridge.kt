@@ -35,6 +35,16 @@ class McpStdioBridge(
         contextFactory.aiRequestLogger = logger
     }
 
+    fun setAiToolDependencies(
+        supervisor: com.six2dez.burp.aiagent.supervisor.AgentSupervisor,
+        scanner: com.six2dez.burp.aiagent.scanner.PassiveAiScanner,
+        registry: com.six2dez.burp.aiagent.backends.BackendRegistry,
+    ) {
+        contextFactory.supervisor = supervisor
+        contextFactory.passiveScanner = scanner
+        contextFactory.backendRegistry = registry
+    }
+
     fun start(
         settings: McpSettings,
         privacyMode: PrivacyMode,

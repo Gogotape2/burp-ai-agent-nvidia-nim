@@ -1,0 +1,622 @@
+[
+  {
+    "id": "web_search",
+    "category": "Web research",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "web_fetch",
+    "category": "Web research",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "context_read",
+    "category": "Context",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "status",
+    "category": "Extension",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "url_encode",
+    "category": "Utilities",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "url_decode",
+    "category": "Utilities",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "base64_encode",
+    "category": "Utilities",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "base64_decode",
+    "category": "Utilities",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "random_string",
+    "category": "Utilities",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "hash_compute",
+    "category": "Utilities",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "jwt_decode",
+    "category": "Utilities",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "decode_as",
+    "category": "Utilities",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "cookie_jar_get",
+    "category": "Utilities",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "proxy_http_history",
+    "category": "History",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "proxy_http_history_regex",
+    "category": "History",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "proxy_history_annotate",
+    "category": "History",
+    "proOnly": false,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "response_body_search",
+    "category": "History",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "proxy_ws_history",
+    "category": "History",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "proxy_ws_history_regex",
+    "category": "History",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "site_map",
+    "category": "Site Map",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "site_map_regex",
+    "category": "Site Map",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "scope_check",
+    "category": "Scope",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "scope_include",
+    "category": "Scope",
+    "proOnly": false,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "scope_exclude",
+    "category": "Scope",
+    "proOnly": false,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "scanner_issues",
+    "category": "Scanner",
+    "proOnly": true,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "http1_request",
+    "category": "Requests",
+    "proOnly": false,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "http2_request",
+    "category": "Requests",
+    "proOnly": false,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "repeater_tab",
+    "category": "Requests",
+    "proOnly": false,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "repeater_tab_with_payload",
+    "category": "Requests",
+    "proOnly": false,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "intruder",
+    "category": "Requests",
+    "proOnly": false,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "intruder_prepare",
+    "category": "Requests",
+    "proOnly": false,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "insertion_points",
+    "category": "Requests",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "params_extract",
+    "category": "Requests",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "diff_requests",
+    "category": "Requests",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "request_parse",
+    "category": "Requests",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "response_parse",
+    "category": "Requests",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "find_reflected",
+    "category": "Requests",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "comparer_send",
+    "category": "Requests",
+    "proOnly": false,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "task_engine_state",
+    "category": "Burp Control",
+    "proOnly": false,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "proxy_intercept",
+    "category": "Burp Control",
+    "proOnly": false,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "editor_get",
+    "category": "Editor",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "editor_set",
+    "category": "Editor",
+    "proOnly": false,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "project_options_get",
+    "category": "Config",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "user_options_get",
+    "category": "Config",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "project_options_set",
+    "category": "Config",
+    "proOnly": false,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "user_options_set",
+    "category": "Config",
+    "proOnly": false,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "collaborator_generate",
+    "category": "Collaborator",
+    "proOnly": true,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "collaborator_poll",
+    "category": "Collaborator",
+    "proOnly": true,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "scan_audit_start",
+    "category": "Scanner",
+    "proOnly": true,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "scan_audit_start_mode",
+    "category": "Scanner",
+    "proOnly": true,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "scan_audit_start_requests",
+    "category": "Scanner",
+    "proOnly": true,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "scan_crawl_start",
+    "category": "Scanner",
+    "proOnly": true,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "scan_task_status",
+    "category": "Scanner",
+    "proOnly": true,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "scan_task_delete",
+    "category": "Scanner",
+    "proOnly": true,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "scan_report",
+    "category": "Scanner",
+    "proOnly": true,
+    "unsafeOnly": true,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "issue_create",
+    "category": "Issues",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "ai_analyze",
+    "category": "AI",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "ai_passive_scan",
+    "category": "AI",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "ai_findings_recent",
+    "category": "AI",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "redact_preview",
+    "category": "AI",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "ai_audit_query",
+    "category": "AI",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  },
+  {
+    "id": "ai_backends_list",
+    "category": "AI",
+    "proOnly": false,
+    "unsafeOnly": false,
+    "syntheticDispatchModes": [
+      "OFF",
+      "BALANCED"
+    ]
+  }
+]

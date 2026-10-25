@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [1.0.0-nim.18] - 2026-10-25
+
+- Add nine chat/MCP tools for bounded HTTP payload attacks and extension-owned WebSocket sessions, with cancellation, result pagination and unload cleanup.
+- Support all four Intruder-style modes through the extension's HTTP runner; native Intruder GUI attack control remains outside the public Montoya API.
+- Preserve UTF-8 across HTTP bodies and the Montoya WebSocket byte-string boundary; reject double-escaped HTTP templates before traffic.
+- Include the nim.17 schema, HTTP, editor, scanner and external MCP runtime repairs.
+- Validate the installed build on loopback services and record selected regression results and the separate pre-existing redaction stress-test failure in `verification/nim.18/`.
+
 ## [1.0.0] - 2026-08-22
 
 First stable release. The whole line is a security-correctness milestone: an external review of

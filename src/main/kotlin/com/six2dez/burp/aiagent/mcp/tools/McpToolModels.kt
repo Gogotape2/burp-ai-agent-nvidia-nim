@@ -39,6 +39,7 @@ data class ToolSpec(
     val unsafeOnly: Boolean,
     val proOnly: Boolean,
     val argsSchema: String?,
+    val unavailableReason: String? = null,
 )
 
 // ──────────────────────────────────────────────────────────────────────────────
@@ -51,6 +52,7 @@ data class SendHttp1Request(
     override val targetHostname: String,
     override val targetPort: Int,
     override val usesHttps: Boolean,
+    val timeoutMs: Long = 30_000,
 ) : HttpServiceParams
 
 @Serializable
@@ -61,11 +63,12 @@ data class SendHttp2Request(
     override val targetHostname: String,
     override val targetPort: Int,
     override val usesHttps: Boolean,
+    val timeoutMs: Long = 30_000,
 ) : HttpServiceParams
 
 @Serializable
 data class CreateRepeaterTab(
-    val tabName: String?,
+    val tabName: String? = null,
     val content: String,
     override val targetHostname: String,
     override val targetPort: Int,
@@ -74,7 +77,7 @@ data class CreateRepeaterTab(
 
 @Serializable
 data class RepeaterTabWithPayload(
-    val tabName: String?,
+    val tabName: String? = null,
     val content: String,
     val replacements: Map<String, String>,
     override val targetHostname: String,
@@ -84,7 +87,7 @@ data class RepeaterTabWithPayload(
 
 @Serializable
 data class SendToIntruder(
-    val tabName: String?,
+    val tabName: String? = null,
     val content: String,
     override val targetHostname: String,
     override val targetPort: Int,
@@ -93,7 +96,7 @@ data class SendToIntruder(
 
 @Serializable
 data class IntruderPrepare(
-    val tabName: String?,
+    val tabName: String? = null,
     val content: String,
     val insertionPoints: List<InsertionPointRange> = emptyList(),
     val mode: String = "REPLACE_BASE_PARAMETER_VALUE_WITH_OFFSETS",
@@ -210,6 +213,7 @@ data class CookieEntry(
 
 @Serializable
 data class ScopeCheck(
+    @com.six2dez.burp.aiagent.mcp.schema.ToolRequired
     val url: String = "",
 ) {
     init {
@@ -219,6 +223,7 @@ data class ScopeCheck(
 
 @Serializable
 data class ScopeUpdate(
+    @com.six2dez.burp.aiagent.mcp.schema.ToolRequired
     val url: String = "",
 ) {
     init {
@@ -234,8 +239,9 @@ data class CollaboratorGenerate(
 
 @Serializable
 data class CollaboratorPoll(
-    val secretKey: String,
+    val secretKey: String? = null,
     val includeHttp: Boolean = false,
+    val clientId: String? = null,
 )
 
 @Serializable
@@ -377,8 +383,8 @@ data class DeleteScanTask(
 
 @Serializable
 data class GenerateScannerReport(
-    val taskId: String?,
-    val allIssues: Boolean,
+    val taskId: String? = null,
+    val allIssues: Boolean = false,
     val format: String,
     val path: String,
 )

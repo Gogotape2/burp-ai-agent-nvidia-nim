@@ -13,8 +13,6 @@ import burp.api.montoya.http.message.HttpRequestResponse
 import burp.api.montoya.http.message.requests.HttpRequest
 import burp.api.montoya.intruder.HttpRequestTemplate
 import burp.api.montoya.intruder.HttpRequestTemplateGenerationOptions
-import burp.api.montoya.scanner.AuditConfiguration
-import burp.api.montoya.scanner.BuiltInAuditConfiguration
 import burp.api.montoya.scanner.ReportFormat
 import burp.api.montoya.scanner.audit.Audit
 import burp.api.montoya.utilities.CompressionType
@@ -46,17 +44,20 @@ object McpToolExecutor {
 
     // Phase 16 (CAP-02): expected part count for ext:<server>:<tool> tool names.
     private const val EXT_TOOL_NAME_PARTS = 3
+    private const val MAX_PAGE_ITEMS = 1000
 
     fun functionTools(context: McpToolContext): List<com.six2dez.burp.aiagent.backends.FunctionTool> =
         McpToolCatalog
             .all()
             .filter { descriptor ->
-                context.isToolEnabled(descriptor.id) &&
-                    context.isUnsafeToolAllowed(descriptor.id) &&
-                    (!descriptor.proOnly || context.edition == BurpSuiteEdition.PROFESSIONAL)
+                context.unavailableReason(descriptor.id) == null
             }.map { descriptor ->
                 com.six2dez.burp.aiagent.backends
                     .FunctionTool(descriptor.id, descriptor.description, schemaString(descriptor.id, context))
+            } +
+            context.externalClientManager?.availableTools().orEmpty().map { tool ->
+                com.six2dez.burp.aiagent.backends
+                    .FunctionTool(tool.name, tool.description, Json.encodeToString(tool.inputSchema))
             }
 
     fun describeTools(
@@ -67,11 +68,9 @@ object McpToolExecutor {
         val specs =
             McpToolCatalog.all().mapNotNull { desc ->
                 val enabled =
-                    context.isToolEnabled(desc.id) &&
-                        context.isUnsafeToolAllowed(desc.id) &&
-                        (!desc.proOnly || context.edition == BurpSuiteEdition.PROFESSIONAL)
+                    context.unavailableReason(desc.id) == null
                 if (!includeDisabled && !enabled) return@mapNotNull null
-                val schema = if (includeSchemas) schemaString(desc.id) else null
+                val schema = if (includeSchemas) schemaString(desc.id, context) else null
                 ToolSpec(
                     id = desc.id,
                     description = desc.description,
@@ -79,6 +78,7 @@ object McpToolExecutor {
                     unsafeOnly = desc.unsafeOnly,
                     proOnly = desc.proOnly,
                     argsSchema = schema,
+                    unavailableReason = context.unavailableReason(desc.id),
                 )
             }
 
@@ -95,7 +95,7 @@ object McpToolExecutor {
                         enabled = true,
                         unsafeOnly = false,
                         proOnly = false,
-                        argsSchema = null,
+                        argsSchema = if (includeSchemas) Json.encodeToString(ext.inputSchema) else null,
                     )
                 }.orEmpty()
 
@@ -120,6 +120,7 @@ object McpToolExecutor {
                 append("- ").append(spec.id).append(": ").append(spec.description)
                 if (includeDisabled) {
                     append(" [").append(status).append("]")
+                    spec.unavailableReason?.let { append(" reason=").append(it) }
                 }
                 if (spec.unsafeOnly) append(" [unsafe]")
                 if (spec.proOnly) append(" [pro]")
@@ -132,6 +133,7 @@ object McpToolExecutor {
             for (ext in externalSpecs) {
                 append("- ").append(ext.id).append(": ").append(ext.description)
                 append(" [external]")
+                ext.argsSchema?.let { append(" args_schema=").append(it) }
                 appendLine()
             }
             // Phase 16 D-03 / T-16-04-PI: advisory note when external tools are present.
@@ -189,11 +191,12 @@ object McpToolExecutor {
         }
 
         val api = context.api
-        val normalizedArgs = normalizeArgs(resolvedName, argsJson)
         val result =
-            runTool(context, resolvedName, normalizedArgs) {
+            runTool(context, resolvedName, argsJson) {
+                val normalizedArgs = normalizeArgs(resolvedName, argsJson)
                 val output =
                     when (resolvedName) {
+                        in ActiveToolHandlers.ids -> ActiveToolHandlers.execute(resolvedName, normalizedArgs, context)
                         "web_search", "web_fetch" -> WebResearchTools.execute(resolvedName, normalizedArgs, context)
                         "context_read" -> {
                             val args = decodeJson.decodeFromString<ReadChatContext>(normalizedArgs.orEmpty())
@@ -225,9 +228,18 @@ object McpToolExecutor {
                                     fixedContent,
                                 )
                             McpScopeFilter.rejectIfOutOfScope(scopeUrl, context)?.let { return@runTool it }
-                            val request = HttpRequest.httpRequest(input.toMontoyaService(context::resolveHost), fixedContent)
-                            val response = api.http().sendRequest(request, RequestOptions.requestOptions().withUpstreamTLSVerification())
-                            response?.toString() ?: "<no response>"
+                            val request = McpTextMessages.request(input.toMontoyaService(context::resolveHost), fixedContent)
+                            val response =
+                                api.http().sendRequest(
+                                    request,
+                                    RequestOptions
+                                        .requestOptions()
+                                        .withUpstreamTLSVerification()
+                                        .withResponseTimeout(input.timeoutMs)
+                                        .withHttpMode(HttpMode.HTTP_1),
+                                )
+                            checkNotNull(response?.response()) { "HTTP request completed without a response" }
+                            response.toString()
                         }
                         "http2_request" -> {
                             val input = decode<SendHttp2Request>(normalizedArgs)
@@ -269,14 +281,19 @@ object McpToolExecutor {
                                 HttpRequest.http2Request(
                                     input.toMontoyaService(context::resolveHost),
                                     headerList,
-                                    input.requestBody,
+                                    McpTextMessages.bytes(input.requestBody),
                                 )
                             val response =
                                 api.http().sendRequest(
                                     request,
-                                    RequestOptions.requestOptions().withUpstreamTLSVerification().withHttpMode(HttpMode.HTTP_2),
+                                    RequestOptions
+                                        .requestOptions()
+                                        .withUpstreamTLSVerification()
+                                        .withResponseTimeout(input.timeoutMs)
+                                        .withHttpMode(HttpMode.HTTP_2),
                                 )
-                            response?.toString() ?: "<no response>"
+                            checkNotNull(response?.response()) { "HTTP request completed without a response" }
+                            response.toString()
                         }
                         "repeater_tab" -> {
                             val input = decode<CreateRepeaterTab>(normalizedArgs)
@@ -290,13 +307,13 @@ object McpToolExecutor {
                                     input.content,
                                 )
                             McpScopeFilter.rejectIfOutOfScope(scopeUrl, context)?.let { return@runTool it }
-                            val request = HttpRequest.httpRequest(input.toMontoyaService(context::resolveHost), input.content)
+                            val request = McpTextMessages.request(input.toMontoyaService(context::resolveHost), normalizeHttpRequest(input.content))
                             api.repeater().sendToRepeater(request, input.tabName)
                             "Repeater tab created"
                         }
                         "repeater_tab_with_payload" -> {
                             val input = decode<RepeaterTabWithPayload>(normalizedArgs)
-                            val rendered = applyReplacements(input.content, input.replacements)
+                            val rendered = normalizeHttpRequest(applyReplacements(input.content, input.replacements))
                             // 07-03 D-03: reject AFTER replacements (so the final URL is checked)
                             // but BEFORE constructing the HttpRequest.
                             val scopeUrl =
@@ -307,7 +324,7 @@ object McpToolExecutor {
                                     rendered,
                                 )
                             McpScopeFilter.rejectIfOutOfScope(scopeUrl, context)?.let { return@runTool it }
-                            val request = HttpRequest.httpRequest(input.toMontoyaService(context::resolveHost), rendered)
+                            val request = McpTextMessages.request(input.toMontoyaService(context::resolveHost), rendered)
                             api.repeater().sendToRepeater(request, input.tabName)
                             "Repeater tab created"
                         }
@@ -322,13 +339,15 @@ object McpToolExecutor {
                                     input.content,
                                 )
                             McpScopeFilter.rejectIfOutOfScope(scopeUrl, context)?.let { return@runTool it }
-                            val request = HttpRequest.httpRequest(input.toMontoyaService(context::resolveHost), input.content)
+                            val request = McpTextMessages.request(input.toMontoyaService(context::resolveHost), input.content)
                             api.intruder().sendToIntruder(request, input.tabName)
                             "Sent to Intruder"
                         }
                         "intruder_prepare" -> {
                             val input = decode<IntruderPrepare>(normalizedArgs)
-                            val fixed = input.content.replace("\r", "").replace("\n", "\r\n")
+                            val fixed = input.content
+                            val byteLength = fixed.toByteArray(Charsets.UTF_8).size
+                            require(input.insertionPoints.all { it.start >= 0 && it.end > it.start && it.end <= byteLength }) { "Insertion ranges must be non-empty byte offsets within the original request" }
                             // 07-03 D-03: derive scope URL from the target tuple + raw content,
                             // reject BEFORE constructing the byte template or calling api.intruder().
                             val scopeUrl =
@@ -340,8 +359,7 @@ object McpToolExecutor {
                                 )
                             McpScopeFilter.rejectIfOutOfScope(scopeUrl, context)?.let { return@runTool it }
                             val byteArray =
-                                burp.api.montoya.core.ByteArray
-                                    .byteArray(fixed)
+                                McpTextMessages.bytes(fixed)
                             val template =
                                 if (input.insertionPoints.isNotEmpty()) {
                                     val ranges = input.insertionPoints.map { Range.range(it.start, it.end) }
@@ -355,7 +373,7 @@ object McpToolExecutor {
                         }
                         "insertion_points" -> {
                             val input = decode<InsertionPoints>(normalizedArgs)
-                            val request = HttpRequest.httpRequest(input.content)
+                            val request = McpTextMessages.request(input.content)
                             val option = HttpRequestTemplateGenerationOptions.valueOf(input.mode.trim().uppercase())
                             val template = HttpRequestTemplate.httpRequestTemplate(request, option)
                             template.insertionPointOffsets().joinToString(separator = "\n") { range ->
@@ -364,7 +382,7 @@ object McpToolExecutor {
                         }
                         "params_extract" -> {
                             val input = decode<ExtractParams>(normalizedArgs)
-                            val request = HttpRequest.httpRequest(input.content)
+                            val request = McpTextMessages.request(input.content)
                             request.parameters().joinToString(separator = "\n") { param ->
                                 "type=${param.type()} name=${param.name()} value=${param.value()}"
                             }
@@ -375,7 +393,7 @@ object McpToolExecutor {
                         }
                         "request_parse" -> {
                             val input = decode<RequestParse>(normalizedArgs)
-                            val request = HttpRequest.httpRequest(input.content)
+                            val request = McpTextMessages.request(input.content)
                             val parsed =
                                 ParsedRequest(
                                     method = request.method(),
@@ -394,8 +412,7 @@ object McpToolExecutor {
                         "response_parse" -> {
                             val input = decode<ResponseParse>(normalizedArgs)
                             val response =
-                                burp.api.montoya.http.message.responses.HttpResponse
-                                    .httpResponse(input.content)
+                                McpTextMessages.response(input.content)
                             val parsed =
                                 ParsedResponse(
                                     statusCode = response.statusCode().toInt(),
@@ -407,7 +424,7 @@ object McpToolExecutor {
                         }
                         "find_reflected" -> {
                             val input = decode<FindReflected>(normalizedArgs)
-                            val request = HttpRequest.httpRequest(input.request)
+                            val request = McpTextMessages.request(input.request)
                             val responseText = input.response
                             val hits =
                                 request.parameters().mapNotNull { param ->
@@ -422,8 +439,7 @@ object McpToolExecutor {
                             val input = decode<ComparerSend>(normalizedArgs)
                             val byteArrays =
                                 input.items.map {
-                                    burp.api.montoya.core.ByteArray
-                                        .byteArray(it)
+                                    McpTextMessages.bytes(it)
                                 }
                             api.comparer().sendToComparer(*byteArrays.toTypedArray())
                             "Sent ${input.items.size} item(s) to Comparer"
@@ -500,7 +516,7 @@ object McpToolExecutor {
                                             cookieDomain == domainFilter
                                         }
                                     }.filter { cookie ->
-                                        if (!input.scopeOnly) return@filter true
+                                        if (!input.scopeOnly && !context.scopeOnly) return@filter true
                                         val cookieDomain = cookie.domain().removePrefix(".")
                                         val httpUrl = "http://$cookieDomain/"
                                         val httpsUrl = "https://$cookieDomain/"
@@ -547,6 +563,10 @@ object McpToolExecutor {
                         }
                         "collaborator_generate" -> {
                             val input = decode<CollaboratorGenerate>(normalizedArgs)
+                            input.options.forEach {
+                                burp.api.montoya.collaborator.PayloadOption
+                                    .valueOf(it.trim().uppercase())
+                            }
                             val client = api.collaborator().createClient()
                             val opts =
                                 input.options
@@ -562,17 +582,23 @@ object McpToolExecutor {
                                 } else {
                                     client.generatePayload(input.customData.trim(), *opts)
                                 }
-                            val secretKey = client.getSecretKey().toString()
+                            val secretKey =
+                                "collab_" +
+                                    java.util.UUID
+                                        .randomUUID()
+                                        .toString()
                             CollaboratorRegistry.put(secretKey, client)
                             buildString {
                                 appendLine("payload=$payload")
                                 appendLine("interaction_id=${payload.id()}")
-                                appendLine("secret_key=$secretKey")
+                                appendLine("client_id=$secretKey")
                             }.trim()
                         }
                         "collaborator_poll" -> {
                             val input = decode<CollaboratorPoll>(normalizedArgs)
-                            val key = input.secretKey.trim()
+                            val key = (input.clientId ?: input.secretKey).orEmpty().trim()
+                            require(key.isNotEmpty()) { "Provide clientId returned by collaborator_generate, or a saved secretKey" }
+                            if (key.startsWith("collab_") && CollaboratorRegistry.get(key) == null) error("Collaborator session expired. Generate a new payload.")
                             val client =
                                 CollaboratorRegistry.get(key)
                                     ?: api.collaborator().restoreClient(
@@ -609,7 +635,7 @@ object McpToolExecutor {
                         "scanner_issues" -> {
                             ensurePro(context, resolvedName)
                             val input = decode<GetScannerIssues>(normalizedArgs)
-                            val issues = api.siteMap().issues()
+                            val issues = McpScopeFilter.filterInScope(api.siteMap().issues(), { it.baseUrl() }, context).toList()
                             val seq =
                                 if (context.determinismMode) {
                                     issues.sortedBy { it.name() }.asSequence()
@@ -624,57 +650,22 @@ object McpToolExecutor {
                             )
                         }
                         "scan_audit_start" -> {
-                            ensurePro(context, resolvedName)
                             val input = decode<StartAudit>(normalizedArgs)
-                            val cfg =
-                                AuditConfiguration.auditConfiguration(
-                                    BuiltInAuditConfiguration.valueOf(input.builtInConfiguration),
-                                )
-                            val audit = api.scanner().startAudit(cfg)
-                            val id = ScannerTaskRegistry.put(audit)
-                            "Started audit: id=$id status=${audit.statusMessage()}"
+                            McpScannerTools.startAudit(input.builtInConfiguration, emptyList(), null, context)
                         }
                         "scan_audit_start_mode" -> {
-                            ensurePro(context, resolvedName)
                             val input = decode<StartAuditMode>(normalizedArgs)
-                            val cfg = AuditConfiguration.auditConfiguration(resolveAuditConfig(input.mode))
-                            val audit = api.scanner().startAudit(cfg)
-                            val service = input.toMontoyaServiceOrNull(context::resolveHost)
-                            if (input.requests.isNotEmpty() && service == null) {
-                                return@runTool "Error: targetHostname/targetPort required when providing requests"
-                            }
-                            for (raw in input.requests) {
-                                val fixed = raw.replace("\r", "").replace("\n", "\r\n")
-                                val req = HttpRequest.httpRequest(service ?: input.toMontoyaService(context::resolveHost), fixed)
-                                audit.addRequest(req)
-                            }
-                            val id = ScannerTaskRegistry.put(audit)
-                            if (input.requests.isEmpty()) {
-                                "Started audit: id=$id status=${audit.statusMessage()}"
-                            } else {
-                                "Started audit with requests: id=$id status=${audit.statusMessage()}"
-                            }
+                            McpScannerTools.startAudit(input.mode, input.requests, input, context)
                         }
                         "scan_audit_start_requests" -> {
-                            ensurePro(context, resolvedName)
                             val input = decode<StartAuditWithRequests>(normalizedArgs)
-                            val cfg =
-                                AuditConfiguration.auditConfiguration(
-                                    BuiltInAuditConfiguration.valueOf(input.builtInConfiguration),
-                                )
-                            val audit = api.scanner().startAudit(cfg)
-                            val service = input.toMontoyaService(context::resolveHost)
-                            for (raw in input.requests) {
-                                val fixed = raw.replace("\r", "").replace("\n", "\r\n")
-                                val req = HttpRequest.httpRequest(service, fixed)
-                                audit.addRequest(req)
-                            }
-                            val id = ScannerTaskRegistry.put(audit)
-                            "Started audit with requests: id=$id status=${audit.statusMessage()}"
+                            require(input.requests.isNotEmpty()) { "Provide at least one audit request" }
+                            McpScannerTools.startAudit(input.builtInConfiguration, input.requests, input, context)
                         }
                         "scan_crawl_start" -> {
                             ensurePro(context, resolvedName)
                             val input = decode<StartCrawl>(normalizedArgs)
+                            McpScannerTools.validateCrawl(input.seedUrls, context)
                             val crawl =
                                 api.scanner().startCrawl(
                                     burp.api.montoya.scanner.CrawlConfiguration
@@ -686,7 +677,7 @@ object McpToolExecutor {
                         "scan_task_status" -> {
                             ensurePro(context, resolvedName)
                             val input = decode<GetScanTaskStatus>(normalizedArgs)
-                            val task = ScannerTaskRegistry.get(input.taskId) ?: return@runTool "Task not found: ${input.taskId}"
+                            val task = ScannerTaskRegistry.get(input.taskId) ?: return@runTool "Error: Task not found: ${input.taskId}"
                             val base = "status=${task.statusMessage()} requests=${task.requestCount()} errors=${task.errorCount()}"
                             val audit = task as? Audit
                             if (audit != null) {
@@ -699,14 +690,15 @@ object McpToolExecutor {
                         "scan_task_delete" -> {
                             ensurePro(context, resolvedName)
                             val input = decode<DeleteScanTask>(normalizedArgs)
-                            val task = ScannerTaskRegistry.remove(input.taskId) ?: return@runTool "Task not found: ${input.taskId}"
+                            val task = ScannerTaskRegistry.get(input.taskId) ?: return@runTool "Error: Task not found: ${input.taskId}"
                             task.delete()
+                            ScannerTaskRegistry.remove(input.taskId)
                             "Deleted task: ${input.taskId}"
                         }
                         "scan_report" -> {
                             ensurePro(context, resolvedName)
                             val input = decode<GenerateScannerReport>(normalizedArgs)
-                            val formatEnum = ReportFormat.valueOf(input.format)
+                            val formatEnum = ReportFormat.valueOf(input.format.trim().uppercase())
                             val pathObj =
                                 try {
                                     resolveReportPath(input.path)
@@ -717,13 +709,14 @@ object McpToolExecutor {
                                 when {
                                     input.taskId != null -> {
                                         val task = ScannerTaskRegistry.get(input.taskId)
-                                        val audit = task as? Audit ?: return@runTool "Task not found or not an audit: ${input.taskId}"
+                                        val audit = task as? Audit ?: return@runTool "Error: Task not found or not an audit: ${input.taskId}"
                                         audit.issues()
                                     }
                                     input.allIssues -> api.siteMap().issues()
-                                    else -> return@runTool "Provide taskId or set allIssues=true"
+                                    else -> return@runTool "Error: Provide taskId or set allIssues=true"
                                 }
-                            api.scanner().generateReport(issues, formatEnum, pathObj)
+                            val scopedIssues = McpScopeFilter.filterInScope(issues, { it.baseUrl() }, context).toList()
+                            api.scanner().generateReport(scopedIssues, formatEnum, pathObj)
                             "Report generated: ${input.path}"
                         }
                         "proxy_http_history" -> {
@@ -935,14 +928,8 @@ object McpToolExecutor {
                             if (input.intercepting) api.proxy().enableIntercept() else api.proxy().disableIntercept()
                             "Intercept has been ${if (input.intercepting) "enabled" else "disabled"}"
                         }
-                        "editor_get" -> getActiveEditor(api)?.text ?: "<No active editor>"
-                        "editor_set" -> {
-                            val input = decode<SetActiveEditorContents>(normalizedArgs)
-                            val editor = getActiveEditor(api) ?: return@runTool "<No active editor>"
-                            if (!editor.isEditable) return@runTool "<Current editor is not editable>"
-                            editor.text = input.text
-                            "Editor text has been set"
-                        }
+                        "editor_get" -> McpEditorBridge.read(context)
+                        "editor_set" -> McpEditorBridge.write(decode<SetActiveEditorContents>(normalizedArgs).text, context)
                         "issue_create" -> {
                             val input = decode<CreateAuditIssue>(normalizedArgs)
                             executeIssueCreate(input, api, context)
@@ -958,13 +945,15 @@ object McpToolExecutor {
                             val backendId = context.aiBackendId ?: supervisor.preferredBackendId()
                             if (backendId == null) return@runTool "Error: AI backend is not configured."
                             if (supervisor.requiresBurpAiAndDisabled(backendId)) {
-                                return@runTool "AI features unavailable: enable Use AI for the burp-ai backend or select an external backend."
+                                return@runTool "Error: AI features unavailable: enable Use AI for the burp-ai backend or select an external backend."
                             }
                             val scanner =
                                 context.passiveScanner
-                                    ?: return@runTool "Passive scanner not available."
+                                    ?: error("Passive scanner is not initialized")
 
-                            val allHistory = api.proxy().history()
+                            val history = api.proxy().history()
+                            require(input.proxyHistoryIndices.all { it < history.size }) { "History index is out of range. Read proxy history again." }
+                            val allHistory = if (input.proxyHistoryIndices.isEmpty()) history else input.proxyHistoryIndices.distinct().map { history[it] }
                             val filtered =
                                 if (input.siteMapUrl != null) {
                                     allHistory.filter { reqRes ->
@@ -987,7 +976,7 @@ object McpToolExecutor {
                             val input = decode<AiFindingsRecentInput>(normalizedArgs)
                             val scanner =
                                 context.passiveScanner
-                                    ?: return@runTool "Passive scanner not available."
+                                    ?: error("Passive scanner is not initialized")
                             val findings = scanner.getLastFindings(input.n)
                             if (findings.isEmpty()) return@runTool "No findings recorded yet."
                             findings.joinToString("\n\n") { f ->
@@ -1004,7 +993,7 @@ object McpToolExecutor {
                             val input = decode<AiAuditQueryInput>(normalizedArgs)
                             val logger =
                                 context.aiRequestLogger
-                                    ?: return@runTool "Audit logging not configured."
+                                    ?: error("Audit logging is not initialized")
                             val entries = logger.entries().takeLast(input.n)
                             if (entries.isEmpty()) return@runTool "No audit entries recorded."
                             entries.joinToString("\n") { e ->
@@ -1014,7 +1003,7 @@ object McpToolExecutor {
                         "ai_backends_list" -> {
                             val registry = context.backendRegistry
                             val supervisor = context.supervisor
-                            if (registry == null || supervisor == null) return@runTool "Registry not available."
+                            if (registry == null || supervisor == null) error("AI backend registry is not initialized")
                             val ids = registry.listAllBackendIds()
                             val status = supervisor.status()
                             buildString {
@@ -1081,7 +1070,7 @@ object McpToolExecutor {
         if (text.startsWith("Unknown tool:") || text.startsWith("Tool requires Burp Suite Professional:")) {
             return text
         }
-        return if (isError && text.isNotBlank()) {
+        return if (isError && text.isNotBlank() && !text.startsWith("Error:")) {
             "Error: $text"
         } else {
             text.ifBlank { "Tool executed: ${canonicalToolId(name)}" }
@@ -1133,15 +1122,14 @@ object McpToolExecutor {
                 ?: return errorResult("External MCP client not available")
 
         // D-03 (outbound privacy): redact args before sending to the third-party external server.
-        val redactedArgs = context.redactIfNeeded(argsJson.orEmpty())
-        val argsMap = parseArgsMapOrEmpty(redactedArgs)
-
-        return try {
-            val resultText = runBlocking { manager.callTool(serverName, remoteName, argsMap) }
-            // Trust-boundary wrap is already in resultText (Plan 16-03) — preserve as-is.
-            CallToolResult(content = listOf(TextContent(resultText)), isError = false)
-        } catch (e: Exception) {
-            errorResult("External tool call failed ($serverName/$remoteName): ${e.message.orEmpty()}")
+        return runTool(context, resolvedName, argsJson) {
+            val raw = argsJson?.trim().orEmpty().ifBlank { "{}" }
+            require(decodeJson.parseToJsonElement(raw) is JsonObject) { "External tool arguments must be a JSON object" }
+            val redactedArgs = context.redactIfNeeded(raw)
+            require(decodeJson.parseToJsonElement(redactedArgs) is JsonObject) { "Redaction produced invalid external arguments" }
+            val result = runBlocking { manager.callToolResult(serverName, remoteName, parseArgsMapOrEmpty(redactedArgs)) }
+            val text = result.content.filterIsInstance<TextContent>().joinToString("\n") { it.text.orEmpty() }
+            context.redactIfNeeded(if (result.isError == true) "Error: $text" else text)
         }
     }
 
@@ -1150,7 +1138,7 @@ object McpToolExecutor {
         val jsonText = raw?.trim().orEmpty().ifBlank { "{}" }
         val element = decodeJson.parseToJsonElement(jsonText)
         try {
-            return decodeJson.decodeFromJsonElement(element)
+            return decodeJson.decodeFromJsonElement<T>(element).also { McpInputValidation.validate(it) }
         } catch (e: kotlinx.serialization.MissingFieldException) {
             throw IllegalArgumentException(
                 "Missing required argument(s) for ${T::class.simpleName}: ${e.message}. " +
@@ -1207,6 +1195,8 @@ object McpToolExecutor {
         val obj = parseArgsObject(rawArgs)
         val count = obj["count"] ?: obj["limit"] ?: JsonPrimitive(5)
         val offset = obj["offset"] ?: JsonPrimitive(0)
+        require(count.toString().toIntOrNull() in 1..MAX_PAGE_ITEMS) { "count must be between 1 and 1000" }
+        require((offset.toString().toIntOrNull() ?: -1) >= 0) { "offset must be non-negative" }
         val merged =
             obj.toMutableMap().apply {
                 put("count", count)
@@ -1219,13 +1209,7 @@ object McpToolExecutor {
     private fun parseArgsObject(rawArgs: String?): Map<String, JsonElement> {
         val text = rawArgs?.trim().orEmpty()
         if (text.isBlank()) return emptyMap()
-        return try {
-            val element = decodeJson.parseToJsonElement(text)
-            val obj = element as? JsonObject ?: return emptyMap()
-            obj
-        } catch (_: Exception) {
-            emptyMap()
-        }
+        return decodeJson.parseToJsonElement(text) as? JsonObject ?: throw IllegalArgumentException("Tool arguments must be a JSON object")
     }
 
     /**
@@ -1244,25 +1228,28 @@ object McpToolExecutor {
             val obj = element as? JsonObject ?: return emptyMap()
             // Convert JsonObject entries to Map<String, Any?> via kotlinx-serialization primitives.
             // The MCP SDK callTool() accepts Any? values; primitives coerce cleanly.
-            obj.entries.associate { (k, v) ->
-                k to
-                    when (v) {
-                        is JsonPrimitive ->
-                            when {
-                                v.isString -> v.content
-                                v.content == "true" -> true
-                                v.content == "false" -> false
-                                v.content.toLongOrNull() != null -> v.content.toLong()
-                                v.content.toDoubleOrNull() != null -> v.content.toDouble()
-                                else -> v.content
-                            }
-                        else -> v.toString()
-                    }
-            }
+            obj.entries.associate { (k, v) -> k to jsonValue(v) }
         } catch (_: Exception) {
             emptyMap()
         }
     }
+
+    private fun jsonValue(value: JsonElement): Any? =
+        when (value) {
+            kotlinx.serialization.json.JsonNull -> null
+            is JsonObject -> value.mapValues { jsonValue(it.value) }
+            is kotlinx.serialization.json.JsonArray -> value.map { jsonValue(it) }
+            is JsonPrimitive ->
+                if (value.isString) {
+                    value.content
+                } else {
+                    when (value.content) {
+                        "true" -> true
+                        "false" -> false
+                        else -> value.content.toLongOrNull() ?: value.content.toDoubleOrNull() ?: value.content
+                    }
+                }
+        }
 
     fun inputSchema(
         toolName: String,
@@ -1343,9 +1330,11 @@ object McpToolExecutor {
             "redact_preview" -> RedactPreviewInput::class.asInputSchema()
             "ai_audit_query" -> AiAuditQueryInput::class.asInputSchema()
             "ai_backends_list" -> Tool.Input()
-            else -> WebResearchTools.schema(toolName)
-        }
+            else -> supplementarySchema(toolName)
+        }.let { boundedToolSchema(toolName, it, context) }
     }
+
+    private fun supplementarySchema(name: String): Tool.Input = if (name in ActiveToolHandlers.ids) ActiveToolHandlers.schema(name) else WebResearchTools.schema(name)
 
     private fun schemaString(
         toolName: String,
